@@ -48,16 +48,6 @@
 			path = SnipSnaps;
 			sourceTree = "<group>";
 		};
-		4720D3102DF5493E001FE738 /* SnipSnapsTests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = SnipSnapsTests;
-			sourceTree = "<group>";
-		};
-		4720D31A2DF5493E001FE738 /* SnipSnapsUITests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = SnipSnapsUITests;
-			sourceTree = "<group>";
-		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -89,8 +79,6 @@
 			isa = PBXGroup;
 			children = (
 				4720D2FE2DF5493D001FE738 /* SnipSnaps */,
-				4720D3102DF5493E001FE738 /* SnipSnapsTests */,
-				4720D31A2DF5493E001FE738 /* SnipSnapsUITests */,
 				4720D2FD2DF5493D001FE738 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -143,9 +131,6 @@
 			dependencies = (
 				4720D30F2DF5493E001FE738 /* PBXTargetDependency */,
 			);
-			fileSystemSynchronizedGroups = (
-				4720D3102DF5493E001FE738 /* SnipSnapsTests */,
-			);
 			name = SnipSnapsTests;
 			packageProductDependencies = (
 			);
@@ -165,9 +150,6 @@
 			);
 			dependencies = (
 				4720D3192DF5493E001FE738 /* PBXTargetDependency */,
-			);
-			fileSystemSynchronizedGroups = (
-				4720D31A2DF5493E001FE738 /* SnipSnapsUITests */,
 			);
 			name = SnipSnapsUITests;
 			packageProductDependencies = (
