@@ -23,6 +23,7 @@ struct ContentView: View {
         }
         .tag(1)
     }
+    .accentColor(AppColor.primary)
     .onChange(of: selectedTab) {
       let generator = UIImpactFeedbackGenerator(style: .light)
       generator.impactOccurred()

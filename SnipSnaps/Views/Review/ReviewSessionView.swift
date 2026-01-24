@@ -34,6 +34,8 @@ struct ReviewSessionView: View {
   @State private var deleteInProgress = false
   @State private var deletedCount = 0
   @State private var cardOpacity = 1.0
+  @State private var cardSize: CGSize = .zero
+  @State private var cachedAssets: [PHAsset] = []
   @AppStorage("reviewLimit") private var reviewLimit: Int = 20
   @AppStorage("totalDeletedCount") private var totalDeletedCount: Int = 0
   @AppStorage("totalDeletedBytes") private var totalDeletedBytes: Int = 0
@@ -79,7 +81,7 @@ struct ReviewSessionView: View {
 
   var body: some View {
     ZStack {
-      sessionBackground
+      AppColor.background.ignoresSafeArea()
       if !canAccessPhotos {
         accessView
       } else if isLoading {
@@ -104,6 +106,12 @@ struct ReviewSessionView: View {
     .onAppear {
       loadAssets()
     }
+    .onChange(of: currentIndex) { _, _ in
+      updateCaching()
+    }
+    .onChange(of: assets.count) { _, _ in
+      updateCaching()
+    }
     .alert("Delete selected photos?", isPresented: $showDeleteConfirm) {
       Button("Cancel", role: .cancel) {}
       Button("Delete", role: .destructive) {
@@ -120,44 +128,30 @@ struct ReviewSessionView: View {
   }
 
   private var reviewView: some View {
-    GeometryReader { proxy in
-      let horizontalPadding: CGFloat = 20
-      let headerHeight: CGFloat = 72
-      let buttonHeight: CGFloat = 70
-      let spacing: CGFloat = 16
-      let availableHeight = proxy.size.height - headerHeight - buttonHeight - spacing * 3 - proxy.safeAreaInsets.bottom
-      let cardHeight = max(280, min(520, availableHeight))
-      let cardSize = CGSize(width: proxy.size.width - horizontalPadding * 2, height: cardHeight)
-
-      VStack(spacing: spacing) {
-        reviewHeader
-          .frame(height: headerHeight)
-
-        cardStack(cardSize: cardSize)
-          .frame(height: cardHeight)
-
-        Spacer(minLength: 0)
-      }
-      .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
-      .padding(.top, 12)
-      .padding(.horizontal, horizontalPadding)
-      .safeAreaInset(edge: .bottom) {
+    VStack {
+        reviewHeader.padding(.horizontal)
+        
+        Spacer()
+        
+        cardStack
+            .padding(.horizontal)
+        
+        Spacer()
+        
         decisionBar
-          .padding(.horizontal, horizontalPadding)
-          .padding(.bottom, 10)
-      }
+            .padding()
     }
   }
 
   private var reviewHeader: some View {
     VStack(alignment: .leading, spacing: 8) {
       Text(mode.subtitle)
-        .font(AppFont.body(16))
-        .foregroundColor(Color(red: 0.40, green: 0.46, blue: 0.56))
+        .font(.subheadline)
+        .foregroundColor(AppColor.subtext)
       HStack {
         Text("\(currentIndex + 1) of \(assets.count)")
-          .font(AppFont.mono(12, weight: .semibold))
-          .foregroundColor(Color(red: 0.40, green: 0.48, blue: 0.58))
+          .font(.caption.weight(.medium))
+          .foregroundColor(AppColor.subtext)
         Spacer()
         ProgressView(value: progressValue)
           .tint(mode.accentColor)
@@ -166,34 +160,46 @@ struct ReviewSessionView: View {
     }
   }
 
-  private func cardStack(cardSize: CGSize) -> some View {
-    ZStack {
-      if let asset = nextAsset {
-        PhotoCardView(asset: asset, targetSize: cardSize)
-          .scaleEffect(0.96)
-          .opacity(0.55)
-          .offset(y: 10)
-      }
-      if let asset = currentAsset {
-        PhotoCardView(asset: asset, targetSize: cardSize)
-          .id(asset.localIdentifier)
-          .overlay(SwipeOverlayView(offset: dragOffset.width))
-          .offset(dragOffset)
-          .rotationEffect(.degrees(Double(dragOffset.width / 20)))
-          .opacity(cardOpacity)
-          .gesture(
-            DragGesture()
-              .onChanged { value in
-                guard !isAnimatingCard else { return }
-                dragOffset = value.translation
+  private var cardStack: some View {
+      GeometryReader { proxy in
+          ZStack {
+              if let asset = nextAsset {
+                  PhotoCardView(asset: asset, targetSize: proxy.size)
+                      .frame(width: proxy.size.width, height: proxy.size.height)
+                      .scaleEffect(0.96)
+                      .opacity(0.55)
+                      .offset(y: 10)
               }
-              .onEnded { value in
-                guard !isAnimatingCard else { return }
-                handleSwipe(value.translation.width)
+              if let asset = currentAsset {
+                  PhotoCardView(asset: asset, targetSize: proxy.size)
+                      .frame(width: proxy.size.width, height: proxy.size.height)
+                      .id(asset.localIdentifier)
+                      .overlay(SwipeOverlayView(offset: dragOffset.width))
+                      .offset(dragOffset)
+                      .rotationEffect(.degrees(Double(dragOffset.width / 20)))
+                      .opacity(cardOpacity)
+                      .gesture(
+                          DragGesture()
+                              .onChanged { value in
+                                  guard !isAnimatingCard else { return }
+                                  dragOffset = value.translation
+                              }
+                              .onEnded { value in
+                                  guard !isAnimatingCard else { return }
+                                  handleSwipe(value.translation.width)
+                              }
+                      )
               }
-          )
+          }
+          .onAppear {
+            cardSize = proxy.size
+            updateCaching()
+          }
+          .onChange(of: proxy.size) { _, newSize in
+            cardSize = newSize
+            updateCaching()
+          }
       }
-    }
   }
 
   private var decisionBar: some View {
@@ -204,7 +210,7 @@ struct ReviewSessionView: View {
         DecisionButton(
           title: "Delete",
           systemImage: "trash",
-          color: Color(red: 0.92, green: 0.24, blue: 0.30)
+          color: AppColor.delete
         )
       }
       Button {
@@ -213,39 +219,38 @@ struct ReviewSessionView: View {
         DecisionButton(
           title: "Keep",
           systemImage: "heart.fill",
-          color: Color(red: 0.18, green: 0.64, blue: 0.36)
+          color: AppColor.keep
         )
       }
     }
-    .padding(.top, 6)
   }
 
   private var summaryView: some View {
     ScrollView {
       VStack(spacing: 16) {
         Text("Review complete")
-          .font(AppFont.display(24, weight: .semibold))
-          .foregroundColor(Color(red: 0.12, green: 0.16, blue: 0.22))
+            .font(.largeTitle.weight(.bold))
+            .foregroundColor(AppColor.text)
         Text("\(keptAssets.count) kept - \(deleteAssets.count) to delete")
-          .font(AppFont.body(15))
-          .foregroundColor(Color(red: 0.40, green: 0.46, blue: 0.56))
+          .font(.subheadline)
+          .foregroundColor(AppColor.subtext)
 
         if deletedCount > 0 {
           Text("Deleted \(deletedCount) photos.")
-            .font(AppFont.body(14, weight: .semibold))
-            .foregroundColor(Color(red: 0.26, green: 0.62, blue: 0.50))
+            .font(.headline)
+            .foregroundColor(AppColor.keep)
         }
 
         if deleteAssets.isEmpty {
           Text("Nothing marked for deletion.")
-            .font(AppFont.body(15))
-            .foregroundColor(Color(red: 0.40, green: 0.46, blue: 0.56))
+            .font(.subheadline)
+            .foregroundColor(AppColor.subtext)
             .padding(.vertical, 8)
         } else {
           Text("Estimated space to free: \(estimatedDeleteBytesText)")
-            .font(AppFont.body(14))
-            .foregroundColor(Color(red: 0.38, green: 0.46, blue: 0.54))
-          let columns = [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())]
+            .font(.caption)
+            .foregroundColor(AppColor.subtext)
+          let columns = [GridItem(.adaptive(minimum: 80))]
           LazyVGrid(columns: columns, spacing: 8) {
             ForEach(deleteAssets, id: \.localIdentifier) { asset in
               PhotoThumbnailView(asset: asset)
@@ -260,11 +265,11 @@ struct ReviewSessionView: View {
 
         VStack(spacing: 6) {
           Text("Lifetime deleted: \(totalDeletedCount) photos")
-            .font(AppFont.body(14))
-            .foregroundColor(Color(red: 0.38, green: 0.46, blue: 0.54))
+            .font(.caption)
+            .foregroundColor(AppColor.subtext)
           Text("Lifetime space freed: \(totalDeletedBytesText)")
-            .font(AppFont.body(14))
-            .foregroundColor(Color(red: 0.38, green: 0.46, blue: 0.54))
+            .font(.caption)
+            .foregroundColor(AppColor.subtext)
         }
         .padding(.top, 4)
 
@@ -274,7 +279,7 @@ struct ReviewSessionView: View {
           PrimaryActionButton(
             title: deleteAssets.isEmpty ? "Delete 0 Photos" : "Delete \(deleteAssets.count) Photos",
             systemImage: "trash.fill",
-            color: Color(red: 0.90, green: 0.20, blue: 0.24),
+            color: AppColor.delete,
             isEnabled: !deleteAssets.isEmpty && !deleteInProgress
           )
         }
@@ -286,7 +291,7 @@ struct ReviewSessionView: View {
           PrimaryActionButton(
             title: "Done",
             systemImage: "checkmark",
-            color: mode.accentColor,
+            color: AppColor.primary,
             isEnabled: !deleteInProgress
           )
         }
@@ -300,71 +305,45 @@ struct ReviewSessionView: View {
 
   private var accessView: some View {
     VStack(spacing: 16) {
-      Text("Photo access required")
-        .font(AppFont.display(20, weight: .semibold))
-        .foregroundColor(Color(red: 0.12, green: 0.16, blue: 0.22))
-      Text("Enable access to review and delete photos.")
-        .font(AppFont.body(15))
-        .foregroundColor(Color(red: 0.40, green: 0.46, blue: 0.56))
-      Button("Enable Photo Access") {
-        Task {
-          authStatus = await PhotoLibrary.requestAuthorization()
-          loadAssets()
+        Text("Photo access required")
+            .font(.title2.weight(.bold))
+            .foregroundColor(AppColor.text)
+        Text("Enable access to review and delete photos.")
+            .font(.subheadline)
+            .foregroundColor(AppColor.subtext)
+        Button("Enable Photo Access") {
+            Task {
+                authStatus = await PhotoLibrary.requestAuthorization()
+                loadAssets()
+            }
         }
-      }
-      .buttonStyle(.borderedProminent)
-      .tint(mode.accentColor)
+        .buttonStyle(.borderedProminent)
+        .tint(AppColor.primary)
     }
     .padding(24)
-    .background(
-      RoundedRectangle(cornerRadius: 18, style: .continuous)
-        .fill(Color.white.opacity(0.9))
-        .shadow(color: Color.black.opacity(0.10), radius: 12, x: 0, y: 6)
-    )
+    .background(AppColor.card)
+    .cornerRadius(18)
+    .shadow(color: AppColor.shadow, radius: 12, x: 0, y: 6)
     .padding(.horizontal, 24)
   }
 
   private var loadingView: some View {
     ProgressView("Loading \(mode.title.lowercased()) photos...")
       .padding(24)
-      .background(
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
-          .fill(Color.white.opacity(0.9))
-      )
+      .background(AppColor.card)
+      .cornerRadius(18)
   }
 
   private var emptyView: some View {
-    VStack(spacing: 12) {
-      Text("No photos found")
-        .font(AppFont.display(20, weight: .semibold))
-        .foregroundColor(Color(red: 0.12, green: 0.16, blue: 0.22))
-      Text("Try a different review mode.")
-        .font(AppFont.body(15))
-        .foregroundColor(Color(red: 0.40, green: 0.46, blue: 0.56))
-      Button("Back") {
-        dismiss()
+      ContentUnavailableView {
+          Label("No Photos Found", systemImage: "photo.on.rectangle.angled")
+      } description: {
+          Text("Try a different review mode, or check your photo library.")
+      } actions: {
+          Button("Back") {
+              dismiss()
+          }
       }
-      .buttonStyle(.bordered)
-    }
-    .padding(24)
-    .background(
-      RoundedRectangle(cornerRadius: 18, style: .continuous)
-        .fill(Color.white.opacity(0.9))
-        .shadow(color: Color.black.opacity(0.10), radius: 12, x: 0, y: 6)
-    )
-    .padding(.horizontal, 24)
-  }
-
-  private var sessionBackground: some View {
-    LinearGradient(
-      colors: [
-        Color(red: 0.98, green: 0.98, blue: 0.99),
-        Color(red: 0.94, green: 0.96, blue: 0.98),
-      ],
-      startPoint: .top,
-      endPoint: .bottom
-    )
-    .ignoresSafeArea()
   }
 
   private func loadAssets() {
@@ -436,6 +415,15 @@ struct ReviewSessionView: View {
     }
   }
 
+  private func updateCaching() {
+    guard cardSize != .zero else { return }
+    let targetSize = PhotoLibrary.scaledSize(for: cardSize)
+    let nextAssets = [currentAsset, nextAsset].compactMap { $0 }
+    PhotoLibrary.stopCachingAssets(cachedAssets, targetSize: targetSize)
+    PhotoLibrary.startCachingAssets(nextAssets, targetSize: targetSize)
+    cachedAssets = nextAssets
+  }
+
   private func deleteSelected() {
     guard !deleteAssets.isEmpty, !deleteInProgress else { return }
     deleteInProgress = true
@@ -485,17 +473,10 @@ private struct PhotoCardView: View {
   let targetSize: CGSize
 
   var body: some View {
-    ZStack {
-      RoundedRectangle(cornerRadius: 26, style: .continuous)
-        .fill(Color.white)
-      PhotoAssetImageView(asset: asset, targetSize: targetSize)
-        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
-    }
-    .overlay(
-      RoundedRectangle(cornerRadius: 26, style: .continuous)
-        .stroke(Color.white.opacity(0.4), lineWidth: 1)
-    )
-    .shadow(color: Color.black.opacity(0.12), radius: 18, x: 0, y: 10)
+    PhotoAssetImageView(asset: asset, targetSize: targetSize)
+        .background(AppColor.card)
+        .clipShape(RoundedRectangle(cornerRadius: 20))
+        .shadow(color: AppColor.shadow, radius: 10, x: 0, y: 5)
   }
 }
 
@@ -504,7 +485,7 @@ private struct PhotoThumbnailView: View {
 
   var body: some View {
     PhotoAssetImageView(asset: asset, targetSize: CGSize(width: 120, height: 120))
-      .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+      .cornerRadius(12)
   }
 }
 
@@ -515,6 +496,7 @@ private struct PhotoAssetImageView: View {
   @State private var image: PlatformImage?
   @State private var requestId: PHImageRequestID?
   @State private var isLoaded = false
+  @State private var assetIdentifier = ""
 
   var body: some View {
     ZStack {
@@ -524,17 +506,8 @@ private struct PhotoAssetImageView: View {
           .scaledToFill()
           .opacity(isLoaded ? 1 : 0)
       } else {
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
-          .fill(
-            LinearGradient(
-              colors: [
-                Color.white.opacity(0.6),
-                Color(red: 0.88, green: 0.93, blue: 0.98),
-              ],
-              startPoint: .topLeading,
-              endPoint: .bottomTrailing
-            )
-          )
+        Rectangle()
+          .fill(Color.gray.opacity(0.1))
       }
     }
     .clipped()
@@ -564,23 +537,31 @@ private struct PhotoAssetImageView: View {
     cancelRequest()
     image = nil
     isLoaded = false
+    assetIdentifier = asset.localIdentifier
     let options = PHImageRequestOptions()
     options.isNetworkAccessAllowed = true
-    options.deliveryMode = .highQualityFormat
+    options.deliveryMode = .opportunistic
     options.resizeMode = .fast
 
     let scale = platformScale
     let size = CGSize(width: targetSize.width * scale, height: targetSize.height * scale)
-    requestId = PHImageManager.default().requestImage(
+    requestId = PhotoLibrary.imageManager.requestImage(
       for: asset,
       targetSize: size,
       contentMode: .aspectFill,
       options: options
-    ) { result, _ in
-      if let result {
+    ) { result, info in
+      guard let result else { return }
+      let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
+      Task { @MainActor in
+        guard assetIdentifier == asset.localIdentifier else { return }
         image = result
-        withAnimation(.easeOut(duration: 0.2)) {
+        if isDegraded {
           isLoaded = true
+        } else {
+          withAnimation(.easeOut(duration: 0.2)) {
+            isLoaded = true
+          }
         }
       }
     }
@@ -588,7 +569,7 @@ private struct PhotoAssetImageView: View {
 
   private func cancelRequest() {
     if let requestId {
-      PHImageManager.default().cancelImageRequest(requestId)
+      PhotoLibrary.imageManager.cancelImageRequest(requestId)
     }
     requestId = nil
   }
@@ -611,9 +592,9 @@ private struct SwipeOverlayView: View {
     if offset > 20 {
       HStack {
         Label("KEEP", systemImage: "heart.fill")
-          .padding(.horizontal, 14)
-          .padding(.vertical, 8)
-          .background(Color.green.opacity(0.85))
+          .font(.headline)
+          .padding()
+          .background(AppColor.keep.opacity(0.85))
           .foregroundColor(.white)
           .clipShape(Capsule())
         Spacer()
@@ -623,9 +604,9 @@ private struct SwipeOverlayView: View {
       HStack {
         Spacer()
         Label("DELETE", systemImage: "trash.fill")
-          .padding(.horizontal, 14)
-          .padding(.vertical, 8)
-          .background(Color.red.opacity(0.85))
+          .font(.headline)
+          .padding()
+          .background(AppColor.delete.opacity(0.85))
           .foregroundColor(.white)
           .clipShape(Capsule())
       }
@@ -642,17 +623,14 @@ private struct DecisionButton: View {
   var body: some View {
     HStack(spacing: 8) {
       Image(systemName: systemImage)
-        .font(.system(size: 16, weight: .semibold))
+        .font(.headline)
       Text(title)
-        .font(AppFont.body(16, weight: .semibold))
+        .fontWeight(.semibold)
     }
     .foregroundColor(.white)
-    .frame(maxWidth: .infinity)
-    .padding(.vertical, 14)
-    .background(
-      RoundedRectangle(cornerRadius: 16, style: .continuous)
-        .fill(color)
-    )
+    .frame(maxWidth: .infinity, minHeight: 50)
+    .background(color)
+    .cornerRadius(16)
     .shadow(color: color.opacity(0.35), radius: 10, x: 0, y: 6)
   }
 }
@@ -666,16 +644,13 @@ private struct PrimaryActionButton: View {
   var body: some View {
     HStack(spacing: 8) {
       Image(systemName: systemImage)
-        .font(.system(size: 15, weight: .semibold))
+        .font(.headline)
       Text(title)
-        .font(AppFont.body(16, weight: .semibold))
+        .fontWeight(.semibold)
     }
     .foregroundColor(.white)
-    .frame(maxWidth: .infinity)
-    .padding(.vertical, 14)
-    .background(
-      RoundedRectangle(cornerRadius: 16, style: .continuous)
-        .fill(color.opacity(isEnabled ? 1.0 : 0.45))
-    )
+    .frame(maxWidth: .infinity, minHeight: 50)
+    .background(color.opacity(isEnabled ? 1.0 : 0.45))
+    .cornerRadius(16)
   }
 }
