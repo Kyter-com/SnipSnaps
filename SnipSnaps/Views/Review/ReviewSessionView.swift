@@ -185,7 +185,7 @@ struct ReviewSessionView: View {
             .opacity(0.2)
         }
 
-        if let nextAsset {
+        if nextAsset != nil {
           CardBackdropView(bounds: proxy.size)
             .allowsHitTesting(false)
             .scaleEffect(0.965 + (swipeProgress * 0.02))
