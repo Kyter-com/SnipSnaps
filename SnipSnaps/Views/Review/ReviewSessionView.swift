@@ -25,6 +25,79 @@ private struct CachedAssetRequest: Equatable {
   }
 }
 
+private struct ReviewPhotoDetails {
+  let captureDateText: String
+  let captureTimestampText: String
+  let fileSizeText: String
+  let resolutionText: String
+  let aspectRatioText: String
+  let fileName: String?
+  let typeText: String
+
+  init(asset: PHAsset) {
+    let creationDate = asset.creationDate
+    captureDateText = creationDate.map(Self.dateFormatter.string(from:)) ?? "Unknown date"
+    captureTimestampText = creationDate.map(Self.timestampFormatter.string(from:)) ?? "Unknown"
+
+    let bytes = PhotoLibrary.estimatedBytes(for: asset)
+    if bytes > 0 {
+      fileSizeText = ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+    } else {
+      fileSizeText = "Unavailable"
+    }
+
+    resolutionText = "\(asset.pixelWidth) × \(asset.pixelHeight)"
+    aspectRatioText = Self.aspectRatioText(width: asset.pixelWidth, height: asset.pixelHeight)
+    fileName = PHAssetResource.assetResources(for: asset).first?.originalFilename
+    typeText = Self.typeText(for: asset)
+  }
+
+  private static func aspectRatioText(width: Int, height: Int) -> String {
+    guard width > 0, height > 0 else { return "Unknown" }
+    let gcdValue = gcd(width, height)
+    return "\(width / gcdValue):\(height / gcdValue)"
+  }
+
+  private static func typeText(for asset: PHAsset) -> String {
+    var labels: [String] = []
+    if asset.mediaSubtypes.contains(.photoScreenshot) {
+      labels.append("Screenshot")
+    }
+    if asset.mediaSubtypes.contains(.photoLive) {
+      labels.append("Live Photo")
+    }
+    if labels.isEmpty {
+      labels.append("Photo")
+    }
+    return labels.joined(separator: " • ")
+  }
+
+  private static func gcd(_ lhs: Int, _ rhs: Int) -> Int {
+    var a = abs(lhs)
+    var b = abs(rhs)
+    while b != 0 {
+      let remainder = a % b
+      a = b
+      b = remainder
+    }
+    return max(a, 1)
+  }
+
+  private static let dateFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.dateStyle = .medium
+    formatter.timeStyle = .none
+    return formatter
+  }()
+
+  private static let timestampFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.dateStyle = .medium
+    formatter.timeStyle = .short
+    return formatter
+  }()
+}
+
 struct ReviewSessionView: View {
   let mode: ReviewMode
 
@@ -44,8 +117,10 @@ struct ReviewSessionView: View {
   @State private var errorMessage = ""
   @State private var deleteInProgress = false
   @State private var deletedCount = 0
+  @State private var showMetadataSheet = false
   @State private var cardSize: CGSize = .zero
   @State private var cachedRequests: [CachedAssetRequest] = []
+  @State private var currentPhotoDetails: ReviewPhotoDetails?
   @AppStorage("reviewLimit") private var reviewLimit: Int = 20
   @AppStorage("totalDeletedCount") private var totalDeletedCount: Int = 0
   @AppStorage("totalDeletedBytes") private var totalDeletedBytes: Int = 0
@@ -128,6 +203,12 @@ struct ReviewSessionView: View {
     }
     .navigationTitle(mode.title)
     .navigationBarTitleDisplayMode(.inline)
+    .sheet(isPresented: $showMetadataSheet) {
+      if let asset = currentAsset,
+         let currentPhotoDetails {
+        PhotoMetadataSheet(asset: asset, details: currentPhotoDetails)
+      }
+    }
     .toolbar {
       if showSummary {
         ToolbarItem(placement: .topBarTrailing) {
@@ -136,8 +217,14 @@ struct ReviewSessionView: View {
       }
     }
     .onAppear { loadAssets() }
-    .onChange(of: currentIndex) { _, _ in updateCaching() }
-    .onChange(of: assets.count) { _, _ in updateCaching() }
+    .onChange(of: currentIndex) { _, _ in
+      updateCaching()
+      refreshCurrentPhotoDetails()
+    }
+    .onChange(of: assets.count) { _, _ in
+      updateCaching()
+      refreshCurrentPhotoDetails()
+    }
     .alert("Something went wrong", isPresented: $showError) {
       Button("OK", role: .cancel) {}
     } message: {
@@ -164,13 +251,38 @@ struct ReviewSessionView: View {
   }
 
   private var reviewHeader: some View {
-    HStack(spacing: 12) {
-      Text("\(currentIndex + 1) of \(assets.count)")
-        .font(.footnote.weight(.medium))
-        .foregroundStyle(.secondary)
-        .monospacedDigit()
-      ProgressView(value: progressValue)
-        .tint(AppColor.primary)
+    VStack(alignment: .leading, spacing: 10) {
+      HStack(spacing: 12) {
+        Text("\(currentIndex + 1) of \(assets.count)")
+          .font(.footnote.weight(.medium))
+          .foregroundStyle(.secondary)
+          .monospacedDigit()
+        ProgressView(value: progressValue)
+          .tint(AppColor.primary)
+      }
+
+      if let currentPhotoDetails {
+        Button {
+          showMetadataSheet = true
+        } label: {
+          HStack(spacing: 12) {
+            Label(currentPhotoDetails.captureDateText, systemImage: "calendar")
+              .lineLimit(1)
+            Spacer(minLength: 0)
+            Label(currentPhotoDetails.fileSizeText, systemImage: "internaldrive")
+              .lineLimit(1)
+            Image(systemName: "info.circle")
+              .foregroundStyle(AppColor.primary)
+          }
+          .font(.footnote.weight(.medium))
+          .foregroundStyle(.secondary)
+          .padding(.horizontal, 14)
+          .padding(.vertical, 12)
+          .frame(maxWidth: .infinity)
+          .background(AppColor.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(.plain)
+      }
     }
   }
 
@@ -199,6 +311,9 @@ struct ReviewSessionView: View {
             .overlay(SwipeOverlayView(offset: activeCardOffset.width))
             .offset(activeCardOffset)
             .rotationEffect(.degrees(swipeRotation))
+            .onTapGesture {
+              showMetadataSheet = true
+            }
             .gesture(
               DragGesture(minimumDistance: 4)
                 .updating($gestureOffset) { value, state, _ in
@@ -425,6 +540,7 @@ struct ReviewSessionView: View {
         keptAssets = []
         deleteAssets = []
         deletedCount = 0
+        currentPhotoDetails = fetched.first.map(ReviewPhotoDetails.init)
         showSummary = fetched.isEmpty
         isLoading = false
       }
@@ -509,6 +625,10 @@ struct ReviewSessionView: View {
     cachedRequests = nextRequests
   }
 
+  private func refreshCurrentPhotoDetails() {
+    currentPhotoDetails = currentAsset.map(ReviewPhotoDetails.init)
+  }
+
   private func deleteSelected() {
     guard !deleteAssets.isEmpty, !deleteInProgress else { return }
     deleteInProgress = true
@@ -556,6 +676,65 @@ struct ReviewSessionView: View {
 
   private func interactiveOffset(for translation: CGSize) -> CGSize {
     CGSize(width: translation.width, height: translation.height * 0.08)
+  }
+}
+
+private struct PhotoMetadataSheet: View {
+  let asset: PHAsset
+  let details: ReviewPhotoDetails
+
+  @Environment(\.dismiss) private var dismiss
+  @Environment(\.openURL) private var openURL
+
+  var body: some View {
+    NavigationStack {
+      Form {
+        Section("Photo") {
+          LabeledContent("Date") {
+            Text(details.captureTimestampText)
+              .multilineTextAlignment(.trailing)
+          }
+          LabeledContent("File size", value: details.fileSizeText)
+          LabeledContent("Resolution", value: details.resolutionText)
+          LabeledContent("Aspect ratio", value: details.aspectRatioText)
+          LabeledContent("Type", value: details.typeText)
+          if let fileName = details.fileName {
+            LabeledContent("Filename") {
+              Text(fileName)
+                .multilineTextAlignment(.trailing)
+            }
+          }
+        }
+
+        Section("Library") {
+          LabeledContent("Favorite", value: asset.isFavorite ? "Yes" : "No")
+          LabeledContent("Hidden", value: asset.isHidden ? "Yes" : "No")
+        }
+
+        Section {
+          Button {
+            openPhotosApp()
+          } label: {
+            Label("Open in Photos", systemImage: "photo.on.rectangle")
+          }
+        } footer: {
+          Text("This opens Apple Photos. iOS does not provide a public API to deep-link directly to the exact photo.")
+        }
+      }
+      .navigationTitle("Photo Details")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .topBarTrailing) {
+          Button("Done") { dismiss() }
+        }
+      }
+    }
+    .presentationDetents([.medium, .large])
+  }
+
+  private func openPhotosApp() {
+    guard let url = URL(string: "photos-redirect://") else { return }
+    openURL(url)
   }
 }
 
