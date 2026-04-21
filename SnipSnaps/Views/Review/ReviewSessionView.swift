@@ -316,8 +316,6 @@ struct ReviewSessionView: View {
 
   private var cardStack: some View {
     GeometryReader { proxy in
-      let visibleCards = Array(upcomingAssets.prefix(2).enumerated())
-
       ZStack {
         if upcomingAssets.count > 2 {
           CardBackdropView(bounds: proxy.size)
@@ -327,8 +325,21 @@ struct ReviewSessionView: View {
             .opacity(0.2 + (swipeProgress * 0.08))
         }
 
-        ForEach(Array(visibleCards.reversed()), id: \.element.localIdentifier) { offset, asset in
-          reviewCard(asset, bounds: proxy.size, stackIndex: offset)
+        if nextAsset != nil {
+          CardBackdropView(bounds: proxy.size)
+            .allowsHitTesting(false)
+            .scaleEffect(0.965 + (swipeProgress * 0.018))
+            .offset(y: 12 - (swipeProgress * 6))
+            .opacity(0.18 + (swipeProgress * 0.12))
+            .overlay {
+              RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .opacity(0.34 + (1 - Double(swipeProgress)) * 0.24)
+            }
+        }
+
+        if let asset = currentAsset {
+          reviewCard(asset, bounds: proxy.size)
         }
       }
       .frame(width: proxy.size.width, height: proxy.size.height)
@@ -344,33 +355,24 @@ struct ReviewSessionView: View {
   }
 
   @ViewBuilder
-  private func reviewCard(_ asset: PHAsset, bounds: CGSize, stackIndex: Int) -> some View {
-    let isFrontCard = stackIndex == 0
-
-    PhotoCardView(asset: asset, bounds: bounds, enableLivePhotoPlayback: isFrontCard)
-      .scaleEffect(isFrontCard ? 1 : 0.965 + (swipeProgress * 0.035))
-      .offset(isFrontCard ? activeCardOffset : CGSize(width: 0, height: 10 - (swipeProgress * 10)))
-      .rotationEffect(.degrees(isFrontCard ? swipeRotation : 0))
-      .opacity(isFrontCard ? 1 : 0.48 + (swipeProgress * 0.52))
-      .zIndex(isFrontCard ? 2 : 1)
-      .allowsHitTesting(isFrontCard)
+  private func reviewCard(_ asset: PHAsset, bounds: CGSize) -> some View {
+    PhotoCardView(asset: asset, bounds: bounds, enableLivePhotoPlayback: true)
+      .offset(activeCardOffset)
+      .rotationEffect(.degrees(swipeRotation))
       .overlay {
-        if isFrontCard {
-          SwipeOverlayView(offset: activeCardOffset.width)
-        }
+        SwipeOverlayView(offset: activeCardOffset.width)
       }
       .onTapGesture {
-        guard isFrontCard else { return }
         showMetadataSheet = true
       }
       .gesture(
         DragGesture(minimumDistance: 4)
           .updating($gestureOffset) { value, state, _ in
-            guard isFrontCard, !isAnimatingCard else { return }
+            guard !isAnimatingCard else { return }
             state = value.translation
           }
           .onEnded { value in
-            guard isFrontCard, !isAnimatingCard else { return }
+            guard !isAnimatingCard else { return }
             handleSwipe(value)
           }
       )
@@ -621,10 +623,14 @@ struct ReviewSessionView: View {
     }
     Task { @MainActor in
       try? await Task.sleep(for: .milliseconds(220))
+      var resetTransaction = Transaction()
+      resetTransaction.disablesAnimations = true
+      withTransaction(resetTransaction) {
+        cardDepartureOffset = .zero
+      }
       withAnimation(.snappy(duration: 0.3, extraBounce: 0.03)) {
         advance()
       }
-      cardDepartureOffset = .zero
       isAnimatingCard = false
     }
   }
