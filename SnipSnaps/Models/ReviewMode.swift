@@ -2,6 +2,7 @@ import SwiftUI
 
 enum ReviewMode: String, CaseIterable, Identifiable {
   case today
+  case onThisDay
   case random
   case screenshots
 
@@ -11,6 +12,8 @@ enum ReviewMode: String, CaseIterable, Identifiable {
     switch self {
     case .today:
       return "Today"
+    case .onThisDay:
+      return "On This Day"
     case .random:
       return "Random"
     case .screenshots:
@@ -22,6 +25,8 @@ enum ReviewMode: String, CaseIterable, Identifiable {
     switch self {
     case .today:
       return "Review your newest shots"
+    case .onThisDay:
+      return "Photos from \(monthDayText) across the years"
     case .random:
       return "A surprise mix from your library"
     case .screenshots:
@@ -33,6 +38,8 @@ enum ReviewMode: String, CaseIterable, Identifiable {
     switch self {
     case .today:
       return "sun.max.fill"
+    case .onThisDay:
+      return "calendar"
     case .random:
       return "shuffle"
     case .screenshots:
@@ -40,18 +47,7 @@ enum ReviewMode: String, CaseIterable, Identifiable {
     }
   }
 
-  var accentColor: Color {
-    AppColor.primary
-  }
-
-  var gradient: LinearGradient {
-    switch self {
-    case .today:
-        return AppColor.gradient1
-    case .random:
-        return AppColor.gradient2
-    case .screenshots:
-        return AppColor.gradient3
-    }
+  private var monthDayText: String {
+    Date.now.formatted(.dateTime.month(.abbreviated).day())
   }
 }

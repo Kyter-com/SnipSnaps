@@ -16,51 +16,34 @@ struct SettingsView: View {
   var body: some View {
     NavigationStack {
       Form {
-        Section(header: Text("Review Settings")) {
-            VStack(alignment: .leading) {
-                Text("Review Size")
-                Text("Choose how many photos appear in each session.")
-                    .font(.caption)
-                    .foregroundColor(AppColor.subtext)
-            }
+        Section {
+          Stepper(value: $reviewLimit, in: 10...100, step: 5) {
             HStack {
-                Text("\(reviewLimit) photos")
-                Spacer()
-                Stepper("", value: $reviewLimit, in: 10...100, step: 5)
-                    .labelsHidden()
+              Text("Review Size")
+              Spacer()
+              Text("\(reviewLimit)")
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
             }
-            Slider(value: reviewLimitBinding, in: 10...100, step: 5)
-                .tint(AppColor.primary)
+          }
+        } header: {
+          Text("Review")
+        } footer: {
+          Text("How many photos appear in each session.")
         }
-        
-        Section(header: Text("Lifetime Stats")) {
-            if totalDeletedCount == 0 {
-                Text("No deletions yet.")
-            } else {
-                HStack {
-                    Text("Deleted photos")
-                    Spacer()
-                    Text("\(totalDeletedCount)")
-                        .foregroundColor(AppColor.subtext)
-                }
-                HStack {
-                    Text("Estimated space freed")
-                    Spacer()
-                    Text(totalDeletedBytesText)
-                        .foregroundColor(AppColor.subtext)
-                }
-            }
+
+        Section("Lifetime Stats") {
+          if totalDeletedCount == 0 {
+            Text("No deletions yet.")
+              .foregroundStyle(.secondary)
+          } else {
+            LabeledContent("Deleted photos", value: "\(totalDeletedCount)")
+            LabeledContent("Space freed", value: totalDeletedBytesText)
+          }
         }
       }
       .navigationTitle("Settings")
     }
-  }
-
-  private var reviewLimitBinding: Binding<Double> {
-    Binding(
-      get: { Double(reviewLimit) },
-      set: { reviewLimit = Int($0.rounded()) }
-    )
   }
 
   private var totalDeletedBytesText: String {
