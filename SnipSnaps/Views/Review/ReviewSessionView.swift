@@ -2,6 +2,10 @@ import Foundation
 import Photos
 import SwiftUI
 
+#if canImport(PhotosUI)
+import PhotosUI
+#endif
+
 #if canImport(UIKit)
 import UIKit
 typealias PlatformImage = UIImage
@@ -32,6 +36,7 @@ private struct ReviewPhotoDetails {
   let resolutionText: String
   let aspectRatioText: String
   let fileName: String?
+  let isLivePhoto: Bool
   let typeText: String
 
   init(asset: PHAsset) {
@@ -49,6 +54,7 @@ private struct ReviewPhotoDetails {
     resolutionText = "\(asset.pixelWidth) × \(asset.pixelHeight)"
     aspectRatioText = Self.aspectRatioText(width: asset.pixelWidth, height: asset.pixelHeight)
     fileName = PHAssetResource.assetResources(for: asset).first?.originalFilename
+    isLivePhoto = asset.mediaSubtypes.contains(.photoLive)
     typeText = Self.typeText(for: asset)
   }
 
@@ -186,6 +192,10 @@ struct ReviewSessionView: View {
     return ByteCountFormatter.string(fromByteCount: Int64(totalDeletedBytes), countStyle: .file)
   }
 
+  private var infoPanelOverlayOpacity: Double {
+    0.34 + (1 - Double(swipeProgress)) * 0.48
+  }
+
   var body: some View {
     ZStack {
       AppColor.background.ignoresSafeArea()
@@ -257,8 +267,10 @@ struct ReviewSessionView: View {
           .font(.footnote.weight(.medium))
           .foregroundStyle(.secondary)
           .monospacedDigit()
+          .contentTransition(.numericText())
         ProgressView(value: progressValue)
           .tint(AppColor.primary)
+          .animation(.snappy(duration: 0.28, extraBounce: 0.02), value: progressValue)
       }
 
       if let currentPhotoDetails {
@@ -266,6 +278,11 @@ struct ReviewSessionView: View {
           showMetadataSheet = true
         } label: {
           HStack(spacing: 12) {
+            if currentPhotoDetails.isLivePhoto {
+              Label("Live", systemImage: "livephoto")
+                .lineLimit(1)
+                .foregroundStyle(AppColor.primary)
+            }
             Label(currentPhotoDetails.captureDateText, systemImage: "calendar")
               .lineLimit(1)
             Spacer(minLength: 0)
@@ -279,52 +296,39 @@ struct ReviewSessionView: View {
           .padding(.horizontal, 14)
           .padding(.vertical, 12)
           .frame(maxWidth: .infinity)
-          .background(AppColor.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+          .background {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+              .fill(.ultraThinMaterial)
+              .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                  .fill(AppColor.card.opacity(infoPanelOverlayOpacity))
+              }
+          }
         }
+        .id(currentAsset?.localIdentifier)
+        .transition(.opacity.combined(with: .scale(scale: 0.985)))
         .buttonStyle(.plain)
       }
     }
+    .animation(.interactiveSpring(response: 0.28, dampingFraction: 0.86), value: currentAsset?.localIdentifier)
+    .animation(.interactiveSpring(response: 0.24, dampingFraction: 0.9), value: swipeProgress)
   }
 
   private var cardStack: some View {
     GeometryReader { proxy in
+      let visibleCards = Array(upcomingAssets.prefix(2).enumerated())
+
       ZStack {
         if upcomingAssets.count > 2 {
           CardBackdropView(bounds: proxy.size)
             .allowsHitTesting(false)
-            .scaleEffect(0.92)
-            .offset(y: 20)
-            .opacity(0.2)
+            .scaleEffect(0.92 + (swipeProgress * 0.015))
+            .offset(y: 20 - (swipeProgress * 6))
+            .opacity(0.2 + (swipeProgress * 0.08))
         }
 
-        if nextAsset != nil {
-          CardBackdropView(bounds: proxy.size)
-            .allowsHitTesting(false)
-            .scaleEffect(0.965 + (swipeProgress * 0.02))
-            .offset(y: 10)
-            .opacity(0.38)
-        }
-
-        if let asset = currentAsset {
-          PhotoCardView(asset: asset, bounds: proxy.size)
-            .id(asset.localIdentifier)
-            .overlay(SwipeOverlayView(offset: activeCardOffset.width))
-            .offset(activeCardOffset)
-            .rotationEffect(.degrees(swipeRotation))
-            .onTapGesture {
-              showMetadataSheet = true
-            }
-            .gesture(
-              DragGesture(minimumDistance: 4)
-                .updating($gestureOffset) { value, state, _ in
-                  guard !isAnimatingCard else { return }
-                  state = value.translation
-                }
-                .onEnded { value in
-                  guard !isAnimatingCard else { return }
-                  handleSwipe(value)
-                }
-            )
+        ForEach(Array(visibleCards.reversed()), id: \.element.localIdentifier) { offset, asset in
+          reviewCard(asset, bounds: proxy.size, stackIndex: offset)
         }
       }
       .frame(width: proxy.size.width, height: proxy.size.height)
@@ -337,6 +341,39 @@ struct ReviewSessionView: View {
         updateCaching()
       }
     }
+  }
+
+  @ViewBuilder
+  private func reviewCard(_ asset: PHAsset, bounds: CGSize, stackIndex: Int) -> some View {
+    let isFrontCard = stackIndex == 0
+
+    PhotoCardView(asset: asset, bounds: bounds, enableLivePhotoPlayback: isFrontCard)
+      .scaleEffect(isFrontCard ? 1 : 0.965 + (swipeProgress * 0.035))
+      .offset(isFrontCard ? activeCardOffset : CGSize(width: 0, height: 10 - (swipeProgress * 10)))
+      .rotationEffect(.degrees(isFrontCard ? swipeRotation : 0))
+      .opacity(isFrontCard ? 1 : 0.48 + (swipeProgress * 0.52))
+      .zIndex(isFrontCard ? 2 : 1)
+      .allowsHitTesting(isFrontCard)
+      .overlay {
+        if isFrontCard {
+          SwipeOverlayView(offset: activeCardOffset.width)
+        }
+      }
+      .onTapGesture {
+        guard isFrontCard else { return }
+        showMetadataSheet = true
+      }
+      .gesture(
+        DragGesture(minimumDistance: 4)
+          .updating($gestureOffset) { value, state, _ in
+            guard isFrontCard, !isAnimatingCard else { return }
+            state = value.translation
+          }
+          .onEnded { value in
+            guard isFrontCard, !isAnimatingCard else { return }
+            handleSwipe(value)
+          }
+      )
   }
 
   private var decisionBar: some View {
@@ -584,7 +621,9 @@ struct ReviewSessionView: View {
     }
     Task { @MainActor in
       try? await Task.sleep(for: .milliseconds(220))
-      advance()
+      withAnimation(.snappy(duration: 0.3, extraBounce: 0.03)) {
+        advance()
+      }
       cardDepartureOffset = .zero
       isAnimatingCard = false
     }
@@ -741,19 +780,46 @@ private struct PhotoMetadataSheet: View {
 private struct PhotoCardView: View {
   let asset: PHAsset
   let bounds: CGSize
+  var enableLivePhotoPlayback = false
+
+  @State private var livePhotoPlaybackTrigger = 0
 
   var body: some View {
     let fittedSize = PhotoLibrary.fittedSize(for: asset, in: bounds)
-    PhotoAssetImageView(asset: asset, targetSize: fittedSize)
-      .frame(width: fittedSize.width, height: fittedSize.height)
-      .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-      .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-      .overlay(
-        RoundedRectangle(cornerRadius: 28, style: .continuous)
-          .strokeBorder(Color.white.opacity(0.28), lineWidth: 0.5)
+    ZStack(alignment: .topLeading) {
+      PhotoAssetImageView(
+        asset: asset,
+        targetSize: fittedSize,
+        enableLivePhotoPlayback: enableLivePhotoPlayback,
+        livePhotoPlaybackTrigger: livePhotoPlaybackTrigger
       )
-      .shadow(color: AppColor.shadow.opacity(1.35), radius: 22, x: 0, y: 12)
-      .frame(width: bounds.width, height: bounds.height)
+
+      if enableLivePhotoPlayback, asset.mediaSubtypes.contains(.photoLive) {
+        Label("Live", systemImage: "livephoto")
+          .font(.footnote.weight(.semibold))
+          .foregroundStyle(.white)
+          .padding(.horizontal, 12)
+          .padding(.vertical, 8)
+          .background(.ultraThinMaterial, in: Capsule(style: .continuous))
+          .padding(18)
+      }
+    }
+    .frame(width: fittedSize.width, height: fittedSize.height)
+    .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+    .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+    .overlay(
+      RoundedRectangle(cornerRadius: 28, style: .continuous)
+        .strokeBorder(Color.white.opacity(0.28), lineWidth: 0.5)
+    )
+    .shadow(color: AppColor.shadow.opacity(1.35), radius: 22, x: 0, y: 12)
+    .frame(width: bounds.width, height: bounds.height)
+    .simultaneousGesture(
+      LongPressGesture(minimumDuration: 0.18)
+        .onEnded { _ in
+          guard enableLivePhotoPlayback, asset.mediaSubtypes.contains(.photoLive) else { return }
+          livePhotoPlaybackTrigger += 1
+        }
+    )
   }
 }
 
@@ -787,12 +853,26 @@ private struct PhotoAssetImageView: View {
   let asset: PHAsset
   let targetSize: CGSize
   var contentMode: ContentMode = .fit
+  var enableLivePhotoPlayback = false
+  var livePhotoPlaybackTrigger = 0
 
   @Environment(\.displayScale) private var displayScale
   @State private var image: PlatformImage?
   @State private var requestId: PHImageRequestID?
   @State private var previewRequestId: PHImageRequestID?
   @State private var isLoaded = false
+
+  private var requestSize: CGSize {
+    PhotoLibrary.imageRequestSize(for: asset, displaySize: targetSize, scale: displayScale)
+  }
+
+  private var imageContentMode: PHImageContentMode {
+    contentMode == .fill ? .aspectFill : .aspectFit
+  }
+
+  private var showsLivePhotoPlayback: Bool {
+    enableLivePhotoPlayback && asset.mediaSubtypes.contains(.photoLive)
+  }
 
   var body: some View {
     ZStack {
@@ -805,6 +885,17 @@ private struct PhotoAssetImageView: View {
         Rectangle()
           .fill(Color(.tertiarySystemFill))
       }
+
+      #if canImport(PhotosUI) && canImport(UIKit)
+      if showsLivePhotoPlayback {
+        LivePhotoAssetView(
+          asset: asset,
+          targetSize: requestSize,
+          contentMode: imageContentMode,
+          playbackTrigger: livePhotoPlaybackTrigger
+        )
+      }
+      #endif
     }
     .clipped()
     .onAppear { requestImage() }
@@ -825,8 +916,6 @@ private struct PhotoAssetImageView: View {
   }
 
   private func requestImage() {
-    let requestSize = PhotoLibrary.imageRequestSize(for: asset, displaySize: targetSize, scale: displayScale)
-    let imageContentMode: PHImageContentMode = contentMode == .fill ? .aspectFill : .aspectFit
     let cacheKey = PhotoLibrary.imageCacheKey(for: asset, targetSize: requestSize, contentMode: imageContentMode)
     let prefersHighQualityImage = contentMode == .fit
 
@@ -907,6 +996,91 @@ private struct PhotoAssetImageView: View {
     previewRequestId = nil
   }
 }
+
+#if canImport(PhotosUI) && canImport(UIKit)
+private struct LivePhotoAssetView: UIViewRepresentable {
+  let asset: PHAsset
+  let targetSize: CGSize
+  let contentMode: PHImageContentMode
+  let playbackTrigger: Int
+
+  func makeCoordinator() -> Coordinator {
+    Coordinator()
+  }
+
+  func makeUIView(context: Context) -> PHLivePhotoView {
+    let view = PHLivePhotoView()
+    view.contentMode = contentMode == .aspectFill ? .scaleAspectFill : .scaleAspectFit
+    view.clipsToBounds = true
+    view.isMuted = true
+    context.coordinator.requestLivePhoto(for: asset, targetSize: targetSize, contentMode: contentMode, in: view)
+    return view
+  }
+
+  func updateUIView(_ view: PHLivePhotoView, context: Context) {
+    view.contentMode = contentMode == .aspectFill ? .scaleAspectFill : .scaleAspectFit
+    context.coordinator.requestLivePhoto(for: asset, targetSize: targetSize, contentMode: contentMode, in: view)
+
+    if context.coordinator.playbackTrigger != playbackTrigger {
+      context.coordinator.playbackTrigger = playbackTrigger
+      view.startPlayback(with: .full)
+    }
+  }
+
+  static func dismantleUIView(_ uiView: PHLivePhotoView, coordinator: Coordinator) {
+    coordinator.cancelRequest()
+    uiView.stopPlayback()
+    uiView.livePhoto = nil
+  }
+
+  final class Coordinator {
+    private var requestId: PHImageRequestID?
+    private var assetIdentifier: String?
+    private var requestedSize: CGSize = .zero
+    private var requestedContentMode: PHImageContentMode = .aspectFit
+    var playbackTrigger = 0
+
+    @MainActor
+    func requestLivePhoto(for asset: PHAsset, targetSize: CGSize, contentMode: PHImageContentMode, in view: PHLivePhotoView) {
+      guard assetIdentifier != asset.localIdentifier || requestedSize != targetSize || requestedContentMode != contentMode else { return }
+
+      cancelRequest()
+      assetIdentifier = asset.localIdentifier
+      requestedSize = targetSize
+      requestedContentMode = contentMode
+      view.livePhoto = nil
+      view.accessibilityIdentifier = asset.localIdentifier
+
+      let options = PHLivePhotoRequestOptions()
+      options.isNetworkAccessAllowed = true
+      options.deliveryMode = .highQualityFormat
+      let expectedAssetIdentifier = asset.localIdentifier
+
+      requestId = PhotoLibrary.imageManager.requestLivePhoto(
+        for: asset,
+        targetSize: targetSize,
+        contentMode: contentMode,
+        options: options
+      ) { livePhoto, _ in
+        guard let livePhoto else { return }
+        DispatchQueue.main.async {
+          guard view.accessibilityIdentifier == expectedAssetIdentifier else { return }
+          view.livePhoto = livePhoto
+        }
+      }
+    }
+
+    func cancelRequest() {
+      if let requestId {
+        PhotoLibrary.imageManager.cancelImageRequest(requestId)
+      }
+      requestId = nil
+      assetIdentifier = nil
+      requestedSize = .zero
+    }
+  }
+}
+#endif
 
 private struct SwipeOverlayView: View {
   let offset: CGFloat
