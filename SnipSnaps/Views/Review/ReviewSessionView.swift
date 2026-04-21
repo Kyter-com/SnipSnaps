@@ -648,6 +648,7 @@ private struct PhotoAssetImageView: View {
     let requestSize = PhotoLibrary.imageRequestSize(for: asset, displaySize: targetSize, scale: displayScale)
     let imageContentMode: PHImageContentMode = contentMode == .fill ? .aspectFill : .aspectFit
     let cacheKey = PhotoLibrary.imageCacheKey(for: asset, targetSize: requestSize, contentMode: imageContentMode)
+    let prefersHighQualityImage = contentMode == .fit
 
     if let cachedImage = PhotoLibrary.cachedImage(forKey: cacheKey) {
       image = cachedImage
@@ -661,7 +662,7 @@ private struct PhotoAssetImageView: View {
     isLoaded = false
     let options = PHImageRequestOptions()
     options.isNetworkAccessAllowed = true
-    options.deliveryMode = .opportunistic
+    options.deliveryMode = prefersHighQualityImage ? .highQualityFormat : .opportunistic
     options.resizeMode = .exact
 
     let identifier = asset.localIdentifier
@@ -675,6 +676,9 @@ private struct PhotoAssetImageView: View {
       let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
       Task { @MainActor in
         guard identifier == asset.localIdentifier else { return }
+        if prefersHighQualityImage && isDegraded {
+          return
+        }
         image = result
         if !isDegraded {
           PhotoLibrary.storeCachedImage(result, forKey: cacheKey)
