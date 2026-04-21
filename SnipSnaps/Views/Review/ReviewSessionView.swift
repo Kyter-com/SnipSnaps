@@ -612,6 +612,7 @@ private struct PhotoAssetImageView: View {
   @Environment(\.displayScale) private var displayScale
   @State private var image: PlatformImage?
   @State private var requestId: PHImageRequestID?
+  @State private var previewRequestId: PHImageRequestID?
   @State private var isLoaded = false
 
   var body: some View {
@@ -666,6 +667,30 @@ private struct PhotoAssetImageView: View {
     options.resizeMode = .exact
 
     let identifier = asset.localIdentifier
+    if prefersHighQualityImage {
+      let previewOptions = PHImageRequestOptions()
+      previewOptions.isNetworkAccessAllowed = true
+      previewOptions.deliveryMode = .opportunistic
+      previewOptions.resizeMode = .exact
+
+      previewRequestId = PhotoLibrary.imageManager.requestImage(
+        for: asset,
+        targetSize: requestSize,
+        contentMode: imageContentMode,
+        options: previewOptions
+      ) { result, info in
+        guard let result else { return }
+        let isCancelled = (info?[PHImageCancelledKey] as? Bool) ?? false
+        guard !isCancelled else { return }
+
+        Task { @MainActor in
+          guard identifier == asset.localIdentifier, image == nil else { return }
+          image = result
+          isLoaded = true
+        }
+      }
+    }
+
     requestId = PhotoLibrary.imageManager.requestImage(
       for: asset,
       targetSize: requestSize,
@@ -696,7 +721,11 @@ private struct PhotoAssetImageView: View {
     if let requestId {
       PhotoLibrary.imageManager.cancelImageRequest(requestId)
     }
+    if let previewRequestId {
+      PhotoLibrary.imageManager.cancelImageRequest(previewRequestId)
+    }
     requestId = nil
+    previewRequestId = nil
   }
 }
 
