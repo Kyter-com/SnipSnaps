@@ -3,10 +3,8 @@
 <plist version="1.0">
 <dict>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>SnipSnaps requires full Photo Library access to function properly</string>
-	<key>UIBackgroundModes</key>
-	<array>
-		<string>remote-notification</string>
-	</array>
+	<string>SnipSnaps needs access to review photos in your library.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>SnipSnaps needs permission to move photos you delete into the Recently Deleted album.</string>
 </dict>
 </plist>
