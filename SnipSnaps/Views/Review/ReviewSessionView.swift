@@ -109,6 +109,7 @@ struct ReviewSessionView: View {
 
   @Environment(\.dismiss) private var dismiss
   @Environment(\.displayScale) private var displayScale
+  @Namespace private var cardDeckNamespace
   @State private var authStatus = PhotoLibrary.authorizationStatus()
   @State private var isLoading = true
   @State private var assets: [PHAsset] = []
@@ -156,6 +157,10 @@ struct ReviewSessionView: View {
     min(abs(activeCardOffset.width) / 140, 1)
   }
 
+  private var directionalSwipeProgress: CGFloat {
+    activeCardOffset.width == 0 ? 0 : swipeProgress * (activeCardOffset.width > 0 ? 1 : -1)
+  }
+
   private var activeCardOffset: CGSize {
     let dragOffset = interactiveOffset(for: gestureOffset)
     return CGSize(
@@ -166,6 +171,29 @@ struct ReviewSessionView: View {
 
   private var swipeRotation: Double {
     Double(activeCardOffset.width / 24)
+  }
+
+  private var activeCardScale: CGFloat {
+    1 - (swipeProgress * 0.024)
+  }
+
+  private var activeCardLift: CGFloat {
+    -swipeProgress * 10
+  }
+
+  private var nextCardScale: CGFloat {
+    0.946 + (swipeProgress * 0.054)
+  }
+
+  private var nextCardOffset: CGSize {
+    CGSize(
+      width: directionalSwipeProgress * 12,
+      height: 18 - (swipeProgress * 18)
+    )
+  }
+
+  private var nextCardOpacity: Double {
+    0.72 + (Double(swipeProgress) * 0.28)
   }
 
   private var progressValue: Double {
@@ -320,26 +348,18 @@ struct ReviewSessionView: View {
         if upcomingAssets.count > 2 {
           CardBackdropView(bounds: proxy.size)
             .allowsHitTesting(false)
-            .scaleEffect(0.92 + (swipeProgress * 0.015))
-            .offset(y: 20 - (swipeProgress * 6))
-            .opacity(0.2 + (swipeProgress * 0.08))
+            .scaleEffect(0.914 + (swipeProgress * 0.02))
+            .offset(x: directionalSwipeProgress * 8, y: 24 - (swipeProgress * 9))
+            .opacity(0.16 + (swipeProgress * 0.12))
         }
 
-        if nextAsset != nil {
-          CardBackdropView(bounds: proxy.size)
-            .allowsHitTesting(false)
-            .scaleEffect(0.965 + (swipeProgress * 0.018))
-            .offset(y: 12 - (swipeProgress * 6))
-            .opacity(0.18 + (swipeProgress * 0.12))
-            .overlay {
-              RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .fill(.ultraThinMaterial)
-                .opacity(0.34 + (1 - Double(swipeProgress)) * 0.24)
-            }
+        if let nextAsset {
+          previewCard(nextAsset, bounds: proxy.size)
         }
 
         if let asset = currentAsset {
           reviewCard(asset, bounds: proxy.size)
+            .zIndex(1)
         }
       }
       .frame(width: proxy.size.width, height: proxy.size.height)
@@ -357,7 +377,9 @@ struct ReviewSessionView: View {
   @ViewBuilder
   private func reviewCard(_ asset: PHAsset, bounds: CGSize) -> some View {
     PhotoCardView(asset: asset, bounds: bounds, enableLivePhotoPlayback: true)
-      .offset(activeCardOffset)
+      .matchedGeometryEffect(id: asset.localIdentifier, in: cardDeckNamespace)
+      .scaleEffect(activeCardScale)
+      .offset(x: activeCardOffset.width, y: activeCardOffset.height + activeCardLift)
       .rotationEffect(.degrees(swipeRotation))
       .overlay {
         SwipeOverlayView(offset: activeCardOffset.width)
@@ -376,6 +398,20 @@ struct ReviewSessionView: View {
             handleSwipe(value)
           }
       )
+  }
+
+  private func previewCard(_ asset: PHAsset, bounds: CGSize) -> some View {
+    PhotoCardView(asset: asset, bounds: bounds)
+      .matchedGeometryEffect(id: asset.localIdentifier, in: cardDeckNamespace)
+      .scaleEffect(nextCardScale)
+      .offset(nextCardOffset)
+      .opacity(nextCardOpacity)
+      .overlay {
+        RoundedRectangle(cornerRadius: 28, style: .continuous)
+          .fill(.ultraThinMaterial)
+          .opacity(0.14 + (1 - Double(swipeProgress)) * 0.18)
+      }
+      .allowsHitTesting(false)
   }
 
   private var decisionBar: some View {
@@ -587,16 +623,17 @@ struct ReviewSessionView: View {
   }
 
   private func handleSwipe(_ value: DragGesture.Value) {
-    let threshold: CGFloat = 120
+    let threshold = min(max(cardSize.width * 0.24, 104), 136)
     let width = value.translation.width
     let projectedWidth = value.predictedEndTranslation.width
+    let resolvedWidth = width + ((projectedWidth - width) * 0.18)
 
-    if max(width, projectedWidth) > threshold {
+    if resolvedWidth > threshold {
       applyDecision(.keep, startingOffset: interactiveOffset(for: value.translation))
-    } else if min(width, projectedWidth) < -threshold {
+    } else if resolvedWidth < -threshold {
       applyDecision(.delete, startingOffset: interactiveOffset(for: value.translation))
     } else {
-      withAnimation(.snappy(duration: 0.22, extraBounce: 0.03)) {
+      withAnimation(.spring(duration: 0.34, bounce: 0.22)) {
         cardDepartureOffset = .zero
       }
     }
@@ -615,7 +652,7 @@ struct ReviewSessionView: View {
     let direction: CGFloat = decision == .keep ? 1 : -1
     let exitDistance = max(cardSize.width, 500) * 1.35
     cardDepartureOffset = startingOffset
-    withAnimation(.snappy(duration: 0.22, extraBounce: 0.02)) {
+    withAnimation(.smooth(duration: 0.22)) {
       cardDepartureOffset = CGSize(
         width: direction * exitDistance,
         height: startingOffset.height * 0.25
@@ -628,7 +665,7 @@ struct ReviewSessionView: View {
       withTransaction(resetTransaction) {
         cardDepartureOffset = .zero
       }
-      withAnimation(.snappy(duration: 0.3, extraBounce: 0.03)) {
+      withAnimation(.spring(duration: 0.4, bounce: 0.16)) {
         advance()
       }
       isAnimatingCard = false
@@ -720,7 +757,10 @@ struct ReviewSessionView: View {
   }
 
   private func interactiveOffset(for translation: CGSize) -> CGSize {
-    CGSize(width: translation.width, height: translation.height * 0.08)
+    CGSize(
+      width: translation.width,
+      height: (translation.height * 0.08) - min(abs(translation.width) * 0.03, 14)
+    )
   }
 }
 
@@ -1091,14 +1131,18 @@ private struct LivePhotoAssetView: UIViewRepresentable {
 private struct SwipeOverlayView: View {
   let offset: CGFloat
 
+  private var revealProgress: CGFloat {
+    min(max((abs(offset) - 12) / 104, 0), 1)
+  }
+
   var body: some View {
     ZStack {
       if offset > 16 {
         badge(systemImage: "checkmark", tint: AppColor.success, backgroundTint: AppColor.keepBackground, alignment: .topTrailing)
-          .opacity(min(1, Double(abs(offset) - 16) / 96))
+          .opacity(revealProgress)
       } else if offset < -16 {
         badge(systemImage: "xmark", tint: AppColor.delete, backgroundTint: AppColor.deleteBackground, alignment: .topLeading)
-          .opacity(min(1, Double(abs(offset) - 16) / 96))
+          .opacity(revealProgress)
       }
     }
     .allowsHitTesting(false)
@@ -1114,6 +1158,8 @@ private struct SwipeOverlayView: View {
       .overlay(
         Circle().strokeBorder(tint.opacity(0.12), lineWidth: 0.5)
       )
+      .scaleEffect(0.84 + (revealProgress * 0.16))
+      .rotationEffect(.degrees(Double((offset > 0 ? 1 : -1) * (1 - revealProgress) * 8)))
       .shadow(color: AppColor.shadow.opacity(1.4), radius: 14, x: 0, y: 8)
       .padding(24)
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
