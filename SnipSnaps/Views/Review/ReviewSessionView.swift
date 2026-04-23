@@ -290,11 +290,6 @@ struct ReviewSessionView: View {
           showMetadataSheet = true
         } label: {
           HStack(spacing: 12) {
-            if currentPhotoDetails.isLivePhoto {
-              Label("Live", systemImage: "livephoto")
-                .lineLimit(1)
-                .foregroundStyle(AppColor.primary)
-            }
             Label(currentPhotoDetails.captureDateText, systemImage: "calendar")
               .lineLimit(1)
             Spacer(minLength: 0)
@@ -421,15 +416,7 @@ struct ReviewSessionView: View {
         applyDecision(.keep)
       }
     }
-    .padding(.horizontal, 14)
-    .padding(.vertical, 10)
     .frame(maxWidth: .infinity)
-    .background(.ultraThinMaterial, in: Capsule(style: .continuous))
-    .overlay(
-      Capsule(style: .continuous)
-        .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5)
-    )
-    .shadow(color: AppColor.shadow.opacity(1.4), radius: 14, x: 0, y: 6)
   }
 
   private var summaryView: some View {
