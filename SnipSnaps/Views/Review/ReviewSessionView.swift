@@ -109,7 +109,6 @@ struct ReviewSessionView: View {
 
   @Environment(\.dismiss) private var dismiss
   @Environment(\.displayScale) private var displayScale
-  @Namespace private var cardDeckNamespace
   @State private var authStatus = PhotoLibrary.authorizationStatus()
   @State private var isLoading = true
   @State private var assets: [PHAsset] = []
@@ -179,21 +178,6 @@ struct ReviewSessionView: View {
 
   private var activeCardLift: CGFloat {
     -swipeProgress * 10
-  }
-
-  private var nextCardScale: CGFloat {
-    0.946 + (swipeProgress * 0.054)
-  }
-
-  private var nextCardOffset: CGSize {
-    CGSize(
-      width: directionalSwipeProgress * 12,
-      height: 18 - (swipeProgress * 18)
-    )
-  }
-
-  private var nextCardOpacity: Double {
-    0.72 + (Double(swipeProgress) * 0.28)
   }
 
   private var progressValue: Double {
@@ -353,8 +337,17 @@ struct ReviewSessionView: View {
             .opacity(0.16 + (swipeProgress * 0.12))
         }
 
-        if let nextAsset {
-          previewCard(nextAsset, bounds: proxy.size)
+        if nextAsset != nil {
+          CardBackdropView(bounds: proxy.size)
+            .allowsHitTesting(false)
+            .scaleEffect(0.962 + (swipeProgress * 0.02))
+            .offset(x: directionalSwipeProgress * 6, y: 14 - (swipeProgress * 8))
+            .opacity(0.18 + (swipeProgress * 0.12))
+            .overlay {
+              RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .opacity(0.28 + (1 - Double(swipeProgress)) * 0.2)
+            }
         }
 
         if let asset = currentAsset {
@@ -377,7 +370,6 @@ struct ReviewSessionView: View {
   @ViewBuilder
   private func reviewCard(_ asset: PHAsset, bounds: CGSize) -> some View {
     PhotoCardView(asset: asset, bounds: bounds, enableLivePhotoPlayback: true)
-      .matchedGeometryEffect(id: asset.localIdentifier, in: cardDeckNamespace)
       .scaleEffect(activeCardScale)
       .offset(x: activeCardOffset.width, y: activeCardOffset.height + activeCardLift)
       .rotationEffect(.degrees(swipeRotation))
@@ -398,20 +390,6 @@ struct ReviewSessionView: View {
             handleSwipe(value)
           }
       )
-  }
-
-  private func previewCard(_ asset: PHAsset, bounds: CGSize) -> some View {
-    PhotoCardView(asset: asset, bounds: bounds)
-      .matchedGeometryEffect(id: asset.localIdentifier, in: cardDeckNamespace)
-      .scaleEffect(nextCardScale)
-      .offset(nextCardOffset)
-      .opacity(nextCardOpacity)
-      .overlay {
-        RoundedRectangle(cornerRadius: 28, style: .continuous)
-          .fill(.ultraThinMaterial)
-          .opacity(0.14 + (1 - Double(swipeProgress)) * 0.18)
-      }
-      .allowsHitTesting(false)
   }
 
   private var decisionBar: some View {
