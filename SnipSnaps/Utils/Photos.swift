@@ -24,6 +24,14 @@ enum PhotoLibraryError: LocalizedError {
   }
 }
 
+struct SimilarPhotoGroup: Identifiable {
+  let assets: [PHAsset]
+
+  var id: String {
+    assets.map(\.localIdentifier).joined(separator: "|")
+  }
+}
+
 enum PhotoLibrary {
   static let imageManager = PHCachingImageManager()
   nonisolated(unsafe) private static let imageCache: NSCache<NSString, NSObject> = {
@@ -82,6 +90,9 @@ enum PhotoLibrary {
       )
       options.fetchLimit = limit
       return fetchAssets(options: options, limit: limit)
+    case .similar:
+      options.fetchLimit = limit
+      return fetchAssets(options: options, limit: limit)
     case .random:
       return fetchRandomAssets(options: options, limit: limit)
     }
@@ -110,10 +121,72 @@ enum PhotoLibrary {
         format: "(mediaSubtype & %d) != 0",
         PHAssetMediaSubtype.photoScreenshot.rawValue
       )
+    case .similar:
+      options.fetchLimit = 1_000
     case .random:
       break
     }
     return PHAsset.fetchAssets(with: .image, options: options).count
+  }
+
+  static func fetchSimilarPhotoGroups(scanLimit: Int, maxGroups: Int) async -> [SimilarPhotoGroup] {
+    #if canImport(UIKit)
+    let options = PHFetchOptions()
+    options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+    options.fetchLimit = max(scanLimit, 1)
+
+    let result = PHAsset.fetchAssets(with: .image, options: options)
+    guard result.count > 1 else { return [] }
+
+    var assets: [PHAsset] = []
+    assets.reserveCapacity(result.count)
+    for index in 0..<result.count {
+      assets.append(result.object(at: index))
+    }
+
+    var fingerprints: [SimilarPhotoFingerprint] = []
+    fingerprints.reserveCapacity(assets.count)
+    for asset in assets {
+      guard let image = thumbnailImage(for: asset, targetSize: CGSize(width: 18, height: 16)),
+            let hash = differenceHash(for: image) else {
+        continue
+      }
+      fingerprints.append(SimilarPhotoFingerprint(asset: asset, hash: hash, aspectRatio: aspectRatio(for: asset)))
+    }
+
+    var usedIdentifiers = Set<String>()
+    var groups: [SimilarPhotoGroup] = []
+    for fingerprint in fingerprints {
+      guard !usedIdentifiers.contains(fingerprint.asset.localIdentifier) else { continue }
+
+      var matches = [fingerprint.asset]
+      for candidate in fingerprints {
+        guard fingerprint.asset.localIdentifier != candidate.asset.localIdentifier,
+              !usedIdentifiers.contains(candidate.asset.localIdentifier),
+              abs(fingerprint.aspectRatio - candidate.aspectRatio) < 0.08,
+              hammingDistance(fingerprint.hash, candidate.hash) <= 9 else {
+          continue
+        }
+        matches.append(candidate.asset)
+      }
+
+      guard matches.count > 1 else { continue }
+      matches.sort {
+        ($0.creationDate ?? .distantPast) > ($1.creationDate ?? .distantPast)
+      }
+      for asset in matches {
+        usedIdentifiers.insert(asset.localIdentifier)
+      }
+      groups.append(SimilarPhotoGroup(assets: matches))
+      if groups.count >= maxGroups {
+        break
+      }
+    }
+
+    return groups
+    #else
+    return []
+    #endif
   }
 
   @discardableResult
@@ -269,6 +342,80 @@ enum PhotoLibrary {
 
     return indices.shuffled().map { result.object(at: $0) }
   }
+
+  private struct SimilarPhotoFingerprint {
+    let asset: PHAsset
+    let hash: UInt64
+    let aspectRatio: CGFloat
+  }
+
+  private static func hammingDistance(_ lhs: UInt64, _ rhs: UInt64) -> Int {
+    (lhs ^ rhs).nonzeroBitCount
+  }
+
+  #if canImport(UIKit)
+  private static func thumbnailImage(for asset: PHAsset, targetSize: CGSize) -> UIImage? {
+    let options = PHImageRequestOptions()
+    options.isNetworkAccessAllowed = true
+    options.deliveryMode = .fastFormat
+    options.resizeMode = .exact
+    options.isSynchronous = true
+
+    var image: UIImage?
+    imageManager.requestImage(
+      for: asset,
+      targetSize: targetSize,
+      contentMode: .aspectFill,
+      options: options
+    ) { result, info in
+      let isCancelled = (info?[PHImageCancelledKey] as? Bool) ?? false
+      guard !isCancelled else { return }
+      image = result
+    }
+    return image
+  }
+
+  private static func differenceHash(for image: UIImage) -> UInt64? {
+    guard let cgImage = image.cgImage else { return nil }
+
+    let width = 9
+    let height = 8
+    var pixels = [UInt8](repeating: 0, count: width * height)
+    let colorSpace = CGColorSpaceCreateDeviceGray()
+
+    let drewImage = pixels.withUnsafeMutableBytes { buffer in
+      guard let context = CGContext(
+        data: buffer.baseAddress,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: width,
+        space: colorSpace,
+        bitmapInfo: CGImageAlphaInfo.none.rawValue
+      ) else {
+        return false
+      }
+      context.interpolationQuality = .low
+      context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+      return true
+    }
+
+    guard drewImage else { return nil }
+
+    var hash: UInt64 = 0
+    for row in 0..<height {
+      for column in 0..<(width - 1) {
+        hash <<= 1
+        let left = pixels[(row * width) + column]
+        let right = pixels[(row * width) + column + 1]
+        if left > right {
+          hash |= 1
+        }
+      }
+    }
+    return hash
+  }
+  #endif
 
   private static func onThisDayPredicate(referenceDate: Date = Date()) -> NSPredicate? {
     let calendar = Calendar.current

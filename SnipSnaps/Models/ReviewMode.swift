@@ -5,6 +5,7 @@ enum ReviewMode: String, CaseIterable, Identifiable {
   case onThisDay
   case random
   case screenshots
+  case similar
 
   var id: String { rawValue }
 
@@ -18,6 +19,8 @@ enum ReviewMode: String, CaseIterable, Identifiable {
       return "Random"
     case .screenshots:
       return "Screenshots"
+    case .similar:
+      return "Similar"
     }
   }
 
@@ -31,6 +34,8 @@ enum ReviewMode: String, CaseIterable, Identifiable {
       return "A surprise mix from your library"
     case .screenshots:
       return "Clear the clutter fast"
+    case .similar:
+      return "Review duplicate-looking groups"
     }
   }
 
@@ -44,6 +49,8 @@ enum ReviewMode: String, CaseIterable, Identifiable {
       return "shuffle"
     case .screenshots:
       return "rectangle.on.rectangle"
+    case .similar:
+      return "square.stack.3d.up"
     }
   }
 

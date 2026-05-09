@@ -33,7 +33,7 @@ struct HomeView: View {
           VStack(spacing: 12) {
             ForEach(ReviewMode.allCases) { mode in
               NavigationLink {
-                ReviewSessionView(mode: mode)
+                destination(for: mode)
               } label: {
                 ActionCard(
                   mode: mode,
@@ -54,6 +54,15 @@ struct HomeView: View {
       .navigationTitle("SnipSnaps")
       .navigationBarTitleDisplayMode(.large)
       .onAppear(perform: refresh)
+    }
+  }
+
+  @ViewBuilder
+  private func destination(for mode: ReviewMode) -> some View {
+    if mode == .similar {
+      SimilarReviewSessionView()
+    } else {
+      ReviewSessionView(mode: mode)
     }
   }
 
@@ -100,7 +109,7 @@ struct HomeView: View {
     Task.detached(priority: .userInitiated) {
       var next: [ReviewMode: Int] = [:]
       for mode in ReviewMode.allCases {
-        next[mode] = PhotoLibrary.fetchCount(for: mode)
+        next[mode] = mode == .similar ? 0 : PhotoLibrary.fetchCount(for: mode)
       }
       await MainActor.run { counts = next }
     }
@@ -146,6 +155,9 @@ private struct ActionCard: View {
   }
 
   private var displayCount: String {
-    count > 9999 ? "9999+" : "\(count)"
+    if mode == .similar {
+      return "SCAN"
+    }
+    return count > 9999 ? "9999+" : "\(count)"
   }
 }
