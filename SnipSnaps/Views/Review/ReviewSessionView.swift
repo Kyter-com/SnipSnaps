@@ -747,7 +747,8 @@ struct SimilarReviewSessionView: View {
   @State private var isScanning = true
   @State private var groups: [SimilarPhotoGroup] = []
   @State private var currentGroupIndex = 0
-  @State private var selectedAssetIdentifier: String?
+  @State private var focusedAssetIdentifier: String?
+  @State private var keepAssetIdentifiers = Set<String>()
   @State private var keptAssets: [PHAsset] = []
   @State private var deleteAssets: [PHAsset] = []
   @State private var showSummary = false
@@ -770,7 +771,14 @@ struct SimilarReviewSessionView: View {
 
   private var selectedAsset: PHAsset? {
     guard let currentGroup else { return nil }
-    return currentGroup.assets.first { $0.localIdentifier == selectedAssetIdentifier } ?? currentGroup.assets.first
+    return currentGroup.assets.first { $0.localIdentifier == focusedAssetIdentifier }
+      ?? selectedKeepAssets.first
+      ?? currentGroup.assets.first
+  }
+
+  private var selectedKeepAssets: [PHAsset] {
+    guard let currentGroup else { return [] }
+    return currentGroup.assets.filter { keepAssetIdentifiers.contains($0.localIdentifier) }
   }
 
   private var progressValue: Double {
@@ -898,7 +906,7 @@ struct SimilarReviewSessionView: View {
           VStack(alignment: .leading, spacing: 2) {
             Text("\(currentGroup.assets.count) similar photos")
               .font(.subheadline.weight(.semibold))
-            Text("Tap the best copy, then mark the rest.")
+            Text("Tap one or more to keep, then mark the rest.")
               .font(.footnote)
               .foregroundStyle(.secondary)
           }
@@ -916,19 +924,19 @@ struct SimilarReviewSessionView: View {
       HStack(spacing: 10) {
         ForEach(group.assets, id: \.localIdentifier) { asset in
           Button {
-            selectedAssetIdentifier = asset.localIdentifier
+            toggleKeepSelection(for: asset)
             triggerSelectionHaptic()
           } label: {
             PhotoAssetImageView(asset: asset, targetSize: CGSize(width: 86, height: 86), contentMode: .fill)
               .frame(width: 74, height: 74)
               .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
               .overlay {
-                let isSelected = asset.localIdentifier == selectedAsset?.localIdentifier
+                let isSelected = keepAssetIdentifiers.contains(asset.localIdentifier)
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                   .strokeBorder(isSelected ? AppColor.primary : Color.white.opacity(0.2), lineWidth: isSelected ? 3 : 1)
               }
               .overlay(alignment: .bottom) {
-                if asset.localIdentifier == selectedAsset?.localIdentifier {
+                if keepAssetIdentifiers.contains(asset.localIdentifier) {
                   Text("Keep")
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(.white)
@@ -972,7 +980,7 @@ struct SimilarReviewSessionView: View {
 
   private var markOthersTitle: String {
     guard let currentGroup else { return "Mark Others" }
-    let count = max(currentGroup.assets.count - 1, 0)
+    let count = max(currentGroup.assets.count - max(keepAssetIdentifiers.count, 1), 0)
     return count == 1 ? "Mark Other" : "Mark \(count)"
   }
 
@@ -1106,7 +1114,7 @@ struct SimilarReviewSessionView: View {
       await MainActor.run {
         groups = fetchedGroups
         currentGroupIndex = 0
-        selectedAssetIdentifier = fetchedGroups.first?.assets.first?.localIdentifier
+        selectDefaultKeepAsset(in: fetchedGroups.first)
         isScanning = false
       }
     }
@@ -1120,12 +1128,27 @@ struct SimilarReviewSessionView: View {
   }
 
   private func markOthersAndAdvance() {
-    guard let currentGroup, let selectedAsset else { return }
-    let otherAssets = currentGroup.assets.filter { $0.localIdentifier != selectedAsset.localIdentifier }
-    appendUnique([selectedAsset], to: &keptAssets)
+    guard let currentGroup else { return }
+    let keepAssets = selectedKeepAssets.isEmpty ? Array(currentGroup.assets.prefix(1)) : selectedKeepAssets
+    let keepIdentifiers = Set(keepAssets.map(\.localIdentifier))
+    let otherAssets = currentGroup.assets.filter { !keepIdentifiers.contains($0.localIdentifier) }
+    appendUnique(keepAssets, to: &keptAssets)
     appendUnique(otherAssets, to: &deleteAssets)
     triggerSelectionHaptic()
     advance()
+  }
+
+  private func toggleKeepSelection(for asset: PHAsset) {
+    focusedAssetIdentifier = asset.localIdentifier
+    if keepAssetIdentifiers.contains(asset.localIdentifier) {
+      guard keepAssetIdentifiers.count > 1 else { return }
+      keepAssetIdentifiers.remove(asset.localIdentifier)
+      if focusedAssetIdentifier == asset.localIdentifier {
+        focusedAssetIdentifier = keepAssetIdentifiers.first
+      }
+    } else {
+      keepAssetIdentifiers.insert(asset.localIdentifier)
+    }
   }
 
   private func appendUnique(_ assets: [PHAsset], to target: inout [PHAsset]) {
@@ -1140,7 +1163,17 @@ struct SimilarReviewSessionView: View {
       showSummary = true
       return
     }
-    selectedAssetIdentifier = groups[currentGroupIndex].assets.first?.localIdentifier
+    selectDefaultKeepAsset(in: groups[currentGroupIndex])
+  }
+
+  private func selectDefaultKeepAsset(in group: SimilarPhotoGroup?) {
+    guard let asset = group?.assets.first else {
+      focusedAssetIdentifier = nil
+      keepAssetIdentifiers = []
+      return
+    }
+    focusedAssetIdentifier = asset.localIdentifier
+    keepAssetIdentifiers = [asset.localIdentifier]
   }
 
   private func deleteSelected() {
