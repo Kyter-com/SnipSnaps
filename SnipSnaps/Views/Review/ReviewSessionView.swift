@@ -31,6 +31,8 @@ private struct CachedAssetRequest: Equatable {
 
 private struct ReviewPhotoDetails {
   let captureDateText: String
+  let captureAgeText: String
+  let captureDateSummaryText: String
   let captureTimestampText: String
   let fileSizeText: String
   let resolutionText: String
@@ -42,6 +44,8 @@ private struct ReviewPhotoDetails {
   init(asset: PHAsset) {
     let creationDate = asset.creationDate
     captureDateText = creationDate.map(Self.dateFormatter.string(from:)) ?? "Unknown date"
+    captureAgeText = creationDate.map(Self.relativeAgeText(for:)) ?? "Unknown age"
+    captureDateSummaryText = "\(captureDateText) · \(captureAgeText)"
     captureTimestampText = creationDate.map(Self.timestampFormatter.string(from:)) ?? "Unknown"
 
     let bytes = PhotoLibrary.estimatedBytes(for: asset)
@@ -78,6 +82,12 @@ private struct ReviewPhotoDetails {
     return labels.joined(separator: " • ")
   }
 
+  private static func relativeAgeText(for date: Date) -> String {
+    let formatter = RelativeDateTimeFormatter()
+    formatter.unitsStyle = .full
+    return formatter.localizedString(for: date, relativeTo: Date())
+  }
+
   private static func gcd(_ lhs: Int, _ rhs: Int) -> Int {
     var a = abs(lhs)
     var b = abs(rhs)
@@ -102,6 +112,31 @@ private struct ReviewPhotoDetails {
     formatter.timeStyle = .short
     return formatter
   }()
+
+}
+
+private struct PhotoReviewUndo {
+  let asset: PHAsset
+  let decision: PhotoDecision
+  let index: Int
+}
+
+private struct SimilarMarkedGroup: Identifiable {
+  let keptAssets: [PHAsset]
+  let markedAssets: [PHAsset]
+
+  var id: String {
+    (keptAssets + markedAssets).map(\.localIdentifier).joined(separator: "|")
+  }
+}
+
+private struct SimilarReviewUndo {
+  let groupIndex: Int
+  let keptAssets: [PHAsset]
+  let markedAssets: [PHAsset]
+  let markedGroupID: String?
+  let focusedIdentifier: String?
+  let keepIdentifiers: Set<String>
 }
 
 struct ReviewSessionView: View {
@@ -127,6 +162,7 @@ struct ReviewSessionView: View {
   @State private var cardSize: CGSize = .zero
   @State private var cachedRequests: [CachedAssetRequest] = []
   @State private var currentPhotoDetails: ReviewPhotoDetails?
+  @State private var lastReviewUndo: PhotoReviewUndo?
   @AppStorage("reviewLimit") private var reviewLimit: Int = 20
   @AppStorage("totalDeletedCount") private var totalDeletedCount: Int = 0
   @AppStorage("totalDeletedBytes") private var totalDeletedBytes: Int = 0
@@ -302,7 +338,7 @@ struct ReviewSessionView: View {
           showMetadataSheet = true
         } label: {
           HStack(spacing: 12) {
-            Label(currentPhotoDetails.captureDateText, systemImage: "calendar")
+            Label(currentPhotoDetails.captureDateSummaryText, systemImage: "calendar")
               .lineLimit(1)
             Spacer(minLength: 0)
             Label(currentPhotoDetails.fileSizeText, systemImage: "internaldrive")
@@ -412,10 +448,19 @@ struct ReviewSessionView: View {
 
       Spacer(minLength: 0)
 
-      Text("Swipe or tap")
-        .font(.footnote.weight(.medium))
-        .foregroundStyle(.secondary)
-        .lineLimit(1)
+      if lastReviewUndo != nil {
+        Button("Undo") {
+          undoLastReviewDecision()
+        }
+        .font(.footnote.weight(.semibold))
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+      } else {
+        Text("Swipe or tap")
+          .font(.footnote.weight(.medium))
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+      }
 
       Spacer(minLength: 0)
 
@@ -513,6 +558,19 @@ struct ReviewSessionView: View {
           .disabled(deleteInProgress)
         }
 
+        if lastReviewUndo != nil {
+          Button {
+            undoLastReviewDecision()
+          } label: {
+            Text("Undo Last Choice")
+              .fontWeight(.semibold)
+              .frame(maxWidth: .infinity)
+          }
+          .buttonStyle(.bordered)
+          .controlSize(.large)
+          .disabled(deleteInProgress)
+        }
+
         Button {
           dismiss()
         } label: {
@@ -591,6 +649,7 @@ struct ReviewSessionView: View {
         currentIndex = 0
         keptAssets = []
         deleteAssets = []
+        lastReviewUndo = nil
         deletedCount = 0
         currentPhotoDetails = fetched.first.map(ReviewPhotoDetails.init)
         showSummary = fetched.isEmpty
@@ -619,6 +678,7 @@ struct ReviewSessionView: View {
   private func applyDecision(_ decision: PhotoDecision, startingOffset: CGSize = .zero) {
     guard let asset = currentAsset, !isAnimatingCard else { return }
     isAnimatingCard = true
+    lastReviewUndo = PhotoReviewUndo(asset: asset, decision: decision, index: currentIndex)
     triggerDecisionHaptic(decision)
     switch decision {
     case .keep:
@@ -654,6 +714,21 @@ struct ReviewSessionView: View {
     if currentIndex >= assets.count {
       showSummary = true
     }
+  }
+
+  private func undoLastReviewDecision() {
+    guard let undo = lastReviewUndo, !isAnimatingCard else { return }
+    switch undo.decision {
+    case .keep:
+      keptAssets.removeAll { $0.localIdentifier == undo.asset.localIdentifier }
+    case .delete:
+      deleteAssets.removeAll { $0.localIdentifier == undo.asset.localIdentifier }
+    }
+    showSummary = false
+    currentIndex = undo.index
+    lastReviewUndo = nil
+    refreshCurrentPhotoDetails()
+    triggerUndoHaptic()
   }
 
   private func updateCaching() {
@@ -703,6 +778,7 @@ struct ReviewSessionView: View {
           deleteAssets.removeAll { asset in
             targetAssets.contains(where: { $0.localIdentifier == asset.localIdentifier })
           }
+          lastReviewUndo = nil
           totalDeletedCount += targetAssets.count
           totalDeletedBytes += estimatedBytes
           triggerDeleteHaptic()
@@ -733,6 +809,14 @@ struct ReviewSessionView: View {
     #endif
   }
 
+  private func triggerUndoHaptic() {
+    #if canImport(UIKit)
+    let generator = UIImpactFeedbackGenerator(style: .soft)
+    generator.prepare()
+    generator.impactOccurred()
+    #endif
+  }
+
   private func interactiveOffset(for translation: CGSize) -> CGSize {
     CGSize(
       width: translation.width,
@@ -751,6 +835,8 @@ struct SimilarReviewSessionView: View {
   @State private var keepAssetIdentifiers = Set<String>()
   @State private var keptAssets: [PHAsset] = []
   @State private var deleteAssets: [PHAsset] = []
+  @State private var markedGroups: [SimilarMarkedGroup] = []
+  @State private var lastSimilarUndo: SimilarReviewUndo?
   @State private var showSummary = false
   @State private var showError = false
   @State private var errorMessage = ""
@@ -779,6 +865,19 @@ struct SimilarReviewSessionView: View {
   private var selectedKeepAssets: [PHAsset] {
     guard let currentGroup else { return [] }
     return currentGroup.assets.filter { keepAssetIdentifiers.contains($0.localIdentifier) }
+  }
+
+  private var selectedPhotoDetails: ReviewPhotoDetails? {
+    selectedAsset.map(ReviewPhotoDetails.init)
+  }
+
+  private var currentMarkedCount: Int {
+    guard let currentGroup else { return 0 }
+    return max(currentGroup.assets.count - max(keepAssetIdentifiers.count, 1), 0)
+  }
+
+  private var selectionStatusText: String {
+    "\(max(keepAssetIdentifiers.count, 1)) kept · \(currentMarkedCount) marked"
   }
 
   private var progressValue: Double {
@@ -858,26 +957,34 @@ struct SimilarReviewSessionView: View {
         GeometryReader { proxy in
           let imageSize = CGSize(width: proxy.size.width, height: max(proxy.size.height - 94, 120))
           VStack(spacing: 14) {
-            PhotoAssetImageView(
-              asset: selectedAsset,
-              targetSize: imageSize,
-              enableLivePhotoPlayback: true
-            )
-            .frame(width: imageSize.width, height: imageSize.height)
-            .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
-            .overlay(
-              RoundedRectangle(cornerRadius: 26, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.28), lineWidth: 0.5)
-            )
-            .shadow(color: AppColor.shadow.opacity(1.35), radius: 22, x: 0, y: 12)
+            if currentGroup.assets.count == 2 {
+              similarPairComparison(currentGroup, height: imageSize.height)
+            } else {
+              PhotoAssetImageView(
+                asset: selectedAsset,
+                targetSize: imageSize,
+                enableLivePhotoPlayback: true
+              )
+              .id(selectedAsset.localIdentifier)
+              .frame(width: imageSize.width, height: imageSize.height)
+              .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+              .overlay(
+                RoundedRectangle(cornerRadius: 26, style: .continuous)
+                  .strokeBorder(Color.white.opacity(0.28), lineWidth: 0.5)
+              )
+              .shadow(color: AppColor.shadow.opacity(1.35), radius: 22, x: 0, y: 12)
+              .transition(.opacity.combined(with: .scale(scale: 0.985)))
 
-            similarThumbnailStrip(currentGroup)
+              similarThumbnailStrip(currentGroup)
+            }
           }
           .frame(width: proxy.size.width, height: proxy.size.height)
         }
         .padding(.horizontal, 20)
       }
     }
+    .animation(.snappy(duration: 0.24, extraBounce: 0.02), value: focusedAssetIdentifier)
+    .animation(.snappy(duration: 0.22, extraBounce: 0.04), value: keepAssetIdentifiers)
     .safeAreaInset(edge: .bottom, spacing: 0) {
       decisionBar
         .padding(.horizontal, 20)
@@ -906,7 +1013,7 @@ struct SimilarReviewSessionView: View {
           VStack(alignment: .leading, spacing: 2) {
             Text("\(currentGroup.assets.count) similar photos")
               .font(.subheadline.weight(.semibold))
-            Text("Tap one or more to keep, then mark the rest.")
+            Text("\(selectionStatusText) · \(selectedPhotoDetails?.captureDateSummaryText ?? "Unknown date")")
               .font(.footnote)
               .foregroundStyle(.secondary)
           }
@@ -917,6 +1024,46 @@ struct SimilarReviewSessionView: View {
         .background(AppColor.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
       }
     }
+  }
+
+  private func similarPairComparison(_ group: SimilarPhotoGroup, height: CGFloat) -> some View {
+    HStack(spacing: 10) {
+      ForEach(group.assets, id: \.localIdentifier) { asset in
+        Button {
+          toggleKeepSelection(for: asset)
+          triggerSelectionHaptic()
+        } label: {
+          PhotoAssetImageView(
+            asset: asset,
+            targetSize: CGSize(width: 180, height: max(height, 120)),
+            contentMode: .fit,
+            enableLivePhotoPlayback: true
+          )
+          .frame(maxWidth: .infinity, minHeight: max(height, 120), maxHeight: max(height, 120))
+          .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+          .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+          .overlay {
+            let isSelected = keepAssetIdentifiers.contains(asset.localIdentifier)
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+              .strokeBorder(isSelected ? AppColor.primary : Color.white.opacity(0.24), lineWidth: isSelected ? 3 : 1)
+          }
+          .overlay(alignment: .topTrailing) {
+            if keepAssetIdentifiers.contains(asset.localIdentifier) {
+              Label("Keep", systemImage: "checkmark")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.white)
+                .labelStyle(.titleAndIcon)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 6)
+                .background(AppColor.success, in: Capsule(style: .continuous))
+                .padding(10)
+            }
+          }
+        }
+        .buttonStyle(.plain)
+      }
+    }
+    .shadow(color: AppColor.shadow.opacity(1.1), radius: 18, x: 0, y: 10)
   }
 
   private func similarThumbnailStrip(_ group: SimilarPhotoGroup) -> some View {
@@ -935,6 +1082,7 @@ struct SimilarReviewSessionView: View {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                   .strokeBorder(isSelected ? AppColor.primary : Color.white.opacity(0.2), lineWidth: isSelected ? 3 : 1)
               }
+              .scaleEffect(keepAssetIdentifiers.contains(asset.localIdentifier) ? 1.04 : 1)
               .overlay(alignment: .bottom) {
                 if keepAssetIdentifiers.contains(asset.localIdentifier) {
                   Text("Keep")
@@ -956,32 +1104,46 @@ struct SimilarReviewSessionView: View {
   }
 
   private var decisionBar: some View {
-    HStack(spacing: 14) {
-      Button {
-        keepAllAndAdvance()
-      } label: {
-        Label("Keep All", systemImage: "checkmark")
-          .frame(maxWidth: .infinity)
+    VStack(spacing: 10) {
+      if lastSimilarUndo != nil {
+        Button("Undo Last Group") {
+          undoLastSimilarDecision()
+        }
+        .font(.footnote.weight(.semibold))
+        .buttonStyle(.bordered)
+        .controlSize(.small)
       }
-      .buttonStyle(.bordered)
-      .controlSize(.large)
 
-      Button(role: .destructive) {
-        markOthersAndAdvance()
-      } label: {
-        Label(markOthersTitle, systemImage: "trash")
-          .frame(maxWidth: .infinity)
+      HStack(spacing: 14) {
+        Button {
+          keepAllAndAdvance()
+        } label: {
+          Label("Keep All", systemImage: "checkmark")
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.large)
+
+        Button {
+          markOthersAndAdvance()
+        } label: {
+          Label(markOthersTitle, systemImage: "checklist")
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(AppColor.primary)
+        .controlSize(.large)
       }
-      .buttonStyle(.borderedProminent)
-      .tint(AppColor.delete)
-      .controlSize(.large)
     }
   }
 
   private var markOthersTitle: String {
-    guard let currentGroup else { return "Mark Others" }
-    let count = max(currentGroup.assets.count - max(keepAssetIdentifiers.count, 1), 0)
-    return count == 1 ? "Mark Other" : "Mark \(count)"
+    guard currentGroup != nil else { return "Continue" }
+    let count = currentMarkedCount
+    if count == 0 {
+      return "Continue"
+    }
+    return count == 1 ? "Mark 1 Extra" : "Mark \(count) Extras"
   }
 
   private var summaryView: some View {
@@ -996,21 +1158,33 @@ struct SimilarReviewSessionView: View {
         }
         .padding(.top, 8)
 
-        if !deleteAssets.isEmpty {
+        if !markedGroups.isEmpty {
           VStack(alignment: .leading, spacing: 10) {
             HStack {
-              Text("To delete")
+              Text("Marked for review")
                 .font(.subheadline.weight(.semibold))
               Spacer()
               Text(estimatedDeleteBytesText)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             }
-            let columns = [GridItem(.adaptive(minimum: 80), spacing: 8)]
-            LazyVGrid(columns: columns, spacing: 8) {
-              ForEach(deleteAssets, id: \.localIdentifier) { asset in
-                PhotoThumbnailView(asset: asset)
+
+            ForEach(markedGroups) { group in
+              VStack(alignment: .leading, spacing: 8) {
+                Text("\(group.keptAssets.count) kept · \(group.markedAssets.count) marked")
+                  .font(.caption.weight(.semibold))
+                  .foregroundStyle(.secondary)
+                ScrollView(.horizontal, showsIndicators: false) {
+                  HStack(spacing: 8) {
+                    ForEach(group.markedAssets, id: \.localIdentifier) { asset in
+                      PhotoThumbnailView(asset: asset)
+                        .frame(width: 72, height: 72)
+                    }
+                  }
+                }
               }
+              .padding(10)
+              .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
           }
           .padding(16)
@@ -1035,6 +1209,19 @@ struct SimilarReviewSessionView: View {
           }
           .buttonStyle(.borderedProminent)
           .tint(AppColor.delete)
+          .controlSize(.large)
+          .disabled(deleteInProgress)
+        }
+
+        if lastSimilarUndo != nil {
+          Button {
+            undoLastSimilarDecision()
+          } label: {
+            Text("Undo Last Group")
+              .fontWeight(.semibold)
+              .frame(maxWidth: .infinity)
+          }
+          .buttonStyle(.bordered)
           .controlSize(.large)
           .disabled(deleteInProgress)
         }
@@ -1077,7 +1264,7 @@ struct SimilarReviewSessionView: View {
         .controlSize(.large)
       Text("Scanning recent photos")
         .font(.headline)
-      Text("Comparing small thumbnails for duplicate-looking groups.")
+      Text("Comparing up to \(scanLimit) recent photos for duplicate-looking groups.")
         .font(.subheadline)
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
@@ -1114,6 +1301,11 @@ struct SimilarReviewSessionView: View {
       await MainActor.run {
         groups = fetchedGroups
         currentGroupIndex = 0
+        keptAssets = []
+        deleteAssets = []
+        markedGroups = []
+        lastSimilarUndo = nil
+        deletedCount = 0
         selectDefaultKeepAsset(in: fetchedGroups.first)
         isScanning = false
       }
@@ -1122,9 +1314,17 @@ struct SimilarReviewSessionView: View {
 
   private func keepAllAndAdvance() {
     guard let currentGroup else { return }
+    lastSimilarUndo = SimilarReviewUndo(
+      groupIndex: currentGroupIndex,
+      keptAssets: currentGroup.assets,
+      markedAssets: [],
+      markedGroupID: nil,
+      focusedIdentifier: focusedAssetIdentifier,
+      keepIdentifiers: keepAssetIdentifiers
+    )
     appendUnique(currentGroup.assets, to: &keptAssets)
     triggerSelectionHaptic()
-    advance()
+    advanceWithAnimation()
   }
 
   private func markOthersAndAdvance() {
@@ -1132,10 +1332,22 @@ struct SimilarReviewSessionView: View {
     let keepAssets = selectedKeepAssets.isEmpty ? Array(currentGroup.assets.prefix(1)) : selectedKeepAssets
     let keepIdentifiers = Set(keepAssets.map(\.localIdentifier))
     let otherAssets = currentGroup.assets.filter { !keepIdentifiers.contains($0.localIdentifier) }
+    let markedGroup = otherAssets.isEmpty ? nil : SimilarMarkedGroup(keptAssets: keepAssets, markedAssets: otherAssets)
+    lastSimilarUndo = SimilarReviewUndo(
+      groupIndex: currentGroupIndex,
+      keptAssets: keepAssets,
+      markedAssets: otherAssets,
+      markedGroupID: markedGroup?.id,
+      focusedIdentifier: focusedAssetIdentifier,
+      keepIdentifiers: keepAssetIdentifiers
+    )
     appendUnique(keepAssets, to: &keptAssets)
     appendUnique(otherAssets, to: &deleteAssets)
+    if let markedGroup {
+      markedGroups.append(markedGroup)
+    }
     triggerSelectionHaptic()
-    advance()
+    advanceWithAnimation()
   }
 
   private func toggleKeepSelection(for asset: PHAsset) {
@@ -1157,6 +1369,12 @@ struct SimilarReviewSessionView: View {
     }
   }
 
+  private func advanceWithAnimation() {
+    withAnimation(.spring(duration: 0.34, bounce: 0.14)) {
+      advance()
+    }
+  }
+
   private func advance() {
     currentGroupIndex += 1
     guard currentGroupIndex < groups.count else {
@@ -1167,13 +1385,48 @@ struct SimilarReviewSessionView: View {
   }
 
   private func selectDefaultKeepAsset(in group: SimilarPhotoGroup?) {
-    guard let asset = group?.assets.first else {
+    guard let asset = bestDefaultKeepAsset(in: group) else {
       focusedAssetIdentifier = nil
       keepAssetIdentifiers = []
       return
     }
     focusedAssetIdentifier = asset.localIdentifier
     keepAssetIdentifiers = [asset.localIdentifier]
+  }
+
+  private func bestDefaultKeepAsset(in group: SimilarPhotoGroup?) -> PHAsset? {
+    group?.assets.max {
+      if $0.isFavorite != $1.isFavorite {
+        return !$0.isFavorite && $1.isFavorite
+      }
+      let lhsPixels = $0.pixelWidth * $0.pixelHeight
+      let rhsPixels = $1.pixelWidth * $1.pixelHeight
+      if lhsPixels != rhsPixels {
+        return lhsPixels < rhsPixels
+      }
+      return ($0.creationDate ?? .distantPast) < ($1.creationDate ?? .distantPast)
+    }
+  }
+
+  private func undoLastSimilarDecision() {
+    guard let undo = lastSimilarUndo else { return }
+    keptAssets.removeAll { asset in
+      undo.keptAssets.contains { $0.localIdentifier == asset.localIdentifier }
+    }
+    deleteAssets.removeAll { asset in
+      undo.markedAssets.contains { $0.localIdentifier == asset.localIdentifier }
+    }
+    if let markedGroupID = undo.markedGroupID {
+      markedGroups.removeAll { $0.id == markedGroupID }
+    }
+    showSummary = false
+    withAnimation(.spring(duration: 0.34, bounce: 0.14)) {
+      currentGroupIndex = undo.groupIndex
+      focusedAssetIdentifier = undo.focusedIdentifier
+      keepAssetIdentifiers = undo.keepIdentifiers
+    }
+    lastSimilarUndo = nil
+    triggerUndoHaptic()
   }
 
   private func deleteSelected() {
@@ -1191,6 +1444,8 @@ struct SimilarReviewSessionView: View {
           deleteAssets.removeAll { asset in
             targetAssets.contains(where: { $0.localIdentifier == asset.localIdentifier })
           }
+          markedGroups.removeAll()
+          lastSimilarUndo = nil
           totalDeletedCount += targetAssets.count
           totalDeletedBytes += estimatedBytes
           triggerDeleteHaptic()
@@ -1220,6 +1475,14 @@ struct SimilarReviewSessionView: View {
     generator.notificationOccurred(.success)
     #endif
   }
+
+  private func triggerUndoHaptic() {
+    #if canImport(UIKit)
+    let generator = UIImpactFeedbackGenerator(style: .soft)
+    generator.prepare()
+    generator.impactOccurred()
+    #endif
+  }
 }
 
 private struct PhotoMetadataSheet: View {
@@ -1237,6 +1500,7 @@ private struct PhotoMetadataSheet: View {
             Text(details.captureTimestampText)
               .multilineTextAlignment(.trailing)
           }
+          LabeledContent("Age", value: details.captureAgeText)
           LabeledContent("File size", value: details.fileSizeText)
           LabeledContent("Resolution", value: details.resolutionText)
           LabeledContent("Aspect ratio", value: details.aspectRatioText)
