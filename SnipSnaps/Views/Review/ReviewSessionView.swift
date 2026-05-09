@@ -225,6 +225,7 @@ struct ReviewSessionView: View {
     }
     .navigationTitle(mode.title)
     .navigationBarTitleDisplayMode(.inline)
+    .navigationBarBackButtonHidden(true)
     .sheet(isPresented: $showMetadataSheet) {
       if let asset = currentAsset,
          let currentPhotoDetails {
@@ -232,12 +233,23 @@ struct ReviewSessionView: View {
       }
     }
     .toolbar {
+      if !showSummary {
+        ToolbarItem(placement: .topBarLeading) {
+          Button {
+            dismiss()
+          } label: {
+            Image(systemName: "xmark")
+          }
+          .accessibilityLabel("Close review")
+        }
+      }
       if showSummary {
         ToolbarItem(placement: .topBarTrailing) {
           Button("Done") { dismiss() }
         }
       }
     }
+    .toolbar(.hidden, for: .tabBar)
     .onAppear { loadAssets() }
     .onChange(of: currentIndex) { _, _ in
       updateCaching()
