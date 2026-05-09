@@ -1127,14 +1127,36 @@ struct SimilarReviewSessionView: View {
         Button {
           markOthersAndAdvance()
         } label: {
-          Label(markOthersTitle, systemImage: "checklist")
-            .frame(maxWidth: .infinity)
+          markOthersButtonLabel
         }
         .buttonStyle(.borderedProminent)
         .tint(AppColor.primary)
         .controlSize(.large)
+        .accessibilityLabel(markOthersTitle)
       }
     }
+  }
+
+  private var markOthersButtonLabel: some View {
+    HStack(spacing: 8) {
+      Image(systemName: currentMarkedCount == 0 ? "arrow.right" : "checklist")
+        .frame(width: 18)
+
+      Text(currentMarkedCount == 0 ? "Continue" : "Mark Extras")
+        .lineLimit(1)
+        .minimumScaleFactor(0.9)
+        .frame(width: 112, alignment: .leading)
+
+      Text("\(max(currentMarkedCount, 0))")
+        .font(.caption.weight(.bold))
+        .monospacedDigit()
+        .foregroundStyle(AppColor.primary)
+        .frame(width: 24, height: 24)
+        .background(.white.opacity(currentMarkedCount == 0 ? 0 : 0.9), in: Capsule(style: .continuous))
+        .opacity(currentMarkedCount == 0 ? 0 : 1)
+        .accessibilityHidden(true)
+    }
+    .frame(maxWidth: .infinity, minHeight: 24)
   }
 
   private var markOthersTitle: String {

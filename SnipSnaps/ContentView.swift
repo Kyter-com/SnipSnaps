@@ -11,6 +11,18 @@ struct ContentView: View {
   @State private var selectedTab = 0
 
   var body: some View {
+    #if DEBUG
+    if let screenshotScreen = ProcessInfo.processInfo.environment["SNIPSNAPS_SCREENSHOT_SCREEN"] {
+      ScreenshotDemoView(screen: screenshotScreen)
+    } else {
+      tabView
+    }
+    #else
+    tabView
+    #endif
+  }
+
+  private var tabView: some View {
     TabView(selection: $selectedTab) {
       HomeView()
         .tabItem {
@@ -23,10 +35,10 @@ struct ContentView: View {
         }
         .tag(1)
     }
-    .accentColor(AppColor.primary)
-    .onChange(of: selectedTab) {
-      let generator = UIImpactFeedbackGenerator(style: .light)
-      generator.impactOccurred()
-    }
+      .accentColor(AppColor.primary)
+      .onChange(of: selectedTab) {
+        let generator = UIImpactFeedbackGenerator(style: .light)
+        generator.impactOccurred()
+      }
   }
 }

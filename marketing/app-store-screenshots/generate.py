@@ -8,6 +8,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 ROOT = Path(__file__).resolve().parents[2]
 OUT = Path(__file__).resolve().parent / "output"
+RAW = Path(__file__).resolve().parent / "raw"
 ICON = ROOT / "SnipSnaps/Assets.xcassets/AppIcon.appiconset/Frame 11.png"
 
 WARM = (248, 243, 235)
@@ -87,6 +88,15 @@ def paste_round(base: Image.Image, image: Image.Image, xy: tuple[int, int], radi
     md = ImageDraw.Draw(mask)
     md.rounded_rectangle((0, 0, image.width, image.height), radius=radius, fill=255)
     base.paste(image, xy, mask)
+
+
+def fit_image(image: Image.Image, size: tuple[int, int], fill=(246, 244, 239)) -> Image.Image:
+    image = image.convert("RGB")
+    canvas = Image.new("RGB", size, fill)
+    ratio = min(size[0] / image.width, size[1] / image.height)
+    resized = image.resize((int(image.width * ratio), int(image.height * ratio)), Image.Resampling.LANCZOS)
+    canvas.paste(resized, ((size[0] - resized.width) // 2, (size[1] - resized.height) // 2))
+    return canvas
 
 
 def gradient(size: tuple[int, int], top: tuple[int, int, int], bottom: tuple[int, int, int]) -> Image.Image:
@@ -182,15 +192,36 @@ def draw_slide_text(draw: ImageDraw.ImageDraw, slide: dict, x: int, y: int, max_
         draw.text((x, y + index * subtitle_line_height), line, fill=MUTED, font=subtitle_font)
 
 
-def phone_frame(size: tuple[int, int], screen: str, scale: float) -> Image.Image:
+def raw_capture(device: str, index: int, screen: str) -> Image.Image | None:
+    path = RAW / device / f"{index:02d}-{screen}.png"
+    if path.exists():
+        return Image.open(path).convert("RGB")
+    return None
+
+
+def app_frame(
+    size: tuple[int, int],
+    screen: str,
+    scale: float,
+    screenshot: Image.Image | None = None,
+    style: str = "phone",
+) -> Image.Image:
     w, h = size
     img = Image.new("RGBA", size, (0, 0, 0, 0))
     d = ImageDraw.Draw(img, "RGBA")
-    rounded(d, (0, 0, w, h), int(62 * scale), fill=(21, 21, 24), outline=(0, 0, 0, 35), width=max(2, int(3 * scale)))
-    inset = int(20 * scale)
-    rounded(d, (inset, inset, w - inset, h - inset), int(48 * scale), fill=(246, 244, 239))
-    render_app_screen(img, (inset, inset, w - inset, h - inset), screen, scale)
-    d.rounded_rectangle((w * 0.36, inset + int(13 * scale), w * 0.64, inset + int(36 * scale)), radius=int(14 * scale), fill=(19, 19, 21))
+    outer_radius = int((62 if style == "phone" else 42) * scale)
+    inner_radius = int((48 if style == "phone" else 30) * scale)
+    inset = int((20 if style == "phone" else 18) * scale)
+    rounded(d, (0, 0, w, h), outer_radius, fill=(21, 21, 24), outline=(0, 0, 0, 35), width=max(2, int(3 * scale)))
+    screen_box = (inset, inset, w - inset, h - inset)
+    rounded(d, screen_box, inner_radius, fill=(246, 244, 239))
+    if screenshot is not None:
+        screen_size = (screen_box[2] - screen_box[0], screen_box[3] - screen_box[1])
+        paste_round(img, fit_image(screenshot, screen_size).convert("RGBA"), (screen_box[0], screen_box[1]), inner_radius)
+    else:
+        render_app_screen(img, screen_box, screen, scale)
+    if style == "phone":
+        d.rounded_rectangle((w * 0.36, inset + int(13 * scale), w * 0.64, inset + int(36 * scale)), radius=int(14 * scale), fill=(19, 19, 21))
     return img
 
 
@@ -298,7 +329,13 @@ def compose(device: str, slide: dict, index: int):
     if device.startswith("iphone"):
         text_x, text_y = int(86 * scale), int(365 * scale)
         draw_slide_text(d, slide, text_x, text_y, int(1080 * scale), scale)
-        frame = phone_frame((int(590 * scale), int(1165 * scale)), slide["screen"], scale)
+        frame = app_frame(
+            (int(590 * scale), int(1165 * scale)),
+            slide["screen"],
+            scale,
+            raw_capture(device, index, slide["screen"]),
+            "phone",
+        )
         shadow = Image.new("RGBA", frame.size, (0, 0, 0, 0))
         sd = ImageDraw.Draw(shadow, "RGBA")
         sd.rounded_rectangle((0, 0, frame.width, frame.height), radius=int(65 * scale), fill=(0, 0, 0, 54))
@@ -310,7 +347,13 @@ def compose(device: str, slide: dict, index: int):
     else:
         text_x, text_y = int(120 * scale), int(340 * scale)
         draw_slide_text(d, slide, text_x, text_y, int(850 * scale), scale * 0.82)
-        frame = phone_frame((720, 1420), slide["screen"], 1.0)
+        frame = app_frame(
+            (860, 1148),
+            slide["screen"],
+            1.0,
+            raw_capture(device, index, slide["screen"]),
+            "tablet",
+        )
         fx = w - frame.width - int(150 * scale)
         fy = int(800 * scale)
         shadow = Image.new("RGBA", frame.size, (0, 0, 0, 0))
