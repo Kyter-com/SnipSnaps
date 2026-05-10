@@ -1,0 +1,32 @@
+{
+  "name": "SnipSnaps",
+  "subtitle": "Clean up your photo library",
+  "bundleId": "com.kyter.SnipSnaps",
+  "versionString": "1.0",
+  "buildNumber": "2",
+  "primaryCategory": "PHOTO_AND_VIDEO",
+  "secondaryCategory": "UTILITIES",
+  "description": "SnipSnaps helps you clean up your photo library in quick, focused review sessions.\n\nSwipe through recent photos, screenshots, memories from this day, random shots, or duplicate-looking groups. Keep the photos that matter, mark the ones you do not need, and delete them when you are ready. Every session is designed to be fast enough for a spare minute and careful enough to avoid accidental cleanup.\n\nUse SnipSnaps to:\n\n- Review your newest photos before clutter builds up\n- Clear screenshots without digging through Photos\n- Revisit pictures from this day across past years\n- Find similar-looking groups and choose the best shot\n- See how many photos and how much storage you have cleared\n\nSnipSnaps works with your photo library on device. It asks for Photos access only so you can review and delete the photos you choose.",
+  "promotionalText": "Clean up recent photos, screenshots, memories, and similar-looking shots in fast swipe sessions.",
+  "keywords": "photo cleaner,delete photos,storage,duplicates,screenshots,camera roll,photo organizer,cleanup",
+  "whatsNew": "Initial release.",
+  "reviewNotes": "SnipSnaps does not require an account or server access. To review the app, launch it and grant Photos permission when prompted. The app reads the user's photo library locally to present review sessions. When a user chooses to delete selected photos, iOS moves those assets to Recently Deleted through the system Photos API.",
+  "privacy": {
+    "collectsData": false,
+    "tracksUsers": false,
+    "usesThirdPartyAnalytics": false,
+    "usesAdvertising": false,
+    "networkingFoundInCode": false,
+    "photoLibraryPurpose": "Accesses the user's photo library on device to display review sessions and delete only the photos the user explicitly selects."
+  },
+  "requiredAccountValues": {
+    "supportUrl": "https://kyter.com/snipsnaps/support/",
+    "marketingUrl": null,
+    "privacyPolicyUrl": "https://kyter.com/snipsnaps/privacy/",
+    "termsUrl": "https://kyter.com/snipsnaps/terms/",
+    "copyright": null,
+    "appStoreConnectKeyId": null,
+    "appStoreConnectIssuerId": null,
+    "appStoreAppId": null
+  }
+}
