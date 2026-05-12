@@ -357,7 +357,7 @@ enum PhotoLibrary {
   private static func thumbnailImage(for asset: PHAsset, targetSize: CGSize) -> UIImage? {
     let options = PHImageRequestOptions()
     options.isNetworkAccessAllowed = true
-    options.deliveryMode = .fastFormat
+    options.deliveryMode = .highQualityFormat
     options.resizeMode = .exact
     options.isSynchronous = true
 

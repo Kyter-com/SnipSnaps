@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		414D082D3FBC2D8DC4E91899 /* ScreenshotCaptureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8689B4C1EA0471F45B94F97 /* ScreenshotCaptureTests.swift */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		4720D30E2DF5493E001FE738 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -27,6 +31,7 @@
 		4720D2FC2DF5493D001FE738 /* SnipSnaps.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SnipSnaps.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4720D30D2DF5493E001FE738 /* SnipSnapsTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SnipSnapsTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		4720D3172DF5493E001FE738 /* SnipSnapsUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SnipSnapsUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B8689B4C1EA0471F45B94F97 /* ScreenshotCaptureTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ScreenshotCaptureTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -75,11 +80,21 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		41BD7844F5E3D03BBC0D7AB1 /* SnipSnapsUITests */ = {
+			isa = PBXGroup;
+			children = (
+				B8689B4C1EA0471F45B94F97 /* ScreenshotCaptureTests.swift */,
+			);
+			name = SnipSnapsUITests;
+			path = SnipSnapsUITests;
+			sourceTree = SOURCE_ROOT;
+		};
 		4720D2F32DF5493D001FE738 = {
 			isa = PBXGroup;
 			children = (
 				4720D2FE2DF5493D001FE738 /* SnipSnaps */,
 				4720D2FD2DF5493D001FE738 /* Products */,
+				41BD7844F5E3D03BBC0D7AB1 /* SnipSnapsUITests */,
 			);
 			sourceTree = "<group>";
 		};
@@ -112,8 +127,6 @@
 				4720D2FE2DF5493D001FE738 /* SnipSnaps */,
 			);
 			name = SnipSnaps;
-			packageProductDependencies = (
-			);
 			productName = SnipSnaps;
 			productReference = 4720D2FC2DF5493D001FE738 /* SnipSnaps.app */;
 			productType = "com.apple.product-type.application";
@@ -132,8 +145,6 @@
 				4720D30F2DF5493E001FE738 /* PBXTargetDependency */,
 			);
 			name = SnipSnapsTests;
-			packageProductDependencies = (
-			);
 			productName = SnipSnapsTests;
 			productReference = 4720D30D2DF5493E001FE738 /* SnipSnapsTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
@@ -152,8 +163,6 @@
 				4720D3192DF5493E001FE738 /* PBXTargetDependency */,
 			);
 			name = SnipSnapsUITests;
-			packageProductDependencies = (
-			);
 			productName = SnipSnapsUITests;
 			productReference = 4720D3172DF5493E001FE738 /* SnipSnapsUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
@@ -245,6 +254,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				414D082D3FBC2D8DC4E91899 /* ScreenshotCaptureTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
