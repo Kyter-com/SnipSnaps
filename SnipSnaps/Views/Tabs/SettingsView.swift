@@ -43,12 +43,25 @@ struct SettingsView: View {
         }
 
         Section("Support") {
-          settingsLink(
-            title: "GitHub",
-            systemImage: "chevron.left.forwardslash.chevron.right.circle.fill",
-            tint: .primary,
-            url: "https://github.com/Kyter-com/SnipSnaps"
-          )
+          Button {
+            if let url = URL(string: "https://github.com/Kyter-com/SnipSnaps") {
+              UIApplication.shared.open(url)
+            }
+          } label: {
+            HStack {
+              Image("GitHub")
+                .font(.title2)
+                .foregroundStyle(.primary)
+                .frame(width: 28, height: 28)
+
+              Text("GitHub")
+                .foregroundStyle(.primary)
+              Spacer()
+              Image(systemName: "arrow.up.forward")
+                .font(.footnote)
+                .foregroundStyle(Color(UIColor.tertiaryLabel))
+            }
+          }
           settingsLink(
             title: "Support",
             systemImage: "questionmark.circle.fill",

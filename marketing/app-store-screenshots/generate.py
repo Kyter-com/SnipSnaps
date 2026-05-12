@@ -31,37 +31,37 @@ DEVICES = {
 
 SLIDES = [
     {
-        "kicker": "SNIPSNAPS",
+        "kicker": "",
         "title": "Clear photo clutter in minutes.",
         "subtitle": "Pick a review mode, swipe through your library, and keep only what matters.",
         "screen": "home",
     },
     {
-        "kicker": "FAST REVIEW",
+        "kicker": "",
         "title": "Swipe fast. Keep the best.",
         "subtitle": "A focused card stack helps every decision feel quick and deliberate.",
         "screen": "review",
     },
     {
-        "kicker": "SIMILAR PHOTOS",
+        "kicker": "",
         "title": "Find duplicate-looking shots.",
         "subtitle": "Compare near matches side by side and keep more than one when you need to.",
         "screen": "similar",
     },
     {
-        "kicker": "CONTEXT",
+        "kicker": "",
         "title": "Know what you are looking at.",
         "subtitle": "Dates, age, file size, and details make every cleanup decision easier.",
         "screen": "details",
     },
     {
-        "kicker": "SAFE DELETE",
+        "kicker": "",
         "title": "Review everything before it goes.",
         "subtitle": "Marked photos are grouped for one final check before deleting.",
         "screen": "summary",
     },
     {
-        "kicker": "SETTINGS",
+        "kicker": "",
         "title": "Tune each cleanup session.",
         "subtitle": "Set review size and track lifetime cleanup progress over time.",
         "screen": "settings",
@@ -251,21 +251,16 @@ def draw_kicker_chip(base: Image.Image, text: str, xy, scale: float):
 
 
 def draw_slide_text(base: Image.Image, slide, x: int, y: int, max_width: int, scale: float):
-    chip_h = draw_kicker_chip(base, slide["kicker"], (x, y), scale)
-    y += chip_h + int(34 * scale)
+    if slide.get("kicker"):
+        chip_h = draw_kicker_chip(base, slide["kicker"], (x, y), scale)
+        y += chip_h + int(34 * scale)
     title_font = font(int(94 * scale))
-    subtitle_font = font(int(34 * scale))
     title_line_height = int(108 * scale)
-    subtitle_line_height = int(48 * scale)
     d = ImageDraw.Draw(base, "RGBA")
     title_lines = wrapped_lines(d, slide["title"], max_width, title_font)[:2]
     for index, line in enumerate(title_lines):
         d.text((x + 2, y + index * title_line_height + 2), line, fill=(0, 0, 0, 110), font=title_font)
         d.text((x, y + index * title_line_height), line, fill=WHITE, font=title_font)
-    y += title_line_height * 2 + int(20 * scale)
-    subtitle_lines = wrapped_lines(d, slide["subtitle"], max_width, subtitle_font)[:2]
-    for index, line in enumerate(subtitle_lines):
-        d.text((x, y + index * subtitle_line_height), line, fill=DIM, font=subtitle_font)
 
 
 def raw_capture(device: str, index: int, screen: str):
@@ -371,7 +366,7 @@ def compose(device: str, slide, index: int):
         frame_h = int(1986 * scale)  # ~iPhone 0.46 aspect
         frame = app_frame((frame_w, frame_h), scale, raw_capture(device, index, slide["screen"]), "phone")
         fx = (w - frame_w) // 2
-        fy = int(960 * scale)
+        fy = int(820 * scale)
 
         glow_layer, gpad = device_glow((frame_w, frame_h), int(78 * scale), scale, GLOW)
         img.alpha_composite(glow_layer, (fx - gpad, fy - gpad + int(40 * scale)))
@@ -390,7 +385,7 @@ def compose(device: str, slide, index: int):
         frame_h = 1808  # ~0.75 iPad aspect
         frame = app_frame((frame_w, frame_h), 1.0, raw_capture(device, index, slide["screen"]), "tablet")
         fx = (w - frame_w) // 2
-        fy = 930
+        fy = 790
 
         glow_layer, gpad = device_glow((frame_w, frame_h), 60, 1.0, GLOW)
         img.alpha_composite(glow_layer, (fx - gpad, fy - gpad + 60))
