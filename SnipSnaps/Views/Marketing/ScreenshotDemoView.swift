@@ -62,6 +62,7 @@ private struct ScreenshotHomeDemo: View {
     ("Today", "Review your newest shots", "24", "sun.max.fill", Color.orange.opacity(0.18)),
     ("On This Day", "Photos from May 8 across the years", "88", "calendar", Color.blue.opacity(0.14)),
     ("Screenshots", "Clear the clutter fast", "143", "rectangle.on.rectangle", Color.red.opacity(0.13)),
+    ("Videos", "Review space-hungry clips", "18", "video.fill", Color.indigo.opacity(0.14)),
     ("Similar Photos", "Review duplicate-looking groups", "SCAN", "square.stack.3d.up", Color.green.opacity(0.14)),
   ]
 
@@ -124,12 +125,26 @@ private struct ScreenshotHomeDemo: View {
                       .background(Color(.tertiarySystemGroupedBackground), in: Capsule(style: .continuous))
                       .padding(.top, 2)
                     }
+                    if title == "Videos" {
+                      HStack(spacing: 6) {
+                        Image(systemName: "internaldrive")
+                        Text("Largest")
+                        Image(systemName: "chevron.down")
+                          .font(.caption2.weight(.bold))
+                      }
+                      .font(.caption.weight(.semibold))
+                      .foregroundStyle(.secondary)
+                      .padding(.horizontal, 10)
+                      .padding(.vertical, 6)
+                      .background(Color(.tertiarySystemGroupedBackground), in: Capsule(style: .continuous))
+                      .padding(.top, 2)
+                    }
                   }
                   Spacer()
                 }
                 .padding(.horizontal, 16)
               }
-              .frame(height: title == "Screenshots" || title == "Similar Photos" ? 112 : 96)
+              .frame(height: title == "Screenshots" || title == "Videos" || title == "Similar Photos" ? 112 : 96)
             }
           }
         }

@@ -5,6 +5,7 @@ enum ReviewMode: String, CaseIterable, Identifiable {
   case onThisDay
   case random
   case screenshots
+  case videos
   case similar
 
   var id: String { rawValue }
@@ -19,6 +20,8 @@ enum ReviewMode: String, CaseIterable, Identifiable {
       return "Random"
     case .screenshots:
       return "Screenshots"
+    case .videos:
+      return "Videos"
     case .similar:
       return "Similar"
     }
@@ -34,6 +37,8 @@ enum ReviewMode: String, CaseIterable, Identifiable {
       return "A surprise mix from your library"
     case .screenshots:
       return "Clear the clutter fast"
+    case .videos:
+      return "Review space-hungry clips"
     case .similar:
       return "Review duplicate-looking groups"
     }
@@ -49,6 +54,8 @@ enum ReviewMode: String, CaseIterable, Identifiable {
       return "shuffle"
     case .screenshots:
       return "rectangle.on.rectangle"
+    case .videos:
+      return "video.fill"
     case .similar:
       return "square.stack.3d.up"
     }
@@ -56,6 +63,68 @@ enum ReviewMode: String, CaseIterable, Identifiable {
 
   private var monthDayText: String {
     Date.now.formatted(.dateTime.month(.abbreviated).day())
+  }
+}
+
+enum VideoSortOption: String, CaseIterable, Identifiable {
+  case recent
+  case oldest
+  case largest
+  case shortest
+  case longest
+  case random
+
+  var id: String { rawValue }
+
+  var title: String {
+    switch self {
+    case .recent:
+      return "Recent"
+    case .oldest:
+      return "Oldest"
+    case .largest:
+      return "Largest"
+    case .shortest:
+      return "Shortest"
+    case .longest:
+      return "Longest"
+    case .random:
+      return "Random"
+    }
+  }
+
+  var subtitle: String {
+    switch self {
+    case .recent:
+      return "Newest first"
+    case .oldest:
+      return "Oldest first"
+    case .largest:
+      return "Biggest files first"
+    case .shortest:
+      return "Shortest clips first"
+    case .longest:
+      return "Longest clips first"
+    case .random:
+      return "Shuffled each session"
+    }
+  }
+
+  var systemImage: String {
+    switch self {
+    case .recent:
+      return "clock.arrow.circlepath"
+    case .oldest:
+      return "calendar"
+    case .largest:
+      return "internaldrive"
+    case .shortest:
+      return "timer"
+    case .longest:
+      return "timer.circle.fill"
+    case .random:
+      return "shuffle"
+    }
   }
 }
 

@@ -14,6 +14,7 @@ struct HomeView: View {
   @State private var selectedMode: ReviewMode?
   @AppStorage("reviewLimit") private var reviewLimit: Int = 20
   @AppStorage("screenshotSortOption") private var screenshotSortOptionRawValue: String = ScreenshotSortOption.recent.rawValue
+  @AppStorage("videoSortOption") private var videoSortOptionRawValue: String = VideoSortOption.largest.rawValue
   @AppStorage("similarSortOption") private var similarSortOptionRawValue: String = SimilarSortOption.recent.rawValue
 
   private var canAccessPhotos: Bool {
@@ -35,6 +36,15 @@ struct HomeView: View {
     }
     nonmutating set {
       similarSortOptionRawValue = newValue.rawValue
+    }
+  }
+
+  private var videoSortOption: VideoSortOption {
+    get {
+      VideoSortOption(rawValue: videoSortOptionRawValue) ?? .largest
+    }
+    nonmutating set {
+      videoSortOptionRawValue = newValue.rawValue
     }
   }
 
@@ -89,7 +99,7 @@ struct HomeView: View {
           mode: mode,
           count: counts[mode] ?? 0,
           isDisabled: !canAccessPhotos,
-          reservesAccessorySpace: mode == .screenshots || mode == .similar
+          reservesAccessorySpace: mode == .screenshots || mode == .videos || mode == .similar
         )
       }
       .buttonStyle(.plain)
@@ -97,6 +107,13 @@ struct HomeView: View {
 
       if mode == .screenshots {
         screenshotSortMenu
+          .padding(.leading, 16)
+          .padding(.bottom, 12)
+          .disabled(!canAccessPhotos)
+      }
+
+      if mode == .videos {
+        videoSortMenu
           .padding(.leading, 16)
           .padding(.bottom, 12)
           .disabled(!canAccessPhotos)
@@ -137,6 +154,34 @@ struct HomeView: View {
       .background(Color(.tertiarySystemGroupedBackground), in: Capsule(style: .continuous))
     }
     .accessibilityLabel("Sort screenshots by \(screenshotSortOption.title)")
+  }
+
+  private var videoSortMenu: some View {
+    Menu {
+      ForEach(VideoSortOption.allCases) { option in
+        Button {
+          videoSortOption = option
+        } label: {
+          Label(
+            option.subtitle,
+            systemImage: option == videoSortOption ? "checkmark" : option.systemImage
+          )
+        }
+      }
+    } label: {
+      HStack(spacing: 6) {
+        Image(systemName: videoSortOption.systemImage)
+        Text(videoSortOption.title)
+        Image(systemName: "chevron.down")
+          .font(.caption2.weight(.bold))
+      }
+      .font(.caption.weight(.semibold))
+      .foregroundStyle(.secondary)
+      .padding(.horizontal, 10)
+      .padding(.vertical, 6)
+      .background(Color(.tertiarySystemGroupedBackground), in: Capsule(style: .continuous))
+    }
+    .accessibilityLabel("Sort videos by \(videoSortOption.subtitle)")
   }
 
   private var similarSortMenu: some View {

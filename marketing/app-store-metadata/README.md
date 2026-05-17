@@ -10,7 +10,7 @@ Prepared non-image release metadata for App Store Connect.
 - Secondary category: Utilities
 - Bundle ID: com.kyter.SnipSnaps
 - Version: 1.0.1
-- Build: 28
+- Build: 29
 - Content rights: The app does not contain, show, or access third-party content outside the user's own photo library.
 - Encryption: Uses no non-exempt encryption (`ITSAppUsesNonExemptEncryption` is false).
 
@@ -18,21 +18,22 @@ Prepared non-image release metadata for App Store Connect.
 
 SnipSnaps helps you clean up your photo library in quick, focused review sessions.
 
-Swipe through recent photos, screenshots, memories from this day, random shots, or duplicate-looking groups. Keep the photos that matter, mark the ones you do not need, and delete them when you are ready. Every session is designed to be fast enough for a spare minute and careful enough to avoid accidental cleanup.
+Swipe through recent photos, screenshots, videos, memories from this day, random shots, or duplicate-looking groups. Keep the photos and videos that matter, mark the ones you do not need, and delete them when you are ready. Every session is designed to be fast enough for a spare minute and careful enough to avoid accidental cleanup.
 
 Use SnipSnaps to:
 
 - Review your newest photos before clutter builds up
 - Clear screenshots without digging through Photos
+- Sort videos by size, length, or date before reviewing
 - Revisit pictures from this day across past years
 - Find similar-looking groups and choose the best shot
-- See how many photos and how much storage you have cleared
+- See how many photos and videos, and how much storage you have cleared
 
-SnipSnaps works with your photo library on device. It asks for Photos access only so you can review and delete the photos you choose.
+SnipSnaps works with your photo library on device. It asks for Photos access only so you can review and delete the photos and videos you choose.
 
 ## Promotional Text
 
-Clean up recent photos, screenshots, memories, and similar-looking shots in fast swipe sessions.
+Clean up recent photos, videos, screenshots, memories, and similar-looking shots in fast swipe sessions.
 
 ## Keywords
 
@@ -40,6 +41,7 @@ photo cleaner,delete photos,storage,duplicates,screenshots,camera roll,photo org
 
 ## What's New
 
+• Added a dedicated video review mode with sorting by size, length, date, or random order.
 • Added sorting controls for screenshot review sessions.
 • Improved similar photo matching with burst detection, smarter visual matching, and confidence labels.
 • Added sorting controls and clearer cleanup estimates for similar photo groups.
@@ -53,7 +55,7 @@ Suggested review path:
 
 1. Open SnipSnaps.
 2. Grant full or limited Photos access.
-3. Choose Today, Screenshots, Random, On This Day, or Similar.
+3. Choose Today, Screenshots, Videos, Random, On This Day, or Similar.
 4. Swipe or use the action buttons to keep or mark photos.
 5. Confirm deletion for marked photos.
 
@@ -67,7 +69,7 @@ Linked to user: None.
 
 Data used for tracking: None.
 
-Photos access: The app accesses the user's photo library on device to display review sessions and delete only the photos the user explicitly selects. Photo data is not uploaded, sold, tracked, or shared.
+Photos access: The app accesses the user's photo library on device to display review sessions and delete only the photos and videos the user explicitly selects. Photo data is not uploaded, sold, tracked, or shared.
 
 Diagnostics/analytics: None found in the app code.
 

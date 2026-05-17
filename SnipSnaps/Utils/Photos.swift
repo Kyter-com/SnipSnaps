@@ -97,7 +97,12 @@ enum PhotoLibrary {
     status == .authorized || status == .limited
   }
 
-  static func fetchAssets(for mode: ReviewMode, limit: Int, screenshotSort: ScreenshotSortOption = .recent) -> [PHAsset] {
+  static func fetchAssets(
+    for mode: ReviewMode,
+    limit: Int,
+    screenshotSort: ScreenshotSortOption = .recent,
+    videoSort: VideoSortOption = .largest
+  ) -> [PHAsset] {
     let options = PHFetchOptions()
     options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
 
@@ -124,6 +129,8 @@ enum PhotoLibrary {
         PHAssetMediaSubtype.photoScreenshot.rawValue
       )
       return fetchScreenshotAssets(options: options, sort: screenshotSort, limit: limit)
+    case .videos:
+      return fetchVideoAssets(options: options, sort: videoSort, limit: limit)
     case .similar:
       options.fetchLimit = limit
       return fetchAssets(options: options, limit: limit)
@@ -155,12 +162,14 @@ enum PhotoLibrary {
         format: "(mediaSubtype & %d) != 0",
         PHAssetMediaSubtype.photoScreenshot.rawValue
       )
+    case .videos:
+      break
     case .similar:
       options.fetchLimit = 1_000
     case .random:
       break
     }
-    return PHAsset.fetchAssets(with: .image, options: options).count
+    return PHAsset.fetchAssets(with: mode == .videos ? .video : .image, options: options).count
   }
 
   static func fetchSimilarPhotoGroups(
@@ -294,6 +303,19 @@ enum PhotoLibrary {
       }
     }
     return total
+  }
+
+  static func durationText(for asset: PHAsset) -> String {
+    guard asset.mediaType == .video else { return "" }
+    let duration = max(asset.duration, 0)
+    let totalSeconds = Int(duration.rounded())
+    let hours = totalSeconds / 3_600
+    let minutes = (totalSeconds % 3_600) / 60
+    let seconds = totalSeconds % 60
+    if hours > 0 {
+      return "\(hours):\(String(format: "%02d", minutes)):\(String(format: "%02d", seconds))"
+    }
+    return "\(minutes):\(String(format: "%02d", seconds))"
   }
 
   static func startCachingAssets(_ assets: [PHAsset], targetSize: CGSize, contentMode: PHImageContentMode = .aspectFill) {
@@ -461,6 +483,96 @@ enum PhotoLibrary {
 
       return assetsWithBytes.prefix(limit).map(\.asset)
     }
+  }
+
+  private static func fetchVideoAssets(
+    options: PHFetchOptions,
+    sort: VideoSortOption,
+    limit: Int
+  ) -> [PHAsset] {
+    switch sort {
+    case .recent:
+      options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+      options.fetchLimit = limit
+      return fetchAssets(mediaType: .video, options: options, limit: limit)
+    case .oldest:
+      options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
+      options.fetchLimit = limit
+      return fetchAssets(mediaType: .video, options: options, limit: limit)
+    case .random:
+      return fetchRandomAssets(mediaType: .video, options: options, limit: limit)
+    case .largest, .shortest, .longest:
+      options.sortDescriptors = nil
+      let result = PHAsset.fetchAssets(with: .video, options: options)
+      guard result.count > 0 else { return [] }
+
+      var assets: [PHAsset] = []
+      assets.reserveCapacity(result.count)
+      for index in 0..<result.count {
+        assets.append(result.object(at: index))
+      }
+
+      assets.sort { lhs, rhs in
+        switch sort {
+        case .largest:
+          let lhsBytes = estimatedBytes(for: lhs)
+          let rhsBytes = estimatedBytes(for: rhs)
+          if lhsBytes == rhsBytes {
+            return lhs.duration > rhs.duration
+          }
+          return lhsBytes > rhsBytes
+        case .shortest:
+          if lhs.duration == rhs.duration {
+            return (lhs.creationDate ?? .distantPast) > (rhs.creationDate ?? .distantPast)
+          }
+          return lhs.duration < rhs.duration
+        case .longest:
+          if lhs.duration == rhs.duration {
+            return (lhs.creationDate ?? .distantPast) > (rhs.creationDate ?? .distantPast)
+          }
+          return lhs.duration > rhs.duration
+        case .recent, .oldest, .random:
+          return false
+        }
+      }
+
+      return Array(assets.prefix(limit))
+    }
+  }
+
+  private static func fetchAssets(
+    mediaType: PHAssetMediaType,
+    options: PHFetchOptions,
+    limit: Int
+  ) -> [PHAsset] {
+    let result = PHAsset.fetchAssets(with: mediaType, options: options)
+    let count = min(result.count, limit)
+    guard count > 0 else { return [] }
+
+    var assets: [PHAsset] = []
+    assets.reserveCapacity(count)
+    for index in 0..<count {
+      assets.append(result.object(at: index))
+    }
+    return assets
+  }
+
+  private static func fetchRandomAssets(
+    mediaType: PHAssetMediaType,
+    options: PHFetchOptions,
+    limit: Int
+  ) -> [PHAsset] {
+    let result = PHAsset.fetchAssets(with: mediaType, options: options)
+    let total = result.count
+    guard total > 0 else { return [] }
+
+    let target = min(limit, total)
+    var indices = Set<Int>()
+    while indices.count < target {
+      indices.insert(Int.random(in: 0..<total))
+    }
+
+    return indices.shuffled().map { result.object(at: $0) }
   }
 
   private struct SimilarPhotoFingerprint {

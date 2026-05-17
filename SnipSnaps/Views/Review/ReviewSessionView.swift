@@ -40,6 +40,7 @@ private struct ReviewPhotoDetails {
   let fileName: String?
   let isLivePhoto: Bool
   let typeText: String
+  let durationText: String?
 
   init(asset: PHAsset) {
     let creationDate = asset.creationDate
@@ -60,6 +61,7 @@ private struct ReviewPhotoDetails {
     fileName = PHAssetResource.assetResources(for: asset).first?.originalFilename
     isLivePhoto = asset.mediaSubtypes.contains(.photoLive)
     typeText = Self.typeText(for: asset)
+    durationText = asset.mediaType == .video ? PhotoLibrary.durationText(for: asset) : nil
   }
 
   private static func aspectRatioText(width: Int, height: Int) -> String {
@@ -70,6 +72,9 @@ private struct ReviewPhotoDetails {
 
   private static func typeText(for asset: PHAsset) -> String {
     var labels: [String] = []
+    if asset.mediaType == .video {
+      labels.append("Video")
+    }
     if asset.mediaSubtypes.contains(.photoScreenshot) {
       labels.append("Screenshot")
     }
@@ -165,6 +170,7 @@ struct ReviewSessionView: View {
   @State private var lastReviewUndo: PhotoReviewUndo?
   @AppStorage("reviewLimit") private var reviewLimit: Int = 20
   @AppStorage("screenshotSortOption") private var screenshotSortOptionRawValue: String = ScreenshotSortOption.recent.rawValue
+  @AppStorage("videoSortOption") private var videoSortOptionRawValue: String = VideoSortOption.largest.rawValue
   @AppStorage("totalDeletedCount") private var totalDeletedCount: Int = 0
   @AppStorage("totalDeletedBytes") private var totalDeletedBytes: Int = 0
 
@@ -228,6 +234,10 @@ struct ReviewSessionView: View {
 
   private var screenshotSortOption: ScreenshotSortOption {
     ScreenshotSortOption(rawValue: screenshotSortOptionRawValue) ?? .recent
+  }
+
+  private var videoSortOption: VideoSortOption {
+    VideoSortOption(rawValue: videoSortOptionRawValue) ?? .largest
   }
 
   private var estimatedDeleteBytes: Int {
@@ -648,7 +658,12 @@ struct ReviewSessionView: View {
         await MainActor.run { isLoading = false }
         return
       }
-      let fetched = PhotoLibrary.fetchAssets(for: mode, limit: sessionLimit, screenshotSort: screenshotSortOption)
+      let fetched = PhotoLibrary.fetchAssets(
+        for: mode,
+        limit: sessionLimit,
+        screenshotSort: screenshotSortOption,
+        videoSort: videoSortOption
+      )
       await MainActor.run {
         assets = fetched
         currentIndex = 0
@@ -1617,6 +1632,9 @@ private struct PhotoMetadataSheet: View {
           }
           LabeledContent("Age", value: details.captureAgeText)
           LabeledContent("File size", value: details.fileSizeText)
+          if let durationText = details.durationText {
+            LabeledContent("Duration", value: durationText)
+          }
           LabeledContent("Resolution", value: details.resolutionText)
           LabeledContent("Aspect ratio", value: details.aspectRatioText)
           LabeledContent("Type", value: details.typeText)
@@ -1643,7 +1661,7 @@ private struct PhotoMetadataSheet: View {
           Text("This opens Apple Photos. iOS does not provide a public API to deep-link directly to the exact photo.")
         }
       }
-      .navigationTitle("Photo Details")
+      .navigationTitle(asset.mediaType == .video ? "Video Details" : "Photo Details")
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .topBarTrailing) {
@@ -1679,6 +1697,16 @@ private struct PhotoCardView: View {
 
       if enableLivePhotoPlayback, asset.mediaSubtypes.contains(.photoLive) {
         Label("Live", systemImage: "livephoto")
+          .font(.footnote.weight(.semibold))
+          .foregroundStyle(.white)
+          .padding(.horizontal, 12)
+          .padding(.vertical, 8)
+          .background(.ultraThinMaterial, in: Capsule(style: .continuous))
+          .padding(18)
+      }
+
+      if asset.mediaType == .video {
+        Label(PhotoLibrary.durationText(for: asset), systemImage: "play.fill")
           .font(.footnote.weight(.semibold))
           .foregroundStyle(.white)
           .padding(.horizontal, 12)
@@ -1728,6 +1756,17 @@ private struct PhotoThumbnailView: View {
     PhotoAssetImageView(asset: asset, targetSize: CGSize(width: 120, height: 120), contentMode: .fill)
       .aspectRatio(1, contentMode: .fill)
       .frame(minWidth: 0, maxWidth: .infinity)
+      .overlay(alignment: .bottomTrailing) {
+        if asset.mediaType == .video {
+          Text(PhotoLibrary.durationText(for: asset))
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(.black.opacity(0.55), in: Capsule(style: .continuous))
+            .padding(6)
+        }
+      }
       .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
   }
 }

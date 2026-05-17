@@ -13,6 +13,7 @@ struct SettingsView: View {
 
   @AppStorage("reviewLimit") private var reviewLimit: Int = 20
   @AppStorage("screenshotSortOption") private var screenshotSortOptionRawValue: String = ScreenshotSortOption.recent.rawValue
+  @AppStorage("videoSortOption") private var videoSortOptionRawValue: String = VideoSortOption.largest.rawValue
   @AppStorage("similarSortOption") private var similarSortOptionRawValue: String = SimilarSortOption.recent.rawValue
   @AppStorage("totalDeletedCount") private var totalDeletedCount: Int = 0
   @AppStorage("totalDeletedBytes") private var totalDeletedBytes: Int = 0
@@ -138,6 +139,7 @@ struct SettingsView: View {
   private var hasLocalSettingsToReset: Bool {
     reviewLimit != defaultReviewLimit
       || screenshotSortOptionRawValue != ScreenshotSortOption.recent.rawValue
+      || videoSortOptionRawValue != VideoSortOption.largest.rawValue
       || similarSortOptionRawValue != SimilarSortOption.recent.rawValue
       || totalDeletedCount != 0
       || totalDeletedBytes != 0
@@ -194,6 +196,7 @@ struct SettingsView: View {
   private func resetLocalSettings() {
     reviewLimit = defaultReviewLimit
     screenshotSortOptionRawValue = ScreenshotSortOption.recent.rawValue
+    videoSortOptionRawValue = VideoSortOption.largest.rawValue
     similarSortOptionRawValue = SimilarSortOption.recent.rawValue
     totalDeletedCount = 0
     totalDeletedBytes = 0
