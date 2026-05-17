@@ -157,6 +157,7 @@ struct ReviewSessionView: View {
 
   @Environment(\.dismiss) private var dismiss
   @Environment(\.displayScale) private var displayScale
+  @Environment(\.scenePhase) private var scenePhase
   @State private var authStatus = PhotoLibrary.authorizationStatus()
   @State private var isLoading = true
   @State private var assets: [PHAsset] = []
@@ -265,6 +266,18 @@ struct ReviewSessionView: View {
 
   private var infoPanelOverlayOpacity: Double {
     0.34 + (1 - Double(swipeProgress)) * 0.48
+  }
+
+  private var shouldAutoplayVideo: Bool {
+    scenePhase == .active && !showMetadataSheet && !showSummary && !isAnimatingCard
+  }
+
+  private var assetSingularName: String {
+    mode == .videos ? "video" : "photo"
+  }
+
+  private var assetPluralName: String {
+    mode == .videos ? "videos" : "photos"
   }
 
   var body: some View {
@@ -435,7 +448,12 @@ struct ReviewSessionView: View {
 
   @ViewBuilder
   private func reviewCard(_ asset: PHAsset, bounds: CGSize) -> some View {
-    PhotoCardView(asset: asset, bounds: bounds, enableLivePhotoPlayback: true)
+    PhotoCardView(
+      asset: asset,
+      bounds: bounds,
+      enableLivePhotoPlayback: true,
+      autoplaysVideo: shouldAutoplayVideo
+    )
       .scaleEffect(activeCardScale)
       .offset(x: activeCardOffset.width, y: activeCardOffset.height + activeCardLift)
       .rotationEffect(.degrees(swipeRotation))
@@ -464,7 +482,7 @@ struct ReviewSessionView: View {
         systemImage: "xmark",
         tint: AppColor.delete,
         backgroundTint: AppColor.deleteBackground,
-        accessibilityLabel: "Delete photo"
+        accessibilityLabel: "Delete \(assetSingularName)"
       ) {
         applyDecision(.delete)
       }
@@ -491,7 +509,7 @@ struct ReviewSessionView: View {
         systemImage: "checkmark",
         tint: AppColor.success,
         backgroundTint: AppColor.keepBackground,
-        accessibilityLabel: "Keep photo"
+        accessibilityLabel: "Keep \(assetSingularName)"
       ) {
         applyDecision(.keep)
       }
@@ -513,7 +531,7 @@ struct ReviewSessionView: View {
 
         if deletedCount > 0 {
           summaryBanner(
-            title: "Deleted \(deletedCount) photos",
+            title: "Deleted \(deletedCount) \(deletedCount == 1 ? assetSingularName : assetPluralName)",
             subtitle: "Space has been freed up in your library.",
             systemImage: "checkmark.circle.fill",
             tint: AppColor.success
@@ -570,7 +588,7 @@ struct ReviewSessionView: View {
               } else {
                 Image(systemName: "trash.fill")
               }
-              Text("Delete \(deleteAssets.count) Photos")
+              Text("Delete \(deleteAssets.count) \(deleteAssets.count == 1 ? assetSingularName.capitalized : assetPluralName.capitalized)")
                 .fontWeight(.semibold)
             }
             .frame(maxWidth: .infinity)
@@ -630,7 +648,7 @@ struct ReviewSessionView: View {
     ContentUnavailableView {
       Label("Photo access required", systemImage: "photo.stack")
     } description: {
-      Text("Enable access to review and delete photos.")
+      Text("Enable access to review and delete \(assetPluralName).")
     } actions: {
       Button("Enable Photo Access") {
         Task {
@@ -649,7 +667,7 @@ struct ReviewSessionView: View {
 
   private var emptyView: some View {
     ContentUnavailableView {
-      Label("No Photos Found", systemImage: "photo.on.rectangle.angled")
+      Label("No \(assetPluralName.capitalized) Found", systemImage: mode == .videos ? "video" : "photo.on.rectangle.angled")
     } description: {
       Text("Try a different review mode, or check your photo library.")
     } actions: {
@@ -1711,6 +1729,7 @@ private struct PhotoCardView: View {
   let asset: PHAsset
   let bounds: CGSize
   var enableLivePhotoPlayback = false
+  var autoplaysVideo = true
 
   @State private var livePhotoPlaybackTrigger = 0
 
@@ -1721,7 +1740,7 @@ private struct PhotoCardView: View {
         PhotoAssetImageView(asset: asset, targetSize: fittedSize)
 
         #if canImport(AVFoundation) && canImport(UIKit)
-        VideoAssetPlayerView(asset: asset)
+        VideoAssetPlayerView(asset: asset, isActive: autoplaysVideo)
           .frame(width: fittedSize.width, height: fittedSize.height)
         #endif
       } else {
@@ -1775,6 +1794,7 @@ private struct PhotoCardView: View {
 #if canImport(AVFoundation) && canImport(UIKit)
 private struct VideoAssetPlayerView: UIViewRepresentable {
   let asset: PHAsset
+  let isActive: Bool
 
   func makeCoordinator() -> Coordinator {
     Coordinator()
@@ -1784,13 +1804,13 @@ private struct VideoAssetPlayerView: UIViewRepresentable {
     let view = VideoPlayerContainerView()
     view.playerLayer.videoGravity = .resizeAspect
     view.backgroundColor = .clear
-    context.coordinator.requestPlayerItem(for: asset, in: view)
+    context.coordinator.updatePlayerItem(for: asset, isActive: isActive, in: view)
     return view
   }
 
   func updateUIView(_ view: VideoPlayerContainerView, context: Context) {
     view.playerLayer.videoGravity = .resizeAspect
-    context.coordinator.requestPlayerItem(for: asset, in: view)
+    context.coordinator.updatePlayerItem(for: asset, isActive: isActive, in: view)
   }
 
   static func dismantleUIView(_ uiView: VideoPlayerContainerView, coordinator: Coordinator) {
@@ -1805,8 +1825,8 @@ private struct VideoAssetPlayerView: UIViewRepresentable {
     private weak var player: AVPlayer?
 
     @MainActor
-    func requestPlayerItem(for asset: PHAsset, in view: VideoPlayerContainerView) {
-      guard asset.mediaType == .video else {
+    func updatePlayerItem(for asset: PHAsset, isActive: Bool, in view: VideoPlayerContainerView) {
+      guard asset.mediaType == .video, isActive else {
         cancelRequest()
         view.playerLayer.player = nil
         return

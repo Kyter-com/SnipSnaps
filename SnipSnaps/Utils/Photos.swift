@@ -685,11 +685,13 @@ enum PhotoLibrary {
   private static func thumbnailImage(
     for asset: PHAsset,
     targetSize: CGSize,
-    contentMode: PHImageContentMode = .aspectFill
+    contentMode: PHImageContentMode = .aspectFill,
+    deliveryMode: PHImageRequestOptionsDeliveryMode = .fastFormat,
+    allowsNetworkAccess: Bool = false
   ) -> UIImage? {
     let options = PHImageRequestOptions()
-    options.isNetworkAccessAllowed = true
-    options.deliveryMode = .highQualityFormat
+    options.isNetworkAccessAllowed = allowsNetworkAccess
+    options.deliveryMode = deliveryMode
     options.resizeMode = .exact
     options.isSynchronous = true
 
