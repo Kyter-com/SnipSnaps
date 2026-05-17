@@ -1037,8 +1037,11 @@ struct SimilarReviewSessionView: View {
           Image(systemName: "rectangle.stack")
             .foregroundStyle(AppColor.primary)
           VStack(alignment: .leading, spacing: 2) {
-            Text("\(currentGroup.assets.count) similar photos")
-              .font(.subheadline.weight(.semibold))
+            HStack(spacing: 8) {
+              Text("\(currentGroup.assets.count) similar photos")
+                .font(.subheadline.weight(.semibold))
+              confidenceBadge(for: currentGroup)
+            }
             Text("\(selectionStatusText) · \(currentMarkedBytesText) potential · \(selectedPhotoDetails?.captureDateSummaryText ?? "Unknown date")")
               .font(.footnote)
               .foregroundStyle(.secondary)
@@ -1051,6 +1054,17 @@ struct SimilarReviewSessionView: View {
         .background(AppColor.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
       }
     }
+  }
+
+  private func confidenceBadge(for group: SimilarPhotoGroup) -> some View {
+    Label(group.confidence.title, systemImage: group.confidence.systemImage)
+      .labelStyle(.titleAndIcon)
+      .font(.caption2.weight(.bold))
+      .foregroundStyle(AppColor.primary)
+      .lineLimit(1)
+      .padding(.horizontal, 7)
+      .padding(.vertical, 4)
+      .background(AppColor.primary.opacity(0.12), in: Capsule(style: .continuous))
   }
 
   private func similarPairComparison(_ group: SimilarPhotoGroup, height: CGFloat) -> some View {
@@ -1076,7 +1090,7 @@ struct SimilarReviewSessionView: View {
           }
           .overlay(alignment: .topTrailing) {
             if keepAssetIdentifiers.contains(asset.localIdentifier) {
-              Label("Keep", systemImage: "checkmark")
+              Label(keepBadgeTitle(for: asset, in: group), systemImage: "checkmark")
                 .font(.caption.weight(.bold))
                 .foregroundStyle(.white)
                 .labelStyle(.titleAndIcon)
@@ -1112,7 +1126,7 @@ struct SimilarReviewSessionView: View {
               .scaleEffect(keepAssetIdentifiers.contains(asset.localIdentifier) ? 1.04 : 1)
               .overlay(alignment: .bottom) {
                 if keepAssetIdentifiers.contains(asset.localIdentifier) {
-                  Text("Keep")
+                  Text(keepBadgeTitle(for: asset, in: group))
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 8)
@@ -1128,6 +1142,10 @@ struct SimilarReviewSessionView: View {
       .padding(.horizontal, 2)
     }
     .frame(height: 80)
+  }
+
+  private func keepBadgeTitle(for asset: PHAsset, in group: SimilarPhotoGroup) -> String {
+    asset.localIdentifier == group.assets.first?.localIdentifier ? "Best Pick" : "Keep"
   }
 
   private var decisionBar: some View {

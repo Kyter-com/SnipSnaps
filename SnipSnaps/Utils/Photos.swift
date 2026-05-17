@@ -6,6 +6,7 @@
 //
 
 import Photos
+import Vision
 
 #if canImport(UIKit)
 import UIKit
@@ -24,8 +25,42 @@ enum PhotoLibraryError: LocalizedError {
   }
 }
 
+enum SimilarGroupConfidence {
+  case burst
+  case strong
+  case likely
+
+  var title: String {
+    switch self {
+    case .burst:
+      return "Burst"
+    case .strong:
+      return "Strong"
+    case .likely:
+      return "Likely"
+    }
+  }
+
+  var systemImage: String {
+    switch self {
+    case .burst:
+      return "bolt.fill"
+    case .strong:
+      return "checkmark.seal.fill"
+    case .likely:
+      return "sparkles"
+    }
+  }
+}
+
 struct SimilarPhotoGroup: Identifiable {
   let assets: [PHAsset]
+  let confidence: SimilarGroupConfidence
+
+  init(assets: [PHAsset], confidence: SimilarGroupConfidence = .likely) {
+    self.assets = assets
+    self.confidence = confidence
+  }
 
   var id: String {
     assets.map(\.localIdentifier).joined(separator: "|")
@@ -152,9 +187,12 @@ enum PhotoLibrary {
       assets.shuffle()
     }
 
+    var usedIdentifiers = Set<String>()
+    var groups = burstSimilarGroups(from: assets, usedIdentifiers: &usedIdentifiers)
+
     var fingerprints: [SimilarPhotoFingerprint] = []
     fingerprints.reserveCapacity(assets.count)
-    for asset in assets {
+    for asset in assets where !usedIdentifiers.contains(asset.localIdentifier) {
       guard let image = thumbnailImage(for: asset, targetSize: CGSize(width: 18, height: 16)),
             let hash = differenceHash(for: image) else {
         continue
@@ -162,19 +200,43 @@ enum PhotoLibrary {
       fingerprints.append(SimilarPhotoFingerprint(asset: asset, hash: hash, aspectRatio: aspectRatio(for: asset)))
     }
 
-    var usedIdentifiers = Set<String>()
-    var groups: [SimilarPhotoGroup] = []
+    var featurePrints: [String: VNFeaturePrintObservation] = [:]
     for fingerprint in fingerprints {
       guard !usedIdentifiers.contains(fingerprint.asset.localIdentifier) else { continue }
 
       var matches = [fingerprint.asset]
+      var closestHashDistance = Int.max
+      var closestDistance = Float.greatestFiniteMagnitude
       for candidate in fingerprints {
         guard fingerprint.asset.localIdentifier != candidate.asset.localIdentifier,
-              !usedIdentifiers.contains(candidate.asset.localIdentifier),
-              abs(fingerprint.aspectRatio - candidate.aspectRatio) < 0.08,
-              hammingDistance(fingerprint.hash, candidate.hash) <= 9 else {
+              !usedIdentifiers.contains(candidate.asset.localIdentifier) else {
           continue
         }
+
+        let hashDistance = hammingDistance(fingerprint.hash, candidate.hash)
+        guard abs(fingerprint.aspectRatio - candidate.aspectRatio) < 0.12,
+              hashDistance <= 14 else {
+          continue
+        }
+
+        if hashDistance <= 6 {
+          closestHashDistance = min(closestHashDistance, hashDistance)
+          matches.append(candidate.asset)
+          continue
+        }
+
+        guard let distance = featurePrintDistance(
+          from: fingerprint.asset,
+          to: candidate.asset,
+          cache: &featurePrints
+        ) else {
+          continue
+        }
+        closestDistance = min(closestDistance, distance)
+        guard distance <= 11 else {
+          continue
+        }
+        closestHashDistance = min(closestHashDistance, hashDistance)
         matches.append(candidate.asset)
       }
 
@@ -183,7 +245,14 @@ enum PhotoLibrary {
       for asset in orderedMatches {
         usedIdentifiers.insert(asset.localIdentifier)
       }
-      groups.append(SimilarPhotoGroup(assets: orderedMatches))
+      groups.append(SimilarPhotoGroup(
+        assets: orderedMatches,
+        confidence: similarGroupConfidence(
+          hashMatches: matches.count,
+          closestHashDistance: closestHashDistance,
+          closestFeatureDistance: closestDistance
+        )
+      ))
     }
 
     return sortedSimilarGroups(groups, sort: sort).prefix(maxGroups).map { $0 }
@@ -400,6 +469,29 @@ enum PhotoLibrary {
     let aspectRatio: CGFloat
   }
 
+  private static func burstSimilarGroups(
+    from assets: [PHAsset],
+    usedIdentifiers: inout Set<String>
+  ) -> [SimilarPhotoGroup] {
+    var burstAssetsByIdentifier: [String: [PHAsset]] = [:]
+    for asset in assets {
+      guard let burstIdentifier = asset.burstIdentifier,
+            !burstIdentifier.isEmpty else {
+        continue
+      }
+      burstAssetsByIdentifier[burstIdentifier, default: []].append(asset)
+    }
+
+    return burstAssetsByIdentifier.values.compactMap { assets in
+      guard assets.count > 1 else { return nil }
+      let orderedAssets = orderSimilarAssetsForReview(assets)
+      for asset in orderedAssets {
+        usedIdentifiers.insert(asset.localIdentifier)
+      }
+      return SimilarPhotoGroup(assets: orderedAssets, confidence: .burst)
+    }
+  }
+
   private static func orderSimilarAssetsForReview(_ assets: [PHAsset]) -> [PHAsset] {
     assets.sorted { lhs, rhs in
       if lhs.isFavorite != rhs.isFavorite {
@@ -414,6 +506,17 @@ enum PhotoLibrary {
 
       return (lhs.creationDate ?? .distantPast) > (rhs.creationDate ?? .distantPast)
     }
+  }
+
+  private static func similarGroupConfidence(
+    hashMatches: Int,
+    closestHashDistance: Int,
+    closestFeatureDistance: Float
+  ) -> SimilarGroupConfidence {
+    if hashMatches > 2 || closestHashDistance <= 6 || closestFeatureDistance <= 7 {
+      return .strong
+    }
+    return .likely
   }
 
   private static func sortedSimilarGroups(
@@ -467,7 +570,11 @@ enum PhotoLibrary {
   }
 
   #if canImport(UIKit)
-  private static func thumbnailImage(for asset: PHAsset, targetSize: CGSize) -> UIImage? {
+  private static func thumbnailImage(
+    for asset: PHAsset,
+    targetSize: CGSize,
+    contentMode: PHImageContentMode = .aspectFill
+  ) -> UIImage? {
     let options = PHImageRequestOptions()
     options.isNetworkAccessAllowed = true
     options.deliveryMode = .highQualityFormat
@@ -478,7 +585,7 @@ enum PhotoLibrary {
     imageManager.requestImage(
       for: asset,
       targetSize: targetSize,
-      contentMode: .aspectFill,
+      contentMode: contentMode,
       options: options
     ) { result, info in
       let isCancelled = (info?[PHImageCancelledKey] as? Bool) ?? false
@@ -486,6 +593,56 @@ enum PhotoLibrary {
       image = result
     }
     return image
+  }
+
+  private static func featurePrintDistance(
+    from lhs: PHAsset,
+    to rhs: PHAsset,
+    cache: inout [String: VNFeaturePrintObservation]
+  ) -> Float? {
+    guard let lhsPrint = featurePrint(for: lhs, cache: &cache),
+          let rhsPrint = featurePrint(for: rhs, cache: &cache) else {
+      return nil
+    }
+
+    var distance: Float = 0
+    do {
+      try lhsPrint.computeDistance(&distance, to: rhsPrint)
+      return distance
+    } catch {
+      return nil
+    }
+  }
+
+  private static func featurePrint(
+    for asset: PHAsset,
+    cache: inout [String: VNFeaturePrintObservation]
+  ) -> VNFeaturePrintObservation? {
+    if let cached = cache[asset.localIdentifier] {
+      return cached
+    }
+
+    guard let image = thumbnailImage(
+      for: asset,
+      targetSize: CGSize(width: 160, height: 160),
+      contentMode: .aspectFit
+    ),
+      let cgImage = image.cgImage else {
+      return nil
+    }
+
+    let request = VNGenerateImageFeaturePrintRequest()
+    let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+    do {
+      try handler.perform([request])
+      guard let observation = request.results?.first as? VNFeaturePrintObservation else {
+        return nil
+      }
+      cache[asset.localIdentifier] = observation
+      return observation
+    } catch {
+      return nil
+    }
   }
 
   private static func differenceHash(for image: UIImage) -> UInt64? {
