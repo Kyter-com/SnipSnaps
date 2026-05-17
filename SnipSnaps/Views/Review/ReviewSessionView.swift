@@ -164,6 +164,7 @@ struct ReviewSessionView: View {
   @State private var currentPhotoDetails: ReviewPhotoDetails?
   @State private var lastReviewUndo: PhotoReviewUndo?
   @AppStorage("reviewLimit") private var reviewLimit: Int = 20
+  @AppStorage("screenshotSortOption") private var screenshotSortOptionRawValue: String = ScreenshotSortOption.recent.rawValue
   @AppStorage("totalDeletedCount") private var totalDeletedCount: Int = 0
   @AppStorage("totalDeletedBytes") private var totalDeletedBytes: Int = 0
 
@@ -223,6 +224,10 @@ struct ReviewSessionView: View {
 
   private var sessionLimit: Int {
     max(5, min(reviewLimit, 200))
+  }
+
+  private var screenshotSortOption: ScreenshotSortOption {
+    ScreenshotSortOption(rawValue: screenshotSortOptionRawValue) ?? .recent
   }
 
   private var estimatedDeleteBytes: Int {
@@ -643,7 +648,7 @@ struct ReviewSessionView: View {
         await MainActor.run { isLoading = false }
         return
       }
-      let fetched = PhotoLibrary.fetchAssets(for: mode, limit: sessionLimit)
+      let fetched = PhotoLibrary.fetchAssets(for: mode, limit: sessionLimit, screenshotSort: screenshotSortOption)
       await MainActor.run {
         assets = fetched
         currentIndex = 0

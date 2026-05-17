@@ -96,12 +96,26 @@ private struct ScreenshotHomeDemo: View {
                     Text(subtitle)
                       .font(.subheadline)
                       .foregroundStyle(.secondary)
+                    if title == "Screenshots" {
+                      HStack(spacing: 6) {
+                        Image(systemName: "clock.arrow.circlepath")
+                        Text("Recent")
+                        Image(systemName: "chevron.down")
+                          .font(.caption2.weight(.bold))
+                      }
+                      .font(.caption.weight(.semibold))
+                      .foregroundStyle(.secondary)
+                      .padding(.horizontal, 10)
+                      .padding(.vertical, 6)
+                      .background(Color(.tertiarySystemGroupedBackground), in: Capsule(style: .continuous))
+                      .padding(.top, 2)
+                    }
                   }
                   Spacer()
                 }
                 .padding(.horizontal, 16)
               }
-              .frame(height: 96)
+              .frame(height: title == "Screenshots" ? 112 : 96)
             }
           }
         }
@@ -310,6 +324,24 @@ private struct ScreenshotSettingsDemo: View {
         Section("Lifetime Stats") {
           LabeledContent("Deleted photos", value: "184")
           LabeledContent("Space freed", value: "1.8 GB")
+        }
+
+        Section {
+          HStack {
+            Image(systemName: "arrow.counterclockwise.circle.fill")
+              .font(.title2)
+              .foregroundStyle(.red)
+              .frame(width: 28, height: 28)
+            Text("Reset Local Settings")
+              .foregroundStyle(.red)
+            Spacer()
+            Image(systemName: "chevron.right")
+              .font(.footnote)
+              .fontWeight(.semibold)
+              .foregroundStyle(Color(UIColor.tertiaryLabel))
+          }
+        } footer: {
+          Text("Resets review size, screenshot sorting, and lifetime deleted stats on this device. This does not delete photos.")
         }
       }
       .navigationTitle("Settings")

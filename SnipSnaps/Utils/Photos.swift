@@ -62,7 +62,7 @@ enum PhotoLibrary {
     status == .authorized || status == .limited
   }
 
-  static func fetchAssets(for mode: ReviewMode, limit: Int) -> [PHAsset] {
+  static func fetchAssets(for mode: ReviewMode, limit: Int, screenshotSort: ScreenshotSortOption = .recent) -> [PHAsset] {
     let options = PHFetchOptions()
     options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
 
@@ -88,8 +88,7 @@ enum PhotoLibrary {
         format: "(mediaSubtype & %d) != 0",
         PHAssetMediaSubtype.photoScreenshot.rawValue
       )
-      options.fetchLimit = limit
-      return fetchAssets(options: options, limit: limit)
+      return fetchScreenshotAssets(options: options, sort: screenshotSort, limit: limit)
     case .similar:
       options.fetchLimit = limit
       return fetchAssets(options: options, limit: limit)
@@ -341,6 +340,54 @@ enum PhotoLibrary {
     }
 
     return indices.shuffled().map { result.object(at: $0) }
+  }
+
+  private static func fetchScreenshotAssets(
+    options: PHFetchOptions,
+    sort: ScreenshotSortOption,
+    limit: Int
+  ) -> [PHAsset] {
+    switch sort {
+    case .recent:
+      options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+      options.fetchLimit = limit
+      return fetchAssets(options: options, limit: limit)
+    case .oldest:
+      options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
+      options.fetchLimit = limit
+      return fetchAssets(options: options, limit: limit)
+    case .random:
+      return fetchRandomAssets(options: options, limit: limit)
+    case .largest, .smallest:
+      options.sortDescriptors = nil
+      let result = PHAsset.fetchAssets(with: .image, options: options)
+      guard result.count > 0 else { return [] }
+
+      var assetsWithBytes: [(asset: PHAsset, bytes: Int)] = []
+      assetsWithBytes.reserveCapacity(result.count)
+      for index in 0..<result.count {
+        let asset = result.object(at: index)
+        assetsWithBytes.append((asset: asset, bytes: estimatedBytes(for: asset)))
+      }
+
+      assetsWithBytes.sort { lhs, rhs in
+        switch (lhs.bytes, rhs.bytes) {
+        case (0, 0):
+          return (lhs.asset.creationDate ?? .distantPast) > (rhs.asset.creationDate ?? .distantPast)
+        case (0, _):
+          return false
+        case (_, 0):
+          return true
+        default:
+          if lhs.bytes == rhs.bytes {
+            return (lhs.asset.creationDate ?? .distantPast) > (rhs.asset.creationDate ?? .distantPast)
+          }
+          return sort == .largest ? lhs.bytes > rhs.bytes : lhs.bytes < rhs.bytes
+        }
+      }
+
+      return assetsWithBytes.prefix(limit).map(\.asset)
+    }
   }
 
   private struct SimilarPhotoFingerprint {

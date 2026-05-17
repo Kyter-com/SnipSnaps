@@ -11,10 +11,21 @@ import SwiftUI
 struct HomeView: View {
   @State private var authStatus = PhotoLibrary.authorizationStatus()
   @State private var counts: [ReviewMode: Int] = [:]
+  @State private var selectedMode: ReviewMode?
   @AppStorage("reviewLimit") private var reviewLimit: Int = 20
+  @AppStorage("screenshotSortOption") private var screenshotSortOptionRawValue: String = ScreenshotSortOption.recent.rawValue
 
   private var canAccessPhotos: Bool {
     PhotoLibrary.canAccessPhotos(authStatus)
+  }
+
+  private var screenshotSortOption: ScreenshotSortOption {
+    get {
+      ScreenshotSortOption(rawValue: screenshotSortOptionRawValue) ?? .recent
+    }
+    nonmutating set {
+      screenshotSortOptionRawValue = newValue.rawValue
+    }
   }
 
   var body: some View {
@@ -32,17 +43,7 @@ struct HomeView: View {
 
           VStack(spacing: 12) {
             ForEach(ReviewMode.allCases) { mode in
-              NavigationLink {
-                destination(for: mode)
-              } label: {
-                ActionCard(
-                  mode: mode,
-                  count: counts[mode] ?? 0,
-                  isDisabled: !canAccessPhotos
-                )
-              }
-              .buttonStyle(.plain)
-              .disabled(!canAccessPhotos)
+              reviewModeCard(for: mode)
             }
           }
         }
@@ -53,6 +54,9 @@ struct HomeView: View {
       .background(AppColor.background)
       .navigationTitle("SnipSnaps")
       .navigationBarTitleDisplayMode(.large)
+      .navigationDestination(item: $selectedMode) { mode in
+        destination(for: mode)
+      }
       .onAppear(perform: refresh)
     }
   }
@@ -64,6 +68,58 @@ struct HomeView: View {
     } else {
       ReviewSessionView(mode: mode)
     }
+  }
+
+  private func reviewModeCard(for mode: ReviewMode) -> some View {
+    ZStack(alignment: .bottomLeading) {
+      Button {
+        selectedMode = mode
+      } label: {
+        ActionCard(
+          mode: mode,
+          count: counts[mode] ?? 0,
+          isDisabled: !canAccessPhotos,
+          reservesAccessorySpace: mode == .screenshots
+        )
+      }
+      .buttonStyle(.plain)
+      .disabled(!canAccessPhotos)
+
+      if mode == .screenshots {
+        screenshotSortMenu
+          .padding(.leading, 16)
+          .padding(.bottom, 12)
+          .disabled(!canAccessPhotos)
+      }
+    }
+  }
+
+  private var screenshotSortMenu: some View {
+    Menu {
+      ForEach(ScreenshotSortOption.allCases) { option in
+        Button {
+          screenshotSortOption = option
+        } label: {
+          Label(
+            option.title,
+            systemImage: option == screenshotSortOption ? "checkmark" : option.systemImage
+          )
+        }
+      }
+    } label: {
+      HStack(spacing: 6) {
+        Image(systemName: screenshotSortOption.systemImage)
+        Text(screenshotSortOption.title)
+        Image(systemName: "chevron.down")
+          .font(.caption2.weight(.bold))
+      }
+      .font(.caption.weight(.semibold))
+      .foregroundStyle(.secondary)
+      .padding(.horizontal, 10)
+      .padding(.vertical, 6)
+      .background(Color(.tertiarySystemGroupedBackground), in: Capsule(style: .continuous))
+    }
+    .accessibilityLabel("Sort screenshots by \(screenshotSortOption.title)")
   }
 
   private var accessCard: some View {
@@ -111,7 +167,8 @@ struct HomeView: View {
       for mode in ReviewMode.allCases {
         next[mode] = mode == .similar ? 0 : PhotoLibrary.fetchCount(for: mode)
       }
-      await MainActor.run { counts = next }
+      let refreshedCounts = next
+      await MainActor.run { counts = refreshedCounts }
     }
   }
 }
@@ -120,6 +177,7 @@ private struct ActionCard: View {
   let mode: ReviewMode
   let count: Int
   let isDisabled: Bool
+  var reservesAccessorySpace = false
 
   var body: some View {
     ZStack {
@@ -146,11 +204,12 @@ private struct ActionCard: View {
             .font(.subheadline)
             .foregroundStyle(.secondary)
         }
+        .padding(.bottom, reservesAccessorySpace ? 30 : 0)
         Spacer(minLength: 0)
       }
       .padding(.horizontal, 16)
     }
-    .frame(height: 96)
+    .frame(height: reservesAccessorySpace ? 112 : 96)
     .opacity(isDisabled ? 0.5 : 1.0)
   }
 

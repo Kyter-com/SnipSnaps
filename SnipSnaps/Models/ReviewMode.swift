@@ -58,3 +58,58 @@ enum ReviewMode: String, CaseIterable, Identifiable {
     Date.now.formatted(.dateTime.month(.abbreviated).day())
   }
 }
+
+enum ScreenshotSortOption: String, CaseIterable, Identifiable {
+  case recent
+  case oldest
+  case largest
+  case smallest
+  case random
+
+  var id: String { rawValue }
+
+  var title: String {
+    switch self {
+    case .recent:
+      return "Recent"
+    case .oldest:
+      return "Oldest"
+    case .largest:
+      return "Largest"
+    case .smallest:
+      return "Smallest"
+    case .random:
+      return "Random"
+    }
+  }
+
+  var subtitle: String {
+    switch self {
+    case .recent:
+      return "Newest first"
+    case .oldest:
+      return "Oldest first"
+    case .largest:
+      return "Biggest files first"
+    case .smallest:
+      return "Smallest files first"
+    case .random:
+      return "Shuffled each session"
+    }
+  }
+
+  var systemImage: String {
+    switch self {
+    case .recent:
+      return "clock.arrow.circlepath"
+    case .oldest:
+      return "calendar"
+    case .largest:
+      return "arrow.down.left.and.arrow.up.right"
+    case .smallest:
+      return "arrow.up.right.and.arrow.down.left"
+    case .random:
+      return "shuffle"
+    }
+  }
+}
