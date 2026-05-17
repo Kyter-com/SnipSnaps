@@ -113,3 +113,58 @@ enum ScreenshotSortOption: String, CaseIterable, Identifiable {
     }
   }
 }
+
+enum SimilarSortOption: String, CaseIterable, Identifiable {
+  case recent
+  case oldest
+  case largest
+  case mostMatches
+  case random
+
+  var id: String { rawValue }
+
+  var title: String {
+    switch self {
+    case .recent:
+      return "Recent"
+    case .oldest:
+      return "Oldest"
+    case .largest:
+      return "Biggest"
+    case .mostMatches:
+      return "Matches"
+    case .random:
+      return "Random"
+    }
+  }
+
+  var subtitle: String {
+    switch self {
+    case .recent:
+      return "Newest groups first"
+    case .oldest:
+      return "Oldest groups first"
+    case .largest:
+      return "Most space first"
+    case .mostMatches:
+      return "Largest groups first"
+    case .random:
+      return "Shuffled each scan"
+    }
+  }
+
+  var systemImage: String {
+    switch self {
+    case .recent:
+      return "clock.arrow.circlepath"
+    case .oldest:
+      return "calendar"
+    case .largest:
+      return "internaldrive"
+    case .mostMatches:
+      return "square.stack.3d.up"
+    case .random:
+      return "shuffle"
+    }
+  }
+}

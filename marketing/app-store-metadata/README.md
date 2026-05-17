@@ -9,8 +9,8 @@ Prepared non-image release metadata for App Store Connect.
 - Primary category: Photo & Video
 - Secondary category: Utilities
 - Bundle ID: com.kyter.SnipSnaps
-- Version: 1.0
-- Build: 3
+- Version: 1.0.1
+- Build: 27
 - Content rights: The app does not contain, show, or access third-party content outside the user's own photo library.
 - Encryption: Uses no non-exempt encryption (`ITSAppUsesNonExemptEncryption` is false).
 
@@ -40,7 +40,7 @@ photo cleaner,delete photos,storage,duplicates,screenshots,camera roll,photo org
 
 ## What's New
 
-Added screenshot sorting controls, local settings reset, and clearer cleanup stats management.
+Added sorting controls for screenshots and similar groups, local settings reset, and clearer cleanup stats management.
 
 ## Review Notes
 

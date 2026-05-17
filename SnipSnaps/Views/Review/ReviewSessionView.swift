@@ -848,6 +848,7 @@ struct SimilarReviewSessionView: View {
   @State private var deleteInProgress = false
   @State private var deletedCount = 0
   @AppStorage("reviewLimit") private var reviewLimit: Int = 20
+  @AppStorage("similarSortOption") private var similarSortOptionRawValue: String = SimilarSortOption.recent.rawValue
   @AppStorage("totalDeletedCount") private var totalDeletedCount: Int = 0
   @AppStorage("totalDeletedBytes") private var totalDeletedBytes: Int = 0
 
@@ -898,6 +899,10 @@ struct SimilarReviewSessionView: View {
     max(5, min(reviewLimit, 60))
   }
 
+  private var similarSortOption: SimilarSortOption {
+    SimilarSortOption(rawValue: similarSortOptionRawValue) ?? .recent
+  }
+
   private var estimatedDeleteBytes: Int {
     PhotoLibrary.estimatedBytes(for: deleteAssets)
   }
@@ -906,6 +911,22 @@ struct SimilarReviewSessionView: View {
     let bytes = estimatedDeleteBytes
     guard bytes > 0 else { return "Unknown" }
     return ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+  }
+
+  private var currentMarkedBytesText: String {
+    guard let currentGroup else { return "Unknown" }
+    let keepIdentifiers = keepAssetIdentifiers.isEmpty
+      ? Set(currentGroup.assets.prefix(1).map(\.localIdentifier))
+      : keepAssetIdentifiers
+    let markedAssets = currentGroup.assets.filter { !keepIdentifiers.contains($0.localIdentifier) }
+    let bytes = PhotoLibrary.estimatedBytes(for: markedAssets)
+    guard bytes > 0 else { return "Unknown" }
+    return ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+  }
+
+  private var totalDeletedBytesText: String {
+    guard totalDeletedBytes > 0 else { return "Unknown" }
+    return ByteCountFormatter.string(fromByteCount: Int64(totalDeletedBytes), countStyle: .file)
   }
 
   var body: some View {
@@ -1018,9 +1039,10 @@ struct SimilarReviewSessionView: View {
           VStack(alignment: .leading, spacing: 2) {
             Text("\(currentGroup.assets.count) similar photos")
               .font(.subheadline.weight(.semibold))
-            Text("\(selectionStatusText) · \(selectedPhotoDetails?.captureDateSummaryText ?? "Unknown date")")
+            Text("\(selectionStatusText) · \(currentMarkedBytesText) potential · \(selectedPhotoDetails?.captureDateSummaryText ?? "Unknown date")")
               .font(.footnote)
               .foregroundStyle(.secondary)
+              .lineLimit(2)
           }
           Spacer(minLength: 0)
         }
@@ -1185,6 +1207,15 @@ struct SimilarReviewSessionView: View {
         }
         .padding(.top, 8)
 
+        if deletedCount > 0 {
+          similarSummaryBanner(
+            title: "Deleted \(deletedCount) photos",
+            subtitle: "Space has been freed up in your library.",
+            systemImage: "checkmark.circle.fill",
+            tint: AppColor.success
+          )
+        }
+
         if !markedGroups.isEmpty {
           VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -1213,6 +1244,24 @@ struct SimilarReviewSessionView: View {
               .padding(10)
               .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
+          }
+          .padding(16)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .background(AppColor.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+
+        if totalDeletedCount > 0 {
+          VStack(alignment: .leading, spacing: 4) {
+            Text("Lifetime")
+              .font(.footnote.weight(.semibold))
+              .foregroundStyle(.secondary)
+            HStack {
+              Text("\(totalDeletedCount) deleted")
+              Spacer()
+              Text(totalDeletedBytesText)
+            }
+            .font(.footnote)
+            .foregroundStyle(.secondary)
           }
           .padding(16)
           .frame(maxWidth: .infinity, alignment: .leading)
@@ -1269,6 +1318,22 @@ struct SimilarReviewSessionView: View {
     }
   }
 
+  private func similarSummaryBanner(title: String, subtitle: String, systemImage: String, tint: Color) -> some View {
+    HStack(alignment: .top, spacing: 12) {
+      Image(systemName: systemImage)
+        .font(.title3)
+        .foregroundStyle(tint)
+      VStack(alignment: .leading, spacing: 2) {
+        Text(title).font(.subheadline.weight(.semibold))
+        Text(subtitle).font(.footnote).foregroundStyle(.secondary)
+      }
+      Spacer()
+    }
+    .padding(16)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(AppColor.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+  }
+
   private var accessView: some View {
     ContentUnavailableView {
       Label("Photo access required", systemImage: "photo.stack")
@@ -1289,9 +1354,9 @@ struct SimilarReviewSessionView: View {
     VStack(spacing: 14) {
       ProgressView()
         .controlSize(.large)
-      Text("Scanning recent photos")
+      Text("Scanning similar photos")
         .font(.headline)
-      Text("Comparing up to \(scanLimit) recent photos for duplicate-looking groups.")
+      Text("Comparing up to \(scanLimit) photos. \(similarSortOption.subtitle).")
         .font(.subheadline)
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
@@ -1322,8 +1387,13 @@ struct SimilarReviewSessionView: View {
 
       let scanLimit = scanLimit
       let maxGroups = maxGroups
+      let similarSortOption = similarSortOption
       let fetchedGroups = await Task.detached(priority: .userInitiated) {
-        await PhotoLibrary.fetchSimilarPhotoGroups(scanLimit: scanLimit, maxGroups: maxGroups)
+        await PhotoLibrary.fetchSimilarPhotoGroups(
+          scanLimit: scanLimit,
+          maxGroups: maxGroups,
+          sort: similarSortOption
+        )
       }.value
       await MainActor.run {
         groups = fetchedGroups

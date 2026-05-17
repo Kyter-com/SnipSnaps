@@ -14,6 +14,7 @@ struct HomeView: View {
   @State private var selectedMode: ReviewMode?
   @AppStorage("reviewLimit") private var reviewLimit: Int = 20
   @AppStorage("screenshotSortOption") private var screenshotSortOptionRawValue: String = ScreenshotSortOption.recent.rawValue
+  @AppStorage("similarSortOption") private var similarSortOptionRawValue: String = SimilarSortOption.recent.rawValue
 
   private var canAccessPhotos: Bool {
     PhotoLibrary.canAccessPhotos(authStatus)
@@ -25,6 +26,15 @@ struct HomeView: View {
     }
     nonmutating set {
       screenshotSortOptionRawValue = newValue.rawValue
+    }
+  }
+
+  private var similarSortOption: SimilarSortOption {
+    get {
+      SimilarSortOption(rawValue: similarSortOptionRawValue) ?? .recent
+    }
+    nonmutating set {
+      similarSortOptionRawValue = newValue.rawValue
     }
   }
 
@@ -79,7 +89,7 @@ struct HomeView: View {
           mode: mode,
           count: counts[mode] ?? 0,
           isDisabled: !canAccessPhotos,
-          reservesAccessorySpace: mode == .screenshots
+          reservesAccessorySpace: mode == .screenshots || mode == .similar
         )
       }
       .buttonStyle(.plain)
@@ -87,6 +97,13 @@ struct HomeView: View {
 
       if mode == .screenshots {
         screenshotSortMenu
+          .padding(.leading, 16)
+          .padding(.bottom, 12)
+          .disabled(!canAccessPhotos)
+      }
+
+      if mode == .similar {
+        similarSortMenu
           .padding(.leading, 16)
           .padding(.bottom, 12)
           .disabled(!canAccessPhotos)
@@ -120,6 +137,34 @@ struct HomeView: View {
       .background(Color(.tertiarySystemGroupedBackground), in: Capsule(style: .continuous))
     }
     .accessibilityLabel("Sort screenshots by \(screenshotSortOption.title)")
+  }
+
+  private var similarSortMenu: some View {
+    Menu {
+      ForEach(SimilarSortOption.allCases) { option in
+        Button {
+          similarSortOption = option
+        } label: {
+          Label(
+            option.subtitle,
+            systemImage: option == similarSortOption ? "checkmark" : option.systemImage
+          )
+        }
+      }
+    } label: {
+      HStack(spacing: 6) {
+        Image(systemName: similarSortOption.systemImage)
+        Text(similarSortOption.title)
+        Image(systemName: "chevron.down")
+          .font(.caption2.weight(.bold))
+      }
+      .font(.caption.weight(.semibold))
+      .foregroundStyle(.secondary)
+      .padding(.horizontal, 10)
+      .padding(.vertical, 6)
+      .background(Color(.tertiarySystemGroupedBackground), in: Capsule(style: .continuous))
+    }
+    .accessibilityLabel("Sort similar groups by \(similarSortOption.subtitle)")
   }
 
   private var accessCard: some View {

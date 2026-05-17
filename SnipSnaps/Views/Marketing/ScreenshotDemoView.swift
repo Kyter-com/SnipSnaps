@@ -110,12 +110,26 @@ private struct ScreenshotHomeDemo: View {
                       .background(Color(.tertiarySystemGroupedBackground), in: Capsule(style: .continuous))
                       .padding(.top, 2)
                     }
+                    if title == "Similar Photos" {
+                      HStack(spacing: 6) {
+                        Image(systemName: "clock.arrow.circlepath")
+                        Text("Recent")
+                        Image(systemName: "chevron.down")
+                          .font(.caption2.weight(.bold))
+                      }
+                      .font(.caption.weight(.semibold))
+                      .foregroundStyle(.secondary)
+                      .padding(.horizontal, 10)
+                      .padding(.vertical, 6)
+                      .background(Color(.tertiarySystemGroupedBackground), in: Capsule(style: .continuous))
+                      .padding(.top, 2)
+                    }
                   }
                   Spacer()
                 }
                 .padding(.horizontal, 16)
               }
-              .frame(height: title == "Screenshots" ? 112 : 96)
+              .frame(height: title == "Screenshots" || title == "Similar Photos" ? 112 : 96)
             }
           }
         }
@@ -341,7 +355,7 @@ private struct ScreenshotSettingsDemo: View {
               .foregroundStyle(Color(UIColor.tertiaryLabel))
           }
         } footer: {
-          Text("Resets review size, screenshot sorting, and lifetime deleted stats on this device. This does not delete photos.")
+          Text("Resets review size, sorting, and lifetime deleted stats on this device. This does not delete photos.")
         }
       }
       .navigationTitle("Settings")

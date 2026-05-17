@@ -13,6 +13,7 @@ struct SettingsView: View {
 
   @AppStorage("reviewLimit") private var reviewLimit: Int = 20
   @AppStorage("screenshotSortOption") private var screenshotSortOptionRawValue: String = ScreenshotSortOption.recent.rawValue
+  @AppStorage("similarSortOption") private var similarSortOptionRawValue: String = SimilarSortOption.recent.rawValue
   @AppStorage("totalDeletedCount") private var totalDeletedCount: Int = 0
   @AppStorage("totalDeletedBytes") private var totalDeletedBytes: Int = 0
   @State private var showResetLocalSettingsAlert = false
@@ -60,7 +61,7 @@ struct SettingsView: View {
           }
           .disabled(!hasLocalSettingsToReset)
         } footer: {
-          Text("Resets review size, screenshot sorting, and lifetime deleted stats on this device. This does not delete photos.")
+          Text("Resets review size, sorting, and lifetime deleted stats on this device. This does not delete photos.")
         }
 
         Section("Support") {
@@ -129,7 +130,7 @@ struct SettingsView: View {
         }
         Button("Cancel", role: .cancel) {}
       } message: {
-        Text("This clears your review size preference, screenshot sorting, and lifetime deleted stats on this device. Your photo library will not be changed.")
+        Text("This clears your review size preference, sorting, and lifetime deleted stats on this device. Your photo library will not be changed.")
       }
     }
   }
@@ -137,6 +138,7 @@ struct SettingsView: View {
   private var hasLocalSettingsToReset: Bool {
     reviewLimit != defaultReviewLimit
       || screenshotSortOptionRawValue != ScreenshotSortOption.recent.rawValue
+      || similarSortOptionRawValue != SimilarSortOption.recent.rawValue
       || totalDeletedCount != 0
       || totalDeletedBytes != 0
   }
@@ -192,6 +194,7 @@ struct SettingsView: View {
   private func resetLocalSettings() {
     reviewLimit = defaultReviewLimit
     screenshotSortOptionRawValue = ScreenshotSortOption.recent.rawValue
+    similarSortOptionRawValue = SimilarSortOption.recent.rawValue
     totalDeletedCount = 0
     totalDeletedBytes = 0
   }

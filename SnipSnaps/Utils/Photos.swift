@@ -128,10 +128,16 @@ enum PhotoLibrary {
     return PHAsset.fetchAssets(with: .image, options: options).count
   }
 
-  static func fetchSimilarPhotoGroups(scanLimit: Int, maxGroups: Int) async -> [SimilarPhotoGroup] {
+  static func fetchSimilarPhotoGroups(
+    scanLimit: Int,
+    maxGroups: Int,
+    sort: SimilarSortOption = .recent
+  ) async -> [SimilarPhotoGroup] {
     #if canImport(UIKit)
     let options = PHFetchOptions()
-    options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+    options.sortDescriptors = [
+      NSSortDescriptor(key: "creationDate", ascending: sort == .oldest)
+    ]
     options.fetchLimit = max(scanLimit, 1)
 
     let result = PHAsset.fetchAssets(with: .image, options: options)
@@ -141,6 +147,9 @@ enum PhotoLibrary {
     assets.reserveCapacity(result.count)
     for index in 0..<result.count {
       assets.append(result.object(at: index))
+    }
+    if sort == .random {
+      assets.shuffle()
     }
 
     var fingerprints: [SimilarPhotoFingerprint] = []
@@ -170,19 +179,14 @@ enum PhotoLibrary {
       }
 
       guard matches.count > 1 else { continue }
-      matches.sort {
-        ($0.creationDate ?? .distantPast) > ($1.creationDate ?? .distantPast)
-      }
-      for asset in matches {
+      let orderedMatches = orderSimilarAssetsForReview(matches)
+      for asset in orderedMatches {
         usedIdentifiers.insert(asset.localIdentifier)
       }
-      groups.append(SimilarPhotoGroup(assets: matches))
-      if groups.count >= maxGroups {
-        break
-      }
+      groups.append(SimilarPhotoGroup(assets: orderedMatches))
     }
 
-    return groups
+    return sortedSimilarGroups(groups, sort: sort).prefix(maxGroups).map { $0 }
     #else
     return []
     #endif
@@ -394,6 +398,68 @@ enum PhotoLibrary {
     let asset: PHAsset
     let hash: UInt64
     let aspectRatio: CGFloat
+  }
+
+  private static func orderSimilarAssetsForReview(_ assets: [PHAsset]) -> [PHAsset] {
+    assets.sorted { lhs, rhs in
+      if lhs.isFavorite != rhs.isFavorite {
+        return lhs.isFavorite && !rhs.isFavorite
+      }
+
+      let lhsPixels = lhs.pixelWidth * lhs.pixelHeight
+      let rhsPixels = rhs.pixelWidth * rhs.pixelHeight
+      if lhsPixels != rhsPixels {
+        return lhsPixels > rhsPixels
+      }
+
+      return (lhs.creationDate ?? .distantPast) > (rhs.creationDate ?? .distantPast)
+    }
+  }
+
+  private static func sortedSimilarGroups(
+    _ groups: [SimilarPhotoGroup],
+    sort: SimilarSortOption
+  ) -> [SimilarPhotoGroup] {
+    switch sort {
+    case .random:
+      return groups.shuffled()
+    case .recent:
+      return groups.sorted {
+        groupNewestDate($0) > groupNewestDate($1)
+      }
+    case .oldest:
+      return groups.sorted {
+        groupOldestDate($0) < groupOldestDate($1)
+      }
+    case .largest:
+      return groups.sorted {
+        let lhsBytes = estimatedDuplicateBytes(in: $0)
+        let rhsBytes = estimatedDuplicateBytes(in: $1)
+        if lhsBytes == rhsBytes {
+          return groupNewestDate($0) > groupNewestDate($1)
+        }
+        return lhsBytes > rhsBytes
+      }
+    case .mostMatches:
+      return groups.sorted {
+        if $0.assets.count == $1.assets.count {
+          return estimatedDuplicateBytes(in: $0) > estimatedDuplicateBytes(in: $1)
+        }
+        return $0.assets.count > $1.assets.count
+      }
+    }
+  }
+
+  private static func estimatedDuplicateBytes(in group: SimilarPhotoGroup) -> Int {
+    estimatedBytes(for: Array(group.assets.dropFirst()))
+  }
+
+  private static func groupNewestDate(_ group: SimilarPhotoGroup) -> Date {
+    group.assets.compactMap(\.creationDate).max() ?? .distantPast
+  }
+
+  private static func groupOldestDate(_ group: SimilarPhotoGroup) -> Date {
+    group.assets.compactMap(\.creationDate).min() ?? .distantFuture
   }
 
   private static func hammingDistance(_ lhs: UInt64, _ rhs: UInt64) -> Int {
