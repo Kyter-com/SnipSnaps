@@ -2,6 +2,14 @@ import Foundation
 import Photos
 import SwiftUI
 
+#if canImport(AVFoundation) && canImport(UIKit)
+import AVFoundation
+#endif
+
+#if canImport(MapKit)
+import MapKit
+#endif
+
 #if canImport(PhotosUI)
 import PhotosUI
 #endif
@@ -1620,12 +1628,11 @@ private struct PhotoMetadataSheet: View {
   let details: ReviewPhotoDetails
 
   @Environment(\.dismiss) private var dismiss
-  @Environment(\.openURL) private var openURL
 
   var body: some View {
     NavigationStack {
       Form {
-        Section("Photo") {
+        Section(asset.mediaType == .video ? "Video" : "Photo") {
           LabeledContent("Date") {
             Text(details.captureTimestampText)
               .multilineTextAlignment(.trailing)
@@ -1651,15 +1658,13 @@ private struct PhotoMetadataSheet: View {
           LabeledContent("Hidden", value: asset.isHidden ? "Yes" : "No")
         }
 
-        Section {
-          Button {
-            openPhotosApp()
-          } label: {
-            Label("Open in Photos", systemImage: "photo.on.rectangle")
+        #if canImport(MapKit)
+        if let coordinate = asset.location?.coordinate {
+          Section("Location") {
+            AssetLocationMapView(coordinate: coordinate)
           }
-        } footer: {
-          Text("This opens Apple Photos. iOS does not provide a public API to deep-link directly to the exact photo.")
         }
+        #endif
       }
       .navigationTitle(asset.mediaType == .video ? "Video Details" : "Photo Details")
       .navigationBarTitleDisplayMode(.inline)
@@ -1671,12 +1676,36 @@ private struct PhotoMetadataSheet: View {
     }
     .presentationDetents([.medium, .large])
   }
+}
 
-  private func openPhotosApp() {
-    guard let url = URL(string: "photos-redirect://") else { return }
-    openURL(url)
+#if canImport(MapKit)
+private struct AssetLocationMapView: View {
+  let coordinate: CLLocationCoordinate2D
+
+  private var position: MapCameraPosition {
+    .region(
+      MKCoordinateRegion(
+        center: coordinate,
+        span: MKCoordinateSpan(latitudeDelta: 0.015, longitudeDelta: 0.015)
+      )
+    )
+  }
+
+  var body: some View {
+    Map(position: .constant(position)) {
+      Marker("Captured here", coordinate: coordinate)
+    }
+    .mapControlVisibility(.hidden)
+    .frame(height: 172)
+    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    .overlay {
+      RoundedRectangle(cornerRadius: 14, style: .continuous)
+        .strokeBorder(Color(.separator).opacity(0.35), lineWidth: 0.5)
+    }
+    .accessibilityLabel("Capture location map")
   }
 }
+#endif
 
 private struct PhotoCardView: View {
   let asset: PHAsset
@@ -1688,12 +1717,21 @@ private struct PhotoCardView: View {
   var body: some View {
     let fittedSize = PhotoLibrary.fittedSize(for: asset, in: bounds)
     ZStack(alignment: .topLeading) {
-      PhotoAssetImageView(
-        asset: asset,
-        targetSize: fittedSize,
-        enableLivePhotoPlayback: enableLivePhotoPlayback,
-        livePhotoPlaybackTrigger: livePhotoPlaybackTrigger
-      )
+      if asset.mediaType == .video {
+        PhotoAssetImageView(asset: asset, targetSize: fittedSize)
+
+        #if canImport(AVFoundation) && canImport(UIKit)
+        VideoAssetPlayerView(asset: asset)
+          .frame(width: fittedSize.width, height: fittedSize.height)
+        #endif
+      } else {
+        PhotoAssetImageView(
+          asset: asset,
+          targetSize: fittedSize,
+          enableLivePhotoPlayback: enableLivePhotoPlayback,
+          livePhotoPlaybackTrigger: livePhotoPlaybackTrigger
+        )
+      }
 
       if enableLivePhotoPlayback, asset.mediaSubtypes.contains(.photoLive) {
         Label("Live", systemImage: "livephoto")
@@ -1733,6 +1771,116 @@ private struct PhotoCardView: View {
     )
   }
 }
+
+#if canImport(AVFoundation) && canImport(UIKit)
+private struct VideoAssetPlayerView: UIViewRepresentable {
+  let asset: PHAsset
+
+  func makeCoordinator() -> Coordinator {
+    Coordinator()
+  }
+
+  func makeUIView(context: Context) -> VideoPlayerContainerView {
+    let view = VideoPlayerContainerView()
+    view.playerLayer.videoGravity = .resizeAspect
+    view.backgroundColor = .clear
+    context.coordinator.requestPlayerItem(for: asset, in: view)
+    return view
+  }
+
+  func updateUIView(_ view: VideoPlayerContainerView, context: Context) {
+    view.playerLayer.videoGravity = .resizeAspect
+    context.coordinator.requestPlayerItem(for: asset, in: view)
+  }
+
+  static func dismantleUIView(_ uiView: VideoPlayerContainerView, coordinator: Coordinator) {
+    coordinator.cancelRequest()
+    uiView.playerLayer.player = nil
+  }
+
+  final class Coordinator {
+    private var requestId: PHImageRequestID?
+    private var assetIdentifier: String?
+    private var endObserver: NSObjectProtocol?
+    private weak var player: AVPlayer?
+
+    @MainActor
+    func requestPlayerItem(for asset: PHAsset, in view: VideoPlayerContainerView) {
+      guard asset.mediaType == .video else {
+        cancelRequest()
+        view.playerLayer.player = nil
+        return
+      }
+
+      if assetIdentifier == asset.localIdentifier {
+        view.playerLayer.player?.play()
+        return
+      }
+
+      cancelRequest()
+      assetIdentifier = asset.localIdentifier
+      view.accessibilityIdentifier = asset.localIdentifier
+      view.playerLayer.player = nil
+
+      let options = PHVideoRequestOptions()
+      options.isNetworkAccessAllowed = true
+      options.deliveryMode = .automatic
+      let expectedAssetIdentifier = asset.localIdentifier
+
+      requestId = PhotoLibrary.imageManager.requestPlayerItem(forVideo: asset, options: options) { [weak self, weak view] item, _ in
+        guard let item else { return }
+        DispatchQueue.main.async {
+          guard let self,
+                let view,
+                self.assetIdentifier == expectedAssetIdentifier,
+                view.accessibilityIdentifier == expectedAssetIdentifier else {
+            return
+          }
+
+          let player = AVPlayer(playerItem: item)
+          player.isMuted = true
+          player.actionAtItemEnd = .none
+          view.playerLayer.player = player
+          self.player = player
+          self.endObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: item,
+            queue: .main
+          ) { [weak player] _ in
+            player?.seek(to: .zero)
+            player?.play()
+          }
+          player.play()
+        }
+      }
+    }
+
+    func cancelRequest() {
+      if let requestId {
+        PhotoLibrary.imageManager.cancelImageRequest(requestId)
+      }
+      if let endObserver {
+        NotificationCenter.default.removeObserver(endObserver)
+      }
+      player?.pause()
+      requestId = nil
+      assetIdentifier = nil
+      endObserver = nil
+      player = nil
+    }
+  }
+}
+
+private final class VideoPlayerContainerView: UIView {
+  override static var layerClass: AnyClass {
+    AVPlayerLayer.self
+  }
+
+  var playerLayer: AVPlayerLayer {
+    layer as! AVPlayerLayer
+  }
+}
+#endif
 
 private struct CardBackdropView: View {
   let bounds: CGSize
