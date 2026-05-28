@@ -19,6 +19,8 @@ struct HomeView: View {
   @State private var authStatus = PhotoLibrary.authorizationStatus()
   @State private var counts: [ReviewMode: ReviewModeCounts] = [:]
   @State private var selectedMode: ReviewMode?
+  @State private var isRefreshingCounts = false
+  @State private var countRefreshID = UUID()
   @AppStorage("reviewLimit") private var reviewLimit: Int = 20
   @AppStorage("screenshotSortOption") private var screenshotSortOptionRawValue: String = ScreenshotSortOption.recent.rawValue
   @AppStorage("videoSortOption") private var videoSortOptionRawValue: String = VideoSortOption.largest.rawValue
@@ -99,10 +101,25 @@ struct HomeView: View {
       .background(AppColor.background)
       .navigationTitle("SnipSnaps")
       .navigationBarTitleDisplayMode(.large)
+      .toolbar {
+        ToolbarItem(placement: .topBarTrailing) {
+          if isRefreshingCounts {
+            updatingCountsIndicator
+          }
+        }
+      }
       .navigationDestination(item: $selectedMode) { mode in
         destination(for: mode)
       }
       .onAppear(perform: refresh)
+      .onChange(of: selectedMode) { _, newValue in
+        if newValue == nil {
+          refresh()
+        }
+      }
+      .onChange(of: reviewMemoryOptionRawValue) { _, _ in
+        refresh()
+      }
     }
   }
 
@@ -238,6 +255,18 @@ struct HomeView: View {
     .accessibilityLabel("Sort similar groups by \(similarSortOption.subtitle)")
   }
 
+  private var updatingCountsIndicator: some View {
+    HStack(spacing: 6) {
+      ProgressView()
+        .controlSize(.small)
+      Text("Updating")
+        .font(.caption.weight(.semibold))
+    }
+    .foregroundStyle(.secondary)
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel("Updating counts")
+  }
+
   private var accessCard: some View {
     VStack(alignment: .leading, spacing: 10) {
       Text(accessStatusText)
@@ -277,7 +306,14 @@ struct HomeView: View {
 
   private func refresh() {
     authStatus = PhotoLibrary.authorizationStatus()
-    guard canAccessPhotos else { return }
+    let refreshID = UUID()
+    countRefreshID = refreshID
+    guard canAccessPhotos else {
+      counts = [:]
+      isRefreshingCounts = false
+      return
+    }
+    isRefreshingCounts = true
     let reviewMemoryOption = reviewMemoryOption
     Task.detached(priority: .userInitiated) {
       var next: [ReviewMode: ReviewModeCounts] = [:]
@@ -287,7 +323,11 @@ struct HomeView: View {
           : PhotoLibrary.fetchCounts(for: mode, reviewMemory: reviewMemoryOption)
       }
       let refreshedCounts = next
-      await MainActor.run { counts = refreshedCounts }
+      await MainActor.run {
+        guard countRefreshID == refreshID else { return }
+        counts = refreshedCounts
+        isRefreshingCounts = false
+      }
     }
   }
 }

@@ -5,6 +5,7 @@
 //  Created by Nick Reisenauer on 6/7/25.
 //
 
+import Foundation
 import Photos
 import Vision
 
@@ -111,13 +112,15 @@ struct ReviewModeCounts {
 enum PhotoReviewHistory {
   private static let keyPrefix = "reviewedAssetIdentifiers"
   private static let maxIdentifiersPerMode = 5_000
+  private static let maxPersistentHistoryAge: TimeInterval = 5 * 365 * 24 * 60 * 60
+  private static let sessionLock = NSLock()
   nonisolated(unsafe) private static var sessionIdentifiersByMode: [ReviewMode: Set<String>] = [:]
 
   static func supportsSkipping(for mode: ReviewMode) -> Bool {
     switch mode {
-    case .screenshots, .oldScreenshots, .videos, .screenRecordings, .largePhotos, .livePhotos, .bursts, .recentlyEdited, .oldFavorites:
+    case .today, .onThisDay, .random, .screenshots, .oldScreenshots, .videos, .screenRecordings, .largePhotos, .livePhotos, .bursts, .recentlyEdited, .oldFavorites:
       return true
-    case .today, .onThisDay, .random, .similar:
+    case .similar:
       return false
     }
   }
@@ -126,14 +129,14 @@ enum PhotoReviewHistory {
     guard supportsSkipping(for: mode) else { return [] }
     guard memoryOption != .never else { return [] }
     if memoryOption == .session {
-      return sessionIdentifiersByMode[mode] ?? []
+      return sessionReviewedIdentifiers(for: mode)
     }
 
-    return Set(prunedPersistentEntries(for: mode, memoryOption: memoryOption).keys)
+    return Set(filteredPersistentEntries(for: mode, memoryOption: memoryOption).keys)
   }
 
   static func hasReviewedIdentifiers() -> Bool {
-    !sessionIdentifiersByMode.values.allSatisfy(\.isEmpty)
+    !sessionReviewedIdentifiersAreEmpty()
       || ReviewMode.allCases.contains { !persistentEntries(for: $0).isEmpty }
   }
 
@@ -141,11 +144,11 @@ enum PhotoReviewHistory {
     guard supportsSkipping(for: mode) else { return }
     guard memoryOption != .never else { return }
     if memoryOption == .session {
-      sessionIdentifiersByMode[mode, default: []].insert(asset.localIdentifier)
+      insertSessionReviewedIdentifier(asset.localIdentifier, for: mode)
       return
     }
 
-    var entries = prunedPersistentEntries(for: mode, memoryOption: memoryOption)
+    var entries = persistentEntries(for: mode)
     entries[asset.localIdentifier] = Date().timeIntervalSince1970
     storePersistentEntries(entries, for: mode)
   }
@@ -154,19 +157,30 @@ enum PhotoReviewHistory {
     guard supportsSkipping(for: mode) else { return }
     guard memoryOption != .never else { return }
     if memoryOption == .session {
-      sessionIdentifiersByMode[mode]?.remove(asset.localIdentifier)
+      removeSessionReviewedIdentifier(asset.localIdentifier, for: mode)
       return
     }
 
-    var entries = prunedPersistentEntries(for: mode, memoryOption: memoryOption)
+    var entries = persistentEntries(for: mode)
     entries.removeValue(forKey: asset.localIdentifier)
     storePersistentEntries(entries, for: mode)
   }
 
   static func clearAll() {
-    sessionIdentifiersByMode.removeAll()
+    clearSessionReviewedIdentifiers()
     for mode in ReviewMode.allCases where supportsSkipping(for: mode) {
       UserDefaults.standard.removeObject(forKey: key(for: mode))
+    }
+  }
+
+  static func compactStoredHistory() {
+    trimSessionReviewedIdentifiers()
+    for mode in ReviewMode.allCases {
+      if supportsSkipping(for: mode) {
+        storePersistentEntries(compactedPersistentEntries(for: mode), for: mode)
+      } else {
+        UserDefaults.standard.removeObject(forKey: key(for: mode))
+      }
     }
   }
 
@@ -174,16 +188,14 @@ enum PhotoReviewHistory {
     "\(keyPrefix).\(mode.rawValue)"
   }
 
-  private static func prunedPersistentEntries(for mode: ReviewMode, memoryOption: ReviewMemoryOption) -> [String: TimeInterval] {
-    var entries = persistentEntries(for: mode)
+  private static func filteredPersistentEntries(for mode: ReviewMode, memoryOption: ReviewMemoryOption) -> [String: TimeInterval] {
+    let entries = persistentEntries(for: mode)
     guard let expirationInterval = memoryOption.expirationInterval, expirationInterval > 0 else {
       return entries
     }
 
     let cutoff = Date().timeIntervalSince1970 - expirationInterval
-    entries = entries.filter { $0.value >= cutoff }
-    storePersistentEntries(entries, for: mode)
-    return entries
+    return entries.filter { $0.value >= cutoff }
   }
 
   private static func persistentEntries(for mode: ReviewMode) -> [String: TimeInterval] {
@@ -205,10 +217,71 @@ enum PhotoReviewHistory {
     return Dictionary(uniqueKeysWithValues: legacyIdentifiers.map { ($0, Date().timeIntervalSince1970) })
   }
 
+  private static func compactedPersistentEntries(for mode: ReviewMode) -> [String: TimeInterval] {
+    compactedPersistentEntries(persistentEntries(for: mode))
+  }
+
+  private static func compactedPersistentEntries(_ entries: [String: TimeInterval]) -> [String: TimeInterval] {
+    let cutoff = Date().timeIntervalSince1970 - maxPersistentHistoryAge
+    return entries.filter { $0.value >= cutoff }
+  }
+
   private static func storePersistentEntries(_ entries: [String: TimeInterval], for mode: ReviewMode) {
-    let limitedEntries = entries.sorted { $0.value > $1.value }.prefix(maxIdentifiersPerMode)
+    let compactedEntries = compactedPersistentEntries(entries)
+    let limitedEntries = compactedEntries.sorted { $0.value > $1.value }.prefix(maxIdentifiersPerMode)
     let dictionary = Dictionary(uniqueKeysWithValues: limitedEntries.map { ($0.key, $0.value) })
+    guard !dictionary.isEmpty else {
+      UserDefaults.standard.removeObject(forKey: key(for: mode))
+      return
+    }
     UserDefaults.standard.set(dictionary, forKey: key(for: mode))
+  }
+
+  private static func sessionReviewedIdentifiers(for mode: ReviewMode) -> Set<String> {
+    sessionLock.lock()
+    defer { sessionLock.unlock() }
+    return sessionIdentifiersByMode[mode] ?? []
+  }
+
+  private static func sessionReviewedIdentifiersAreEmpty() -> Bool {
+    sessionLock.lock()
+    defer { sessionLock.unlock() }
+    return sessionIdentifiersByMode.values.allSatisfy(\.isEmpty)
+  }
+
+  private static func insertSessionReviewedIdentifier(_ identifier: String, for mode: ReviewMode) {
+    sessionLock.lock()
+    defer { sessionLock.unlock() }
+    var identifiers = sessionIdentifiersByMode[mode, default: []]
+    identifiers.insert(identifier)
+    while identifiers.count > maxIdentifiersPerMode, let excessIdentifier = identifiers.first {
+      identifiers.remove(excessIdentifier)
+    }
+    sessionIdentifiersByMode[mode] = identifiers
+  }
+
+  private static func removeSessionReviewedIdentifier(_ identifier: String, for mode: ReviewMode) {
+    sessionLock.lock()
+    defer { sessionLock.unlock() }
+    sessionIdentifiersByMode[mode]?.remove(identifier)
+  }
+
+  private static func clearSessionReviewedIdentifiers() {
+    sessionLock.lock()
+    defer { sessionLock.unlock() }
+    sessionIdentifiersByMode.removeAll()
+  }
+
+  private static func trimSessionReviewedIdentifiers() {
+    sessionLock.lock()
+    defer { sessionLock.unlock() }
+    for mode in sessionIdentifiersByMode.keys {
+      var identifiers = sessionIdentifiersByMode[mode] ?? []
+      while identifiers.count > maxIdentifiersPerMode, let excessIdentifier = identifiers.first {
+        identifiers.remove(excessIdentifier)
+      }
+      sessionIdentifiersByMode[mode] = identifiers
+    }
   }
 }
 
@@ -219,6 +292,7 @@ enum PhotoLibrary {
   nonisolated(unsafe) private static let imageCache: NSCache<NSString, NSObject> = {
     let cache = NSCache<NSString, NSObject>()
     cache.countLimit = 12
+    cache.totalCostLimit = 64 * 1024 * 1024
     return cache
   }()
 
@@ -630,6 +704,11 @@ enum PhotoLibrary {
     )
   }
 
+  static func clearMemoryCaches() {
+    imageCache.removeAllObjects()
+    imageManager.stopCachingImagesForAllAssets()
+  }
+
   static func preloadImage(for asset: PHAsset, targetSize: CGSize, contentMode: PHImageContentMode) {
     let cacheKey = imageCacheKey(for: asset, targetSize: targetSize, contentMode: contentMode)
     guard imageCache.object(forKey: cacheKey) == nil else { return }
@@ -648,7 +727,7 @@ enum PhotoLibrary {
       guard let result,
             let isDegraded = info?[PHImageResultIsDegradedKey] as? Bool,
             !isDegraded else { return }
-      imageCache.setObject(result, forKey: cacheKey)
+      imageCache.setObject(result, forKey: cacheKey, cost: imageCacheCost(for: result))
     }
   }
 
@@ -658,7 +737,7 @@ enum PhotoLibrary {
   }
 
   static func storeCachedImage(_ image: UIImage, forKey key: NSString) {
-    imageCache.setObject(image, forKey: key)
+    imageCache.setObject(image, forKey: key, cost: imageCacheCost(for: image))
   }
   #elseif canImport(AppKit)
   static func cachedImage(forKey key: NSString) -> NSImage? {
@@ -666,7 +745,7 @@ enum PhotoLibrary {
   }
 
   static func storeCachedImage(_ image: NSImage, forKey key: NSString) {
-    imageCache.setObject(image, forKey: key)
+    imageCache.setObject(image, forKey: key, cost: imageCacheCost(for: image))
   }
   #endif
 
@@ -675,6 +754,19 @@ enum PhotoLibrary {
       string: "\(asset.localIdentifier)-\(Int(targetSize.width.rounded()))x\(Int(targetSize.height.rounded()))-\(contentMode.rawValue)"
     )
   }
+
+  #if canImport(UIKit)
+  private static func imageCacheCost(for image: UIImage) -> Int {
+    let pixelWidth = Int((image.size.width * image.scale).rounded())
+    let pixelHeight = Int((image.size.height * image.scale).rounded())
+    return max(pixelWidth * pixelHeight * 4, 1)
+  }
+  #elseif canImport(AppKit)
+  private static func imageCacheCost(for image: NSImage) -> Int {
+    guard let representation = image.representations.first else { return 1 }
+    return max(representation.pixelsWide * representation.pixelsHigh * 4, 1)
+  }
+  #endif
 
   static func scaledSize(for size: CGSize, scale: CGFloat) -> CGSize {
     return CGSize(width: size.width * scale, height: size.height * scale)
