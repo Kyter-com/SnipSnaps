@@ -10,7 +10,7 @@ Prepared non-image release metadata for App Store Connect.
 - Secondary category: Utilities
 - Bundle ID: com.kyter.SnipSnaps
 - Version: 1.0.2
-- Build: 32
+- Build: 33
 - Content rights: The app does not contain, show, or access third-party content outside the user's own photo library.
 - Encryption: Uses no non-exempt encryption (`ITSAppUsesNonExemptEncryption` is false).
 
@@ -18,7 +18,7 @@ Prepared non-image release metadata for App Store Connect.
 
 SnipSnaps helps you clean up your photo library in quick, focused review sessions.
 
-Swipe through recent photos, screenshots, videos, screen recordings, large photos, Live Photos, bursts, memories from this day, random shots, or duplicate-looking groups. Keep the photos and videos that matter, mark the ones you do not need, and delete them when you are ready. Every session is designed to be fast enough for a spare minute and careful enough to avoid accidental cleanup.
+Swipe through recent photos, screenshots, videos, screen recordings, large photos, Live Photos, bursts, memories from this day, random shots, or duplicate-looking photos. Keep the photos and videos that matter, mark the ones you do not need, and delete them when you are ready. Every session is designed to be fast enough for a spare minute and careful enough to avoid accidental cleanup.
 
 Use SnipSnaps to:
 
@@ -46,6 +46,8 @@ photo cleaner,delete photos,storage,duplicates,screenshots,camera roll,photo org
 • Added review modes for old screenshots, screen recordings, large photos, Live Photos, bursts, recently edited photos, and old favorites.
 • Improved swipe smoothness with better photo caching and more reliable image loading during fast reviews.
 • Improved similar-photo scanning with progress, partial results, clearer comparison details, and smarter best-pick labels.
+• Refined similar-photo review to skip screenshots and improved Large Photos and Recently Edited category counts.
+• Added review memory controls with not-reviewed and total counts for cleanup categories.
 
 ## Review Notes
 

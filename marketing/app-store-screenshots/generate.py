@@ -38,8 +38,8 @@ SLIDES = [
     },
     {
         "kicker": "",
-        "title": "Swipe fast. Keep the best.",
-        "subtitle": "A focused card stack helps every decision feel quick and deliberate.",
+        "title": "Review one item at a time.",
+        "subtitle": "A focused card stack keeps each cleanup decision clear.",
         "screen": "review",
     },
     {
@@ -63,7 +63,7 @@ SLIDES = [
     {
         "kicker": "",
         "title": "Tune each cleanup session.",
-        "subtitle": "Set review size and track lifetime cleanup progress over time.",
+        "subtitle": "Set review size, memory, and track lifetime cleanup progress over time.",
         "screen": "settings",
     },
 ]

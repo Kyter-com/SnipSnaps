@@ -17,12 +17,13 @@ private struct ReviewModeSection: Identifiable {
 
 struct HomeView: View {
   @State private var authStatus = PhotoLibrary.authorizationStatus()
-  @State private var counts: [ReviewMode: Int] = [:]
+  @State private var counts: [ReviewMode: ReviewModeCounts] = [:]
   @State private var selectedMode: ReviewMode?
   @AppStorage("reviewLimit") private var reviewLimit: Int = 20
   @AppStorage("screenshotSortOption") private var screenshotSortOptionRawValue: String = ScreenshotSortOption.recent.rawValue
   @AppStorage("videoSortOption") private var videoSortOptionRawValue: String = VideoSortOption.largest.rawValue
   @AppStorage("similarSortOption") private var similarSortOptionRawValue: String = SimilarSortOption.recent.rawValue
+  @AppStorage("reviewMemoryOption") private var reviewMemoryOptionRawValue: String = ReviewMemoryOption.thirtyDays.rawValue
 
   private let reviewSections = [
     ReviewModeSection(title: "Quick Clean", modes: [.today, .screenshots, .oldScreenshots, .random]),
@@ -61,15 +62,14 @@ struct HomeView: View {
     }
   }
 
+  private var reviewMemoryOption: ReviewMemoryOption {
+    ReviewMemoryOption(rawValue: reviewMemoryOptionRawValue) ?? .thirtyDays
+  }
+
   var body: some View {
     NavigationStack {
       ScrollView {
         VStack(alignment: .leading, spacing: 16) {
-          Text("Swipe fast, keep the best, clear the rest.")
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 4)
-
           if !canAccessPhotos {
             accessCard
           }
@@ -122,22 +122,23 @@ struct HomeView: View {
       } label: {
         ActionCard(
           mode: mode,
-          count: counts[mode] ?? 0,
+          counts: counts[mode] ?? ReviewModeCounts(total: 0, notReviewed: 0),
           isDisabled: !canAccessPhotos,
-          reservesAccessorySpace: mode == .screenshots || mode == .videos || mode == .similar
+          reviewMemory: reviewMemoryOption,
+          reservesAccessorySpace: mode.usesScreenshotSort || mode.usesVideoSort || mode == .similar
         )
       }
       .buttonStyle(.plain)
       .disabled(!canAccessPhotos)
 
-      if mode == .screenshots {
+      if mode.usesScreenshotSort {
         screenshotSortMenu
           .padding(.leading, 16)
           .padding(.bottom, 12)
           .disabled(!canAccessPhotos)
       }
 
-      if mode == .videos {
+      if mode.usesVideoSort {
         videoSortMenu
           .padding(.leading, 16)
           .padding(.bottom, 12)
@@ -277,10 +278,13 @@ struct HomeView: View {
   private func refresh() {
     authStatus = PhotoLibrary.authorizationStatus()
     guard canAccessPhotos else { return }
+    let reviewMemoryOption = reviewMemoryOption
     Task.detached(priority: .userInitiated) {
-      var next: [ReviewMode: Int] = [:]
+      var next: [ReviewMode: ReviewModeCounts] = [:]
       for mode in ReviewMode.allCases {
-        next[mode] = mode == .similar ? 0 : PhotoLibrary.fetchCount(for: mode)
+        next[mode] = mode == .similar
+          ? ReviewModeCounts(total: 0, notReviewed: 0)
+          : PhotoLibrary.fetchCounts(for: mode, reviewMemory: reviewMemoryOption)
       }
       let refreshedCounts = next
       await MainActor.run { counts = refreshedCounts }
@@ -290,8 +294,9 @@ struct HomeView: View {
 
 private struct ActionCard: View {
   let mode: ReviewMode
-  let count: Int
+  let counts: ReviewModeCounts
   let isDisabled: Bool
+  let reviewMemory: ReviewMemoryOption
   var reservesAccessorySpace = false
 
   var body: some View {
@@ -318,6 +323,12 @@ private struct ActionCard: View {
           Text(mode.subtitle)
             .font(.subheadline)
             .foregroundStyle(.secondary)
+          if let countSummary {
+            Text(countSummary)
+              .font(.caption.weight(.medium))
+              .foregroundStyle(.tertiary)
+              .monospacedDigit()
+          }
         }
         .padding(.bottom, reservesAccessorySpace ? 30 : 0)
         Spacer(minLength: 0)
@@ -330,8 +341,19 @@ private struct ActionCard: View {
 
   private var displayCount: String {
     if mode == .similar {
-      return "SCAN"
+      return "Scan"
     }
+    let count = PhotoReviewHistory.supportsSkipping(for: mode) && reviewMemory != .never
+      ? counts.notReviewed
+      : counts.total
     return count > 9999 ? "9999+" : "\(count)"
+  }
+
+  private var countSummary: String? {
+    guard mode != .similar else { return nil }
+    if PhotoReviewHistory.supportsSkipping(for: mode), reviewMemory != .never {
+      return "\(counts.notReviewed) not reviewed · \(counts.total) total"
+    }
+    return "\(counts.total) total"
   }
 }

@@ -188,6 +188,7 @@ struct ReviewSessionView: View {
   @AppStorage("reviewLimit") private var reviewLimit: Int = 20
   @AppStorage("screenshotSortOption") private var screenshotSortOptionRawValue: String = ScreenshotSortOption.recent.rawValue
   @AppStorage("videoSortOption") private var videoSortOptionRawValue: String = VideoSortOption.largest.rawValue
+  @AppStorage("reviewMemoryOption") private var reviewMemoryOptionRawValue: String = ReviewMemoryOption.thirtyDays.rawValue
   @AppStorage("totalDeletedCount") private var totalDeletedCount: Int = 0
   @AppStorage("totalDeletedBytes") private var totalDeletedBytes: Int = 0
 
@@ -255,6 +256,10 @@ struct ReviewSessionView: View {
 
   private var videoSortOption: VideoSortOption {
     VideoSortOption(rawValue: videoSortOptionRawValue) ?? .largest
+  }
+
+  private var reviewMemoryOption: ReviewMemoryOption {
+    ReviewMemoryOption(rawValue: reviewMemoryOptionRawValue) ?? .thirtyDays
   }
 
   private var estimatedDeleteBytes: Int {
@@ -672,10 +677,17 @@ struct ReviewSessionView: View {
     ContentUnavailableView {
       Label("No \(assetPluralName.capitalized) Found", systemImage: mode.reviewsVideos ? "video" : "photo.on.rectangle.angled")
     } description: {
-      Text("Try a different review mode, or check your photo library.")
+      Text(emptyViewDescription)
     } actions: {
       Button("Back") { dismiss() }
     }
+  }
+
+  private var emptyViewDescription: String {
+    if PhotoReviewHistory.supportsSkipping(for: mode), reviewMemoryOption != .never {
+      return "Everything in this category may already be reviewed for your current memory setting. Change Remember Reviewed in Settings to revisit items."
+    }
+    return "Try a different review mode, or check your photo library."
   }
 
   private func loadAssets() {
@@ -691,7 +703,8 @@ struct ReviewSessionView: View {
         for: mode,
         limit: sessionLimit,
         screenshotSort: screenshotSortOption,
-        videoSort: videoSortOption
+        videoSort: videoSortOption,
+        reviewMemory: reviewMemoryOption
       )
       await MainActor.run {
         assets = fetched
@@ -735,6 +748,7 @@ struct ReviewSessionView: View {
     case .delete:
       deleteAssets.append(asset)
     }
+    PhotoReviewHistory.markReviewed(asset, for: mode, memoryOption: reviewMemoryOption)
     let direction: CGFloat = decision == .keep ? 1 : -1
     let exitDistance = max(cardSize.width, 500) * 1.35
     cardDepartureOffset = startingOffset
@@ -773,6 +787,7 @@ struct ReviewSessionView: View {
     case .delete:
       deleteAssets.removeAll { $0.localIdentifier == undo.asset.localIdentifier }
     }
+    PhotoReviewHistory.unmarkReviewed(undo.asset, for: mode, memoryOption: reviewMemoryOption)
     showSummary = false
     currentIndex = undo.index
     lastReviewUndo = nil
@@ -1512,10 +1527,10 @@ struct SimilarReviewSessionView: View {
     }
 
     if groups.isEmpty {
-      return "Comparing \(countText) photos. \(similarSortOption.subtitle)."
+      return "Comparing \(countText) non-screenshot photos. \(similarSortOption.subtitle)."
     }
 
-    return "Comparing \(countText) photos. \(groups.count) groups found."
+    return "Comparing \(countText) non-screenshot photos. \(groups.count) groups found."
   }
 
   private var reviewFoundTitle: String {
@@ -1526,7 +1541,7 @@ struct SimilarReviewSessionView: View {
     ContentUnavailableView {
       Label("No Similar Photos Found", systemImage: "square.stack.3d.up")
     } description: {
-      Text("Try again after taking more photos, or increase the review size in Settings.")
+      Text("Try again after taking more photos, or increase the review size in Settings. Screenshots are reviewed separately.")
     } actions: {
       Button("Back") { dismiss() }
     }

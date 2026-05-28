@@ -15,6 +15,7 @@ struct SettingsView: View {
   @AppStorage("screenshotSortOption") private var screenshotSortOptionRawValue: String = ScreenshotSortOption.recent.rawValue
   @AppStorage("videoSortOption") private var videoSortOptionRawValue: String = VideoSortOption.largest.rawValue
   @AppStorage("similarSortOption") private var similarSortOptionRawValue: String = SimilarSortOption.recent.rawValue
+  @AppStorage("reviewMemoryOption") private var reviewMemoryOptionRawValue: String = ReviewMemoryOption.thirtyDays.rawValue
   @AppStorage("totalDeletedCount") private var totalDeletedCount: Int = 0
   @AppStorage("totalDeletedBytes") private var totalDeletedBytes: Int = 0
   @State private var showResetLocalSettingsAlert = false
@@ -32,10 +33,16 @@ struct SettingsView: View {
                 .monospacedDigit()
             }
           }
+
+          Picker("Remember Reviewed", selection: $reviewMemoryOptionRawValue) {
+            ForEach(ReviewMemoryOption.allCases) { option in
+              Text(option.title).tag(option.rawValue)
+            }
+          }
         } header: {
           Text("Review")
         } footer: {
-          Text("How many photos appear in each session.")
+          Text("Review size controls how many items appear in each session. Remember Reviewed skips items you already chose for each cleanup category.")
         }
 
         Section("Lifetime Stats") {
@@ -62,7 +69,7 @@ struct SettingsView: View {
           }
           .disabled(!hasLocalSettingsToReset)
         } footer: {
-          Text("Resets review size, sorting, and lifetime deleted stats on this device. This does not delete photos.")
+          Text("Resets review size, sorting, review memory, and lifetime deleted stats on this device. This does not delete photos.")
         }
 
         Section("Support") {
@@ -131,7 +138,7 @@ struct SettingsView: View {
         }
         Button("Cancel", role: .cancel) {}
       } message: {
-        Text("This clears your review size preference, sorting, and lifetime deleted stats on this device. Your photo library will not be changed.")
+        Text("This clears your review size preference, sorting, review memory, and lifetime deleted stats on this device. Your photo library will not be changed.")
       }
     }
   }
@@ -141,6 +148,8 @@ struct SettingsView: View {
       || screenshotSortOptionRawValue != ScreenshotSortOption.recent.rawValue
       || videoSortOptionRawValue != VideoSortOption.largest.rawValue
       || similarSortOptionRawValue != SimilarSortOption.recent.rawValue
+      || reviewMemoryOptionRawValue != ReviewMemoryOption.thirtyDays.rawValue
+      || PhotoReviewHistory.hasReviewedIdentifiers()
       || totalDeletedCount != 0
       || totalDeletedBytes != 0
   }
@@ -198,6 +207,8 @@ struct SettingsView: View {
     screenshotSortOptionRawValue = ScreenshotSortOption.recent.rawValue
     videoSortOptionRawValue = VideoSortOption.largest.rawValue
     similarSortOptionRawValue = SimilarSortOption.recent.rawValue
+    reviewMemoryOptionRawValue = ReviewMemoryOption.thirtyDays.rawValue
+    PhotoReviewHistory.clearAll()
     totalDeletedCount = 0
     totalDeletedBytes = 0
   }

@@ -63,18 +63,13 @@ private struct ScreenshotHomeDemo: View {
     ("On This Day", "Photos from May 8 across the years", "88", "calendar", Color.blue.opacity(0.14)),
     ("Screenshots", "Clear the clutter fast", "143", "rectangle.on.rectangle", Color.red.opacity(0.13)),
     ("Videos", "Review space-hungry clips", "18", "video.fill", Color.indigo.opacity(0.14)),
-    ("Similar Photos", "Review duplicate-looking groups", "SCAN", "square.stack.3d.up", Color.green.opacity(0.14)),
+    ("Similar Photos", "Review duplicate-looking photos", "Scan", "square.stack.3d.up", Color.green.opacity(0.14)),
   ]
 
   var body: some View {
     NavigationStack {
       ScrollView {
         VStack(alignment: .leading, spacing: 16) {
-          Text("Swipe fast, keep the best, clear the rest.")
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 4)
-
           VStack(spacing: 12) {
             ForEach(cards, id: \.0) { title, subtitle, count, image, tint in
               ZStack {
@@ -344,10 +339,16 @@ private struct ScreenshotSettingsDemo: View {
             Text("20")
               .foregroundStyle(.secondary)
           }
+          HStack {
+            Text("Remember Reviewed")
+            Spacer()
+            Text("30 Days")
+              .foregroundStyle(.secondary)
+          }
         } header: {
           Text("Review")
         } footer: {
-          Text("How many photos appear in each session.")
+          Text("Review size controls how many items appear in each session. Remember Reviewed skips items you already chose for each cleanup category.")
         }
 
         Section("Lifetime Stats") {
@@ -370,7 +371,7 @@ private struct ScreenshotSettingsDemo: View {
               .foregroundStyle(Color(UIColor.tertiaryLabel))
           }
         } footer: {
-          Text("Resets review size, sorting, and lifetime deleted stats on this device. This does not delete photos.")
+          Text("Resets review size, sorting, review memory, and lifetime deleted stats on this device. This does not delete photos.")
         }
       }
       .navigationTitle("Settings")

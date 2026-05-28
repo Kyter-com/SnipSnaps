@@ -99,7 +99,122 @@ struct SimilarPhotoGroup: Identifiable {
   }
 }
 
+struct ReviewModeCounts {
+  let total: Int
+  let notReviewed: Int
+
+  var hasReviewMemory: Bool {
+    notReviewed != total
+  }
+}
+
+enum PhotoReviewHistory {
+  private static let keyPrefix = "reviewedAssetIdentifiers"
+  private static let maxIdentifiersPerMode = 5_000
+  nonisolated(unsafe) private static var sessionIdentifiersByMode: [ReviewMode: Set<String>] = [:]
+
+  static func supportsSkipping(for mode: ReviewMode) -> Bool {
+    switch mode {
+    case .screenshots, .oldScreenshots, .videos, .screenRecordings, .largePhotos, .livePhotos, .bursts, .recentlyEdited, .oldFavorites:
+      return true
+    case .today, .onThisDay, .random, .similar:
+      return false
+    }
+  }
+
+  static func reviewedIdentifiers(for mode: ReviewMode, memoryOption: ReviewMemoryOption) -> Set<String> {
+    guard supportsSkipping(for: mode) else { return [] }
+    guard memoryOption != .never else { return [] }
+    if memoryOption == .session {
+      return sessionIdentifiersByMode[mode] ?? []
+    }
+
+    return Set(prunedPersistentEntries(for: mode, memoryOption: memoryOption).keys)
+  }
+
+  static func hasReviewedIdentifiers() -> Bool {
+    !sessionIdentifiersByMode.values.allSatisfy(\.isEmpty)
+      || ReviewMode.allCases.contains { !persistentEntries(for: $0).isEmpty }
+  }
+
+  static func markReviewed(_ asset: PHAsset, for mode: ReviewMode, memoryOption: ReviewMemoryOption) {
+    guard supportsSkipping(for: mode) else { return }
+    guard memoryOption != .never else { return }
+    if memoryOption == .session {
+      sessionIdentifiersByMode[mode, default: []].insert(asset.localIdentifier)
+      return
+    }
+
+    var entries = prunedPersistentEntries(for: mode, memoryOption: memoryOption)
+    entries[asset.localIdentifier] = Date().timeIntervalSince1970
+    storePersistentEntries(entries, for: mode)
+  }
+
+  static func unmarkReviewed(_ asset: PHAsset, for mode: ReviewMode, memoryOption: ReviewMemoryOption) {
+    guard supportsSkipping(for: mode) else { return }
+    guard memoryOption != .never else { return }
+    if memoryOption == .session {
+      sessionIdentifiersByMode[mode]?.remove(asset.localIdentifier)
+      return
+    }
+
+    var entries = prunedPersistentEntries(for: mode, memoryOption: memoryOption)
+    entries.removeValue(forKey: asset.localIdentifier)
+    storePersistentEntries(entries, for: mode)
+  }
+
+  static func clearAll() {
+    sessionIdentifiersByMode.removeAll()
+    for mode in ReviewMode.allCases where supportsSkipping(for: mode) {
+      UserDefaults.standard.removeObject(forKey: key(for: mode))
+    }
+  }
+
+  private static func key(for mode: ReviewMode) -> String {
+    "\(keyPrefix).\(mode.rawValue)"
+  }
+
+  private static func prunedPersistentEntries(for mode: ReviewMode, memoryOption: ReviewMemoryOption) -> [String: TimeInterval] {
+    var entries = persistentEntries(for: mode)
+    guard let expirationInterval = memoryOption.expirationInterval, expirationInterval > 0 else {
+      return entries
+    }
+
+    let cutoff = Date().timeIntervalSince1970 - expirationInterval
+    entries = entries.filter { $0.value >= cutoff }
+    storePersistentEntries(entries, for: mode)
+    return entries
+  }
+
+  private static func persistentEntries(for mode: ReviewMode) -> [String: TimeInterval] {
+    let key = key(for: mode)
+    if let dictionary = UserDefaults.standard.dictionary(forKey: key) {
+      return dictionary.compactMapValues { value in
+        if let timestamp = value as? TimeInterval {
+          return timestamp
+        }
+        if let number = value as? NSNumber {
+          return number.doubleValue
+        }
+        return nil
+      }
+    }
+
+    let legacyIdentifiers = UserDefaults.standard.stringArray(forKey: key) ?? []
+    guard !legacyIdentifiers.isEmpty else { return [:] }
+    return Dictionary(uniqueKeysWithValues: legacyIdentifiers.map { ($0, Date().timeIntervalSince1970) })
+  }
+
+  private static func storePersistentEntries(_ entries: [String: TimeInterval], for mode: ReviewMode) {
+    let limitedEntries = entries.sorted { $0.value > $1.value }.prefix(maxIdentifiersPerMode)
+    let dictionary = Dictionary(uniqueKeysWithValues: limitedEntries.map { ($0.key, $0.value) })
+    UserDefaults.standard.set(dictionary, forKey: key(for: mode))
+  }
+}
+
 enum PhotoLibrary {
+  private static let largePhotoMinimumBytes = 8 * 1024 * 1024
+  private static let largePhotoMinimumPixels = 24_000_000
   static let imageManager = PHCachingImageManager()
   nonisolated(unsafe) private static let imageCache: NSCache<NSString, NSObject> = {
     let cache = NSCache<NSString, NSObject>()
@@ -133,8 +248,10 @@ enum PhotoLibrary {
     for mode: ReviewMode,
     limit: Int,
     screenshotSort: ScreenshotSortOption = .recent,
-    videoSort: VideoSortOption = .largest
+    videoSort: VideoSortOption = .largest,
+    reviewMemory: ReviewMemoryOption = .thirtyDays
   ) -> [PHAsset] {
+    let reviewedIdentifiers = PhotoReviewHistory.reviewedIdentifiers(for: mode, memoryOption: reviewMemory)
     let options = PHFetchOptions()
     options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
 
@@ -148,19 +265,17 @@ enum PhotoLibrary {
         start as NSDate,
         end as NSDate
       )
-      options.fetchLimit = limit
-      return fetchAssets(options: options, limit: limit)
+      return fetchAssets(options: options, limit: limit, excluding: reviewedIdentifiers)
     case .onThisDay:
       guard let predicate = onThisDayPredicate() else { return [] }
       options.predicate = predicate
-      options.fetchLimit = limit
-      return fetchAssets(options: options, limit: limit)
+      return fetchAssets(options: options, limit: limit, excluding: reviewedIdentifiers)
     case .screenshots:
       options.predicate = NSPredicate(
         format: "(mediaSubtype & %d) != 0",
         PHAssetMediaSubtype.photoScreenshot.rawValue
       )
-      return fetchScreenshotAssets(options: options, sort: screenshotSort, limit: limit)
+      return fetchScreenshotAssets(options: options, sort: screenshotSort, limit: limit, excluding: reviewedIdentifiers)
     case .oldScreenshots:
       let cutoff = Calendar.current.date(byAdding: .day, value: -30, to: Date()) ?? Date()
       options.predicate = NSPredicate(
@@ -168,34 +283,27 @@ enum PhotoLibrary {
         PHAssetMediaSubtype.photoScreenshot.rawValue,
         cutoff as NSDate
       )
-      options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
-      options.fetchLimit = limit
-      return fetchAssets(options: options, limit: limit)
+      return fetchScreenshotAssets(options: options, sort: screenshotSort, limit: limit, excluding: reviewedIdentifiers)
     case .videos:
-      return fetchVideoAssets(options: options, sort: videoSort, limit: limit)
+      return fetchVideoAssets(options: options, sort: videoSort, limit: limit, excluding: reviewedIdentifiers)
     case .screenRecordings:
       options.predicate = NSPredicate(
         format: "(mediaSubtype & %d) != 0",
         PHAssetMediaSubtype.videoScreenRecording.rawValue
       )
-      options.fetchLimit = limit
-      return fetchAssets(mediaType: .video, options: options, limit: limit)
+      return fetchVideoAssets(options: options, sort: videoSort, limit: limit, excluding: reviewedIdentifiers)
     case .largePhotos:
-      return fetchLargePhotoAssets(options: options, limit: limit)
+      return fetchLargePhotoAssets(options: options, limit: limit, excluding: reviewedIdentifiers)
     case .livePhotos:
       options.predicate = NSPredicate(
         format: "(mediaSubtype & %d) != 0",
         PHAssetMediaSubtype.photoLive.rawValue
       )
-      options.fetchLimit = limit
-      return fetchAssets(options: options, limit: limit)
+      return fetchAssets(options: options, limit: limit, excluding: reviewedIdentifiers)
     case .bursts:
-      return fetchBurstAssets(limit: limit)
+      return fetchBurstAssets(limit: limit, excluding: reviewedIdentifiers)
     case .recentlyEdited:
-      options.predicate = NSPredicate(format: "modificationDate != nil")
-      options.sortDescriptors = [NSSortDescriptor(key: "modificationDate", ascending: false)]
-      options.fetchLimit = limit
-      return fetchAssets(options: options, limit: limit)
+      return fetchRecentlyEditedAssets(limit: limit, excluding: reviewedIdentifiers)
     case .oldFavorites:
       let cutoff = Calendar.current.date(byAdding: .year, value: -1, to: Date()) ?? Date()
       options.predicate = NSPredicate(
@@ -203,13 +311,11 @@ enum PhotoLibrary {
         cutoff as NSDate
       )
       options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
-      options.fetchLimit = limit
-      return fetchAssets(options: options, limit: limit)
+      return fetchAssets(options: options, limit: limit, excluding: reviewedIdentifiers)
     case .similar:
-      options.fetchLimit = limit
-      return fetchAssets(options: options, limit: limit)
+      return fetchAssets(options: options, limit: limit, excluding: reviewedIdentifiers)
     case .random:
-      return fetchRandomAssets(options: options, limit: limit)
+      return fetchRandomAssets(options: options, limit: limit, excluding: reviewedIdentifiers)
     }
   }
 
@@ -218,7 +324,12 @@ enum PhotoLibrary {
   }
 
   static func fetchCount(for mode: ReviewMode) -> Int {
+    fetchCounts(for: mode, reviewMemory: .never).total
+  }
+
+  static func fetchCounts(for mode: ReviewMode, reviewMemory: ReviewMemoryOption) -> ReviewModeCounts {
     let options = PHFetchOptions()
+    let reviewedIdentifiers = PhotoReviewHistory.reviewedIdentifiers(for: mode, memoryOption: reviewMemory)
     switch mode {
     case .today:
       let calendar = Calendar.current
@@ -251,16 +362,16 @@ enum PhotoLibrary {
         PHAssetMediaSubtype.videoScreenRecording.rawValue
       )
     case .largePhotos:
-      break
+      return fetchLargePhotoCounts(excluding: reviewedIdentifiers)
     case .livePhotos:
       options.predicate = NSPredicate(
         format: "(mediaSubtype & %d) != 0",
         PHAssetMediaSubtype.photoLive.rawValue
       )
     case .bursts:
-      return fetchBurstAssetCount()
+      return fetchBurstAssetCounts(excluding: reviewedIdentifiers)
     case .recentlyEdited:
-      options.predicate = NSPredicate(format: "modificationDate != nil")
+      return fetchRecentlyEditedAssetCounts(excluding: reviewedIdentifiers)
     case .oldFavorites:
       let cutoff = Calendar.current.date(byAdding: .year, value: -1, to: Date()) ?? Date()
       options.predicate = NSPredicate(
@@ -272,7 +383,8 @@ enum PhotoLibrary {
     case .random:
       break
     }
-    return PHAsset.fetchAssets(with: mode.reviewsVideos ? .video : .image, options: options).count
+    let result = PHAsset.fetchAssets(with: mode.reviewsVideos ? .video : .image, options: options)
+    return counts(from: result, excluding: reviewedIdentifiers)
   }
 
   static func fetchSimilarPhotoGroups(
@@ -287,6 +399,10 @@ enum PhotoLibrary {
     options.sortDescriptors = [
       NSSortDescriptor(key: "creationDate", ascending: sort == .oldest)
     ]
+    options.predicate = NSPredicate(
+      format: "(mediaSubtype & %d) == 0",
+      PHAssetMediaSubtype.photoScreenshot.rawValue
+    )
     options.fetchLimit = max(scanLimit, 1)
 
     let result = PHAsset.fetchAssets(with: .image, options: options)
@@ -586,35 +702,38 @@ enum PhotoLibrary {
     )
   }
 
-  private static func fetchAssets(options: PHFetchOptions, limit: Int) -> [PHAsset] {
+  private static func fetchAssets(
+    options: PHFetchOptions,
+    limit: Int,
+    excluding reviewedIdentifiers: Set<String> = []
+  ) -> [PHAsset] {
+    options.fetchLimit = reviewedIdentifiers.isEmpty ? limit : 0
     let result = PHAsset.fetchAssets(with: .image, options: options)
-    let count = min(result.count, limit)
-    guard count > 0 else { return [] }
-
-    var assets: [PHAsset] = []
-    assets.reserveCapacity(count)
-    for index in 0..<count {
-      assets.append(result.object(at: index))
-    }
-    return assets
+    return assets(from: result, limit: limit, excluding: reviewedIdentifiers)
   }
 
-  private static func fetchRandomAssets(options: PHFetchOptions, limit: Int) -> [PHAsset] {
+  private static func fetchRandomAssets(
+    options: PHFetchOptions,
+    limit: Int,
+    excluding reviewedIdentifiers: Set<String> = []
+  ) -> [PHAsset] {
+    options.fetchLimit = 0
     let result = PHAsset.fetchAssets(with: .image, options: options)
-    let total = result.count
-    guard total > 0 else { return [] }
-
-    let target = min(limit, total)
-    var indices = Set<Int>()
-    while indices.count < target {
-      indices.insert(Int.random(in: 0..<total))
-    }
-
-    return indices.shuffled().map { result.object(at: $0) }
+    return randomAssets(from: result, limit: limit, excluding: reviewedIdentifiers)
   }
 
-  private static func fetchLargePhotoAssets(options: PHFetchOptions, limit: Int) -> [PHAsset] {
-    options.sortDescriptors = nil
+  private static func fetchLargePhotoAssets(
+    options: PHFetchOptions,
+    limit: Int,
+    excluding reviewedIdentifiers: Set<String> = []
+  ) -> [PHAsset] {
+    options.predicate = NSPredicate(
+      format: "(mediaSubtype & %d) == 0",
+      PHAssetMediaSubtype.photoScreenshot.rawValue
+    )
+    options.sortDescriptors = [
+      NSSortDescriptor(key: "creationDate", ascending: false)
+    ]
     let result = PHAsset.fetchAssets(with: .image, options: options)
     guard result.count > 0 else { return [] }
 
@@ -633,11 +752,14 @@ enum PhotoLibrary {
       return lhsPixels > rhsPixels
     }
 
-    let candidateCount = min(assets.count, max(limit * 8, 200))
     var assetsWithBytes: [(asset: PHAsset, bytes: Int)] = []
-    assetsWithBytes.reserveCapacity(candidateCount)
-    for asset in assets.prefix(candidateCount) {
-      assetsWithBytes.append((asset: asset, bytes: estimatedBytes(for: asset)))
+    assetsWithBytes.reserveCapacity(assets.count)
+    for asset in assets {
+      let bytes = estimatedBytes(for: asset)
+      if !reviewedIdentifiers.contains(asset.localIdentifier),
+         isLargePhoto(asset, estimatedBytes: bytes) {
+        assetsWithBytes.append((asset: asset, bytes: bytes))
+      }
     }
 
     assetsWithBytes.sort { lhs, rhs in
@@ -655,7 +777,97 @@ enum PhotoLibrary {
     return Array(assetsWithBytes.prefix(limit).map(\.asset))
   }
 
-  private static func fetchBurstAssets(limit: Int) -> [PHAsset] {
+  private static func fetchLargePhotoCount() -> Int {
+    fetchLargePhotoCounts(excluding: []).total
+  }
+
+  private static func fetchLargePhotoCounts(excluding reviewedIdentifiers: Set<String>) -> ReviewModeCounts {
+    let options = PHFetchOptions()
+    options.predicate = NSPredicate(
+      format: "(mediaSubtype & %d) == 0",
+      PHAssetMediaSubtype.photoScreenshot.rawValue
+    )
+    let result = PHAsset.fetchAssets(with: .image, options: options)
+    guard result.count > 0 else { return ReviewModeCounts(total: 0, notReviewed: 0) }
+
+    var count = 0
+    var notReviewedCount = 0
+    for index in 0..<result.count {
+      let asset = result.object(at: index)
+      if isLargePhoto(asset, estimatedBytes: estimatedBytes(for: asset)) {
+        count += 1
+        if !reviewedIdentifiers.contains(asset.localIdentifier) {
+          notReviewedCount += 1
+        }
+      }
+    }
+    return ReviewModeCounts(total: count, notReviewed: notReviewedCount)
+  }
+
+  private static func isLargePhoto(_ asset: PHAsset, estimatedBytes bytes: Int) -> Bool {
+    guard !asset.mediaSubtypes.contains(.photoScreenshot) else { return false }
+    let pixels = asset.pixelWidth * asset.pixelHeight
+    return bytes >= largePhotoMinimumBytes || pixels >= largePhotoMinimumPixels
+  }
+
+  private static func fetchRecentlyEditedAssets(
+    limit: Int,
+    excluding reviewedIdentifiers: Set<String> = []
+  ) -> [PHAsset] {
+    let options = PHFetchOptions()
+    options.predicate = NSPredicate(format: "modificationDate != nil")
+    options.sortDescriptors = [NSSortDescriptor(key: "modificationDate", ascending: false)]
+    let result = PHAsset.fetchAssets(with: .image, options: options)
+    guard result.count > 0 else { return [] }
+
+    var assets: [PHAsset] = []
+    assets.reserveCapacity(min(result.count, limit))
+    for index in 0..<result.count {
+      let asset = result.object(at: index)
+      guard !reviewedIdentifiers.contains(asset.localIdentifier),
+            isEditedPhoto(asset) else { continue }
+      assets.append(asset)
+      if assets.count >= limit {
+        break
+      }
+    }
+    return assets
+  }
+
+  private static func fetchRecentlyEditedAssetCount() -> Int {
+    fetchRecentlyEditedAssetCounts(excluding: []).total
+  }
+
+  private static func fetchRecentlyEditedAssetCounts(excluding reviewedIdentifiers: Set<String>) -> ReviewModeCounts {
+    let options = PHFetchOptions()
+    options.predicate = NSPredicate(format: "modificationDate != nil")
+    let result = PHAsset.fetchAssets(with: .image, options: options)
+    guard result.count > 0 else { return ReviewModeCounts(total: 0, notReviewed: 0) }
+
+    var count = 0
+    var notReviewedCount = 0
+    for index in 0..<result.count {
+      let asset = result.object(at: index)
+      if isEditedPhoto(asset) {
+        count += 1
+        if !reviewedIdentifiers.contains(asset.localIdentifier) {
+          notReviewedCount += 1
+        }
+      }
+    }
+    return ReviewModeCounts(total: count, notReviewed: notReviewedCount)
+  }
+
+  private static func isEditedPhoto(_ asset: PHAsset) -> Bool {
+    PHAssetResource.assetResources(for: asset).contains { resource in
+      resource.type == .adjustmentData || resource.type == .adjustmentBasePhoto
+    }
+  }
+
+  private static func fetchBurstAssets(
+    limit: Int,
+    excluding reviewedIdentifiers: Set<String> = []
+  ) -> [PHAsset] {
     let collections = PHAssetCollection.fetchAssetCollections(
       with: .smartAlbum,
       subtype: .smartAlbumBursts,
@@ -665,45 +877,43 @@ enum PhotoLibrary {
 
     let options = PHFetchOptions()
     options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-    options.fetchLimit = limit
+    options.fetchLimit = reviewedIdentifiers.isEmpty ? limit : 0
     let result = PHAsset.fetchAssets(in: collection, options: options)
-    let count = min(result.count, limit)
-    guard count > 0 else { return [] }
-
-    var assets: [PHAsset] = []
-    assets.reserveCapacity(count)
-    for index in 0..<count {
-      assets.append(result.object(at: index))
-    }
-    return assets
+    return assets(from: result, limit: limit, excluding: reviewedIdentifiers)
   }
 
   private static func fetchBurstAssetCount() -> Int {
+    fetchBurstAssetCounts(excluding: []).total
+  }
+
+  private static func fetchBurstAssetCounts(excluding reviewedIdentifiers: Set<String>) -> ReviewModeCounts {
     let collections = PHAssetCollection.fetchAssetCollections(
       with: .smartAlbum,
       subtype: .smartAlbumBursts,
       options: nil
     )
-    guard let collection = collections.firstObject else { return 0 }
-    return PHAsset.fetchAssets(in: collection, options: nil).count
+    guard let collection = collections.firstObject else {
+      return ReviewModeCounts(total: 0, notReviewed: 0)
+    }
+    let result = PHAsset.fetchAssets(in: collection, options: nil)
+    return counts(from: result, excluding: reviewedIdentifiers)
   }
 
   private static func fetchScreenshotAssets(
     options: PHFetchOptions,
     sort: ScreenshotSortOption,
-    limit: Int
+    limit: Int,
+    excluding reviewedIdentifiers: Set<String> = []
   ) -> [PHAsset] {
     switch sort {
     case .recent:
       options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-      options.fetchLimit = limit
-      return fetchAssets(options: options, limit: limit)
+      return fetchAssets(options: options, limit: limit, excluding: reviewedIdentifiers)
     case .oldest:
       options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
-      options.fetchLimit = limit
-      return fetchAssets(options: options, limit: limit)
+      return fetchAssets(options: options, limit: limit, excluding: reviewedIdentifiers)
     case .random:
-      return fetchRandomAssets(options: options, limit: limit)
+      return fetchRandomAssets(options: options, limit: limit, excluding: reviewedIdentifiers)
     case .largest, .smallest:
       options.sortDescriptors = nil
       let result = PHAsset.fetchAssets(with: .image, options: options)
@@ -713,6 +923,7 @@ enum PhotoLibrary {
       assetsWithBytes.reserveCapacity(result.count)
       for index in 0..<result.count {
         let asset = result.object(at: index)
+        guard !reviewedIdentifiers.contains(asset.localIdentifier) else { continue }
         assetsWithBytes.append((asset: asset, bytes: estimatedBytes(for: asset)))
       }
 
@@ -739,19 +950,18 @@ enum PhotoLibrary {
   private static func fetchVideoAssets(
     options: PHFetchOptions,
     sort: VideoSortOption,
-    limit: Int
+    limit: Int,
+    excluding reviewedIdentifiers: Set<String> = []
   ) -> [PHAsset] {
     switch sort {
     case .recent:
       options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-      options.fetchLimit = limit
-      return fetchAssets(mediaType: .video, options: options, limit: limit)
+      return fetchAssets(mediaType: .video, options: options, limit: limit, excluding: reviewedIdentifiers)
     case .oldest:
       options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
-      options.fetchLimit = limit
-      return fetchAssets(mediaType: .video, options: options, limit: limit)
+      return fetchAssets(mediaType: .video, options: options, limit: limit, excluding: reviewedIdentifiers)
     case .random:
-      return fetchRandomAssets(mediaType: .video, options: options, limit: limit)
+      return fetchRandomAssets(mediaType: .video, options: options, limit: limit, excluding: reviewedIdentifiers)
     case .largest, .shortest, .longest:
       options.sortDescriptors = nil
       let result = PHAsset.fetchAssets(with: .video, options: options)
@@ -760,7 +970,9 @@ enum PhotoLibrary {
       var assets: [PHAsset] = []
       assets.reserveCapacity(result.count)
       for index in 0..<result.count {
-        assets.append(result.object(at: index))
+        let asset = result.object(at: index)
+        guard !reviewedIdentifiers.contains(asset.localIdentifier) else { continue }
+        assets.append(asset)
       }
 
       assets.sort { lhs, rhs in
@@ -794,36 +1006,83 @@ enum PhotoLibrary {
   private static func fetchAssets(
     mediaType: PHAssetMediaType,
     options: PHFetchOptions,
-    limit: Int
+    limit: Int,
+    excluding reviewedIdentifiers: Set<String> = []
   ) -> [PHAsset] {
+    options.fetchLimit = reviewedIdentifiers.isEmpty ? limit : 0
     let result = PHAsset.fetchAssets(with: mediaType, options: options)
-    let count = min(result.count, limit)
-    guard count > 0 else { return [] }
-
-    var assets: [PHAsset] = []
-    assets.reserveCapacity(count)
-    for index in 0..<count {
-      assets.append(result.object(at: index))
-    }
-    return assets
+    return assets(from: result, limit: limit, excluding: reviewedIdentifiers)
   }
 
   private static func fetchRandomAssets(
     mediaType: PHAssetMediaType,
     options: PHFetchOptions,
-    limit: Int
+    limit: Int,
+    excluding reviewedIdentifiers: Set<String> = []
   ) -> [PHAsset] {
+    options.fetchLimit = 0
     let result = PHAsset.fetchAssets(with: mediaType, options: options)
+    return randomAssets(from: result, limit: limit, excluding: reviewedIdentifiers)
+  }
+
+  private static func assets(
+    from result: PHFetchResult<PHAsset>,
+    limit: Int,
+    excluding reviewedIdentifiers: Set<String>
+  ) -> [PHAsset] {
+    guard result.count > 0, limit > 0 else { return [] }
+
+    var assets: [PHAsset] = []
+    assets.reserveCapacity(min(result.count, limit))
+    for index in 0..<result.count {
+      let asset = result.object(at: index)
+      guard !reviewedIdentifiers.contains(asset.localIdentifier) else { continue }
+      assets.append(asset)
+      if assets.count >= limit {
+        break
+      }
+    }
+    return assets
+  }
+
+  private static func randomAssets(
+    from result: PHFetchResult<PHAsset>,
+    limit: Int,
+    excluding reviewedIdentifiers: Set<String>
+  ) -> [PHAsset] {
     let total = result.count
     guard total > 0 else { return [] }
 
-    let target = min(limit, total)
-    var indices = Set<Int>()
-    while indices.count < target {
-      indices.insert(Int.random(in: 0..<total))
+    var eligibleAssets: [PHAsset] = []
+    eligibleAssets.reserveCapacity(total)
+    for index in 0..<total {
+      let asset = result.object(at: index)
+      guard !reviewedIdentifiers.contains(asset.localIdentifier) else { continue }
+      eligibleAssets.append(asset)
     }
 
-    return indices.shuffled().map { result.object(at: $0) }
+    guard !eligibleAssets.isEmpty else { return [] }
+    eligibleAssets.shuffle()
+    return Array(eligibleAssets.prefix(limit))
+  }
+
+  private static func counts(
+    from result: PHFetchResult<PHAsset>,
+    excluding reviewedIdentifiers: Set<String>
+  ) -> ReviewModeCounts {
+    let total = result.count
+    guard !reviewedIdentifiers.isEmpty else {
+      return ReviewModeCounts(total: total, notReviewed: total)
+    }
+
+    var notReviewedCount = 0
+    for index in 0..<result.count {
+      let asset = result.object(at: index)
+      if !reviewedIdentifiers.contains(asset.localIdentifier) {
+        notReviewedCount += 1
+      }
+    }
+    return ReviewModeCounts(total: total, notReviewed: notReviewedCount)
   }
 
   private struct SimilarPhotoFingerprint {

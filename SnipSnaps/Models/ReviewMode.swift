@@ -75,7 +75,7 @@ enum ReviewMode: String, CaseIterable, Identifiable {
     case .oldFavorites:
       return "Revisit favorites from past years"
     case .similar:
-      return "Review duplicate-looking groups"
+      return "Review duplicate-looking photos"
     }
   }
 
@@ -114,8 +114,85 @@ enum ReviewMode: String, CaseIterable, Identifiable {
     self == .videos || self == .screenRecordings
   }
 
+  var usesScreenshotSort: Bool {
+    self == .screenshots || self == .oldScreenshots
+  }
+
+  var usesVideoSort: Bool {
+    self == .videos || self == .screenRecordings
+  }
+
   private var monthDayText: String {
     Date.now.formatted(.dateTime.month(.abbreviated).day())
+  }
+}
+
+enum ReviewMemoryOption: String, CaseIterable, Identifiable {
+  case never
+  case session
+  case oneWeek
+  case thirtyDays
+  case oneYear
+  case fiveYears
+  case forever
+
+  var id: String { rawValue }
+
+  var title: String {
+    switch self {
+    case .never:
+      return "Never"
+    case .session:
+      return "This App Session"
+    case .oneWeek:
+      return "1 Week"
+    case .thirtyDays:
+      return "30 Days"
+    case .oneYear:
+      return "1 Year"
+    case .fiveYears:
+      return "5 Years"
+    case .forever:
+      return "Forever"
+    }
+  }
+
+  var subtitle: String {
+    switch self {
+    case .never:
+      return "Do not skip reviewed items"
+    case .session:
+      return "Skip reviewed items until the app closes"
+    case .oneWeek:
+      return "Skip reviewed items for 1 week"
+    case .thirtyDays:
+      return "Skip reviewed items for 30 days"
+    case .oneYear:
+      return "Skip reviewed items for 1 year"
+    case .fiveYears:
+      return "Skip reviewed items for 5 years"
+    case .forever:
+      return "Always skip reviewed items"
+    }
+  }
+
+  var expirationInterval: TimeInterval? {
+    switch self {
+    case .never:
+      return 0
+    case .session:
+      return 0
+    case .oneWeek:
+      return 7 * 24 * 60 * 60
+    case .thirtyDays:
+      return 30 * 24 * 60 * 60
+    case .oneYear:
+      return 365 * 24 * 60 * 60
+    case .fiveYears:
+      return 5 * 365 * 24 * 60 * 60
+    case .forever:
+      return nil
+    }
   }
 }
 
