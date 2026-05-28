@@ -111,10 +111,12 @@ struct HomeView: View {
       .navigationDestination(item: $selectedMode) { mode in
         destination(for: mode)
       }
-      .onAppear(perform: refresh)
-      .onChange(of: selectedMode) { _, newValue in
-        if newValue == nil {
-          refresh()
+      .onAppear {
+        refresh()
+      }
+      .onChange(of: selectedMode) { oldValue, newValue in
+        if newValue == nil, let reviewedMode = oldValue {
+          refresh(modes: countRefreshModes(afterReviewing: reviewedMode))
         }
       }
       .onChange(of: reviewMemoryOptionRawValue) { _, _ in
@@ -256,15 +258,11 @@ struct HomeView: View {
   }
 
   private var updatingCountsIndicator: some View {
-    HStack(spacing: 6) {
-      ProgressView()
-        .controlSize(.small)
-      Text("Updating")
-        .font(.caption.weight(.semibold))
-    }
-    .foregroundStyle(.secondary)
-    .accessibilityElement(children: .combine)
-    .accessibilityLabel("Updating counts")
+    ProgressView()
+      .controlSize(.small)
+      .frame(width: 32, height: 32)
+      .foregroundStyle(.secondary)
+      .accessibilityLabel("Updating counts")
   }
 
   private var accessCard: some View {
@@ -304,7 +302,7 @@ struct HomeView: View {
     }
   }
 
-  private func refresh() {
+  private func refresh(modes modesToRefresh: [ReviewMode]? = nil) {
     authStatus = PhotoLibrary.authorizationStatus()
     let refreshID = UUID()
     countRefreshID = refreshID
@@ -313,22 +311,44 @@ struct HomeView: View {
       isRefreshingCounts = false
       return
     }
+    let modesToRefresh = modesToRefresh ?? allCountModes
+    guard !modesToRefresh.isEmpty else {
+      isRefreshingCounts = false
+      return
+    }
     isRefreshingCounts = true
     let reviewMemoryOption = reviewMemoryOption
     Task.detached(priority: .userInitiated) {
       var next: [ReviewMode: ReviewModeCounts] = [:]
-      for mode in ReviewMode.allCases {
-        next[mode] = mode == .similar
-          ? ReviewModeCounts(total: 0, notReviewed: 0)
-          : PhotoLibrary.fetchCounts(for: mode, reviewMemory: reviewMemoryOption)
+      for mode in modesToRefresh {
+        next[mode] = PhotoLibrary.fetchCounts(for: mode, reviewMemory: reviewMemoryOption)
       }
       let refreshedCounts = next
       await MainActor.run {
         guard countRefreshID == refreshID else { return }
-        counts = refreshedCounts
+        counts.merge(refreshedCounts) { _, new in new }
         isRefreshingCounts = false
       }
     }
+  }
+
+  private var allCountModes: [ReviewMode] {
+    ReviewMode.allCases.filter { $0 != .similar }
+  }
+
+  private var imageCountModes: [ReviewMode] {
+    allCountModes.filter { !$0.reviewsVideos }
+  }
+
+  private var videoCountModes: [ReviewMode] {
+    allCountModes.filter(\.reviewsVideos)
+  }
+
+  private func countRefreshModes(afterReviewing mode: ReviewMode) -> [ReviewMode] {
+    if mode.reviewsVideos {
+      return videoCountModes
+    }
+    return imageCountModes
   }
 }
 

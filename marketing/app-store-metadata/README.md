@@ -10,7 +10,7 @@ Prepared non-image release metadata for App Store Connect.
 - Secondary category: Utilities
 - Bundle ID: com.kyter.SnipSnaps
 - Version: 1.0.2
-- Build: 34
+- Build: 35
 - Content rights: The app does not contain, show, or access third-party content outside the user's own photo library.
 - Encryption: Uses no non-exempt encryption (`ITSAppUsesNonExemptEncryption` is false).
 
@@ -50,6 +50,7 @@ photo cleaner,delete photos,storage,duplicates,screenshots,camera roll,photo org
 • Added review memory controls with not-reviewed and total counts for review modes.
 • Added a Home indicator while review counts are updating in the background.
 • Kept local review history and image caches bounded so app storage and memory stay controlled over time.
+• Refined Home count updating with a quieter indicator and more targeted refreshes.
 
 ## Review Notes
 
