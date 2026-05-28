@@ -295,6 +295,16 @@ enum PhotoLibrary {
     cache.totalCostLimit = 64 * 1024 * 1024
     return cache
   }()
+  nonisolated(unsafe) private static let estimatedBytesCache: NSCache<NSString, NSNumber> = {
+    let cache = NSCache<NSString, NSNumber>()
+    cache.countLimit = 5_000
+    return cache
+  }()
+  nonisolated(unsafe) private static let editedPhotoCache: NSCache<NSString, NSNumber> = {
+    let cache = NSCache<NSString, NSNumber>()
+    cache.countLimit = 5_000
+    return cache
+  }()
 
   static func authorizationStatus() -> PHAuthorizationStatus {
     PHPhotoLibrary.authorizationStatus(for: .readWrite)
@@ -661,6 +671,11 @@ enum PhotoLibrary {
   }
 
   static func estimatedBytes(for asset: PHAsset) -> Int {
+    let cacheKey = metadataCacheKey(for: asset)
+    if let cachedBytes = estimatedBytesCache.object(forKey: cacheKey) {
+      return cachedBytes.intValue
+    }
+
     let resources = PHAssetResource.assetResources(for: asset)
     var total = 0
     for resource in resources {
@@ -668,6 +683,7 @@ enum PhotoLibrary {
         total += fileSize
       }
     }
+    estimatedBytesCache.setObject(NSNumber(value: total), forKey: cacheKey)
     return total
   }
 
@@ -706,6 +722,8 @@ enum PhotoLibrary {
 
   static func clearMemoryCaches() {
     imageCache.removeAllObjects()
+    estimatedBytesCache.removeAllObjects()
+    editedPhotoCache.removeAllObjects()
     imageManager.stopCachingImagesForAllAssets()
   }
 
@@ -767,6 +785,11 @@ enum PhotoLibrary {
     return max(representation.pixelsWide * representation.pixelsHigh * 4, 1)
   }
   #endif
+
+  private static func metadataCacheKey(for asset: PHAsset) -> NSString {
+    let modificationTimestamp = Int((asset.modificationDate ?? .distantPast).timeIntervalSince1970.rounded())
+    return NSString(string: "\(asset.localIdentifier)-\(modificationTimestamp)")
+  }
 
   static func scaledSize(for size: CGSize, scale: CGFloat) -> CGSize {
     return CGSize(width: size.width * scale, height: size.height * scale)
@@ -951,9 +974,16 @@ enum PhotoLibrary {
   }
 
   private static func isEditedPhoto(_ asset: PHAsset) -> Bool {
-    PHAssetResource.assetResources(for: asset).contains { resource in
+    let cacheKey = metadataCacheKey(for: asset)
+    if let cachedValue = editedPhotoCache.object(forKey: cacheKey) {
+      return cachedValue.boolValue
+    }
+
+    let isEdited = PHAssetResource.assetResources(for: asset).contains { resource in
       resource.type == .adjustmentData || resource.type == .adjustmentBasePhoto
     }
+    editedPhotoCache.setObject(NSNumber(value: isEdited), forKey: cacheKey)
+    return isEdited
   }
 
   private static func fetchBurstAssets(

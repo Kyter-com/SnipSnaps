@@ -15,12 +15,84 @@ private struct ReviewModeSection: Identifiable {
   var id: String { title }
 }
 
+private struct CachedReviewModeCounts: Codable {
+  let total: Int
+  let notReviewed: Int
+  let updatedAt: TimeInterval
+
+  var counts: ReviewModeCounts {
+    ReviewModeCounts(total: total, notReviewed: notReviewed)
+  }
+}
+
+private enum HomeCountCache {
+  private static let keyPrefix = "homeReviewModeCounts"
+
+  static func load(memoryOptionRawValue: String) -> [ReviewMode: ReviewModeCounts] {
+    let key = key(for: memoryOptionRawValue)
+    guard let data = UserDefaults.standard.data(forKey: key),
+          let cached = try? JSONDecoder().decode([String: CachedReviewModeCounts].self, from: data) else {
+      return [:]
+    }
+
+    return Dictionary(uniqueKeysWithValues: cached.compactMap { rawValue, entry in
+      guard let mode = ReviewMode(rawValue: rawValue) else { return nil }
+      return (mode, entry.counts)
+    })
+  }
+
+  static func hasFreshCount(
+    for mode: ReviewMode,
+    memoryOptionRawValue: String,
+    maxAge: TimeInterval
+  ) -> Bool {
+    let key = key(for: memoryOptionRawValue)
+    guard let data = UserDefaults.standard.data(forKey: key),
+          let cached = try? JSONDecoder().decode([String: CachedReviewModeCounts].self, from: data),
+          let entry = cached[mode.rawValue] else {
+      return false
+    }
+
+    return Date().timeIntervalSince1970 - entry.updatedAt <= maxAge
+  }
+
+  static func store(_ counts: [ReviewMode: ReviewModeCounts], memoryOptionRawValue: String) {
+    let key = key(for: memoryOptionRawValue)
+    let existing: [String: CachedReviewModeCounts]
+    if let data = UserDefaults.standard.data(forKey: key),
+       let cached = try? JSONDecoder().decode([String: CachedReviewModeCounts].self, from: data) {
+      existing = cached
+    } else {
+      existing = [:]
+    }
+
+    let now = Date().timeIntervalSince1970
+    let nextCounts = counts.reduce(into: existing) { result, item in
+      result[item.key.rawValue] = CachedReviewModeCounts(
+        total: item.value.total,
+        notReviewed: item.value.notReviewed,
+        updatedAt: now
+      )
+    }
+
+    if let data = try? JSONEncoder().encode(nextCounts) {
+      UserDefaults.standard.set(data, forKey: key)
+    }
+  }
+
+  private static func key(for memoryOptionRawValue: String) -> String {
+    "\(keyPrefix).\(memoryOptionRawValue)"
+  }
+}
+
 struct HomeView: View {
   @State private var authStatus = PhotoLibrary.authorizationStatus()
   @State private var counts: [ReviewMode: ReviewModeCounts] = [:]
   @State private var selectedMode: ReviewMode?
   @State private var isRefreshingCounts = false
   @State private var countRefreshID = UUID()
+  @State private var hasLoadedInitialCounts = false
+  @State private var reviewedIdentifierCountsAtReviewStart: [ReviewMode: Int] = [:]
   @AppStorage("reviewLimit") private var reviewLimit: Int = 20
   @AppStorage("screenshotSortOption") private var screenshotSortOptionRawValue: String = ScreenshotSortOption.recent.rawValue
   @AppStorage("videoSortOption") private var videoSortOptionRawValue: String = VideoSortOption.largest.rawValue
@@ -112,15 +184,17 @@ struct HomeView: View {
         destination(for: mode)
       }
       .onAppear {
-        refresh()
+        loadInitialCountsIfNeeded()
       }
       .onChange(of: selectedMode) { oldValue, newValue in
         if newValue == nil, let reviewedMode = oldValue {
+          applyReviewedCountDelta(for: reviewedMode)
           refresh(modes: countRefreshModes(afterReviewing: reviewedMode))
         }
       }
       .onChange(of: reviewMemoryOptionRawValue) { _, _ in
-        refresh()
+        loadCachedCounts()
+        refreshForCurrentMemoryOption()
       }
     }
   }
@@ -137,11 +211,12 @@ struct HomeView: View {
   private func reviewModeCard(for mode: ReviewMode) -> some View {
     ZStack(alignment: .bottomLeading) {
       Button {
+        recordReviewStart(for: mode)
         selectedMode = mode
       } label: {
         ActionCard(
           mode: mode,
-          counts: counts[mode] ?? ReviewModeCounts(total: 0, notReviewed: 0),
+          counts: counts[mode],
           isDisabled: !canAccessPhotos,
           reviewMemory: reviewMemoryOption,
           reservesAccessorySpace: mode.usesScreenshotSort || mode.usesVideoSort || mode == .similar
@@ -275,7 +350,8 @@ struct HomeView: View {
       Button("Enable Photo Access") {
         Task {
           authStatus = await PhotoLibrary.requestAuthorization()
-          refresh()
+          loadCachedCounts()
+          refreshForCurrentMemoryOption()
         }
       }
       .buttonStyle(.borderedProminent)
@@ -318,12 +394,14 @@ struct HomeView: View {
     }
     isRefreshingCounts = true
     let reviewMemoryOption = reviewMemoryOption
+    let reviewMemoryOptionRawValue = reviewMemoryOptionRawValue
     Task.detached(priority: .userInitiated) {
       var next: [ReviewMode: ReviewModeCounts] = [:]
       for mode in modesToRefresh {
         next[mode] = PhotoLibrary.fetchCounts(for: mode, reviewMemory: reviewMemoryOption)
       }
       let refreshedCounts = next
+      HomeCountCache.store(refreshedCounts, memoryOptionRawValue: reviewMemoryOptionRawValue)
       await MainActor.run {
         guard countRefreshID == refreshID else { return }
         counts.merge(refreshedCounts) { _, new in new }
@@ -332,12 +410,114 @@ struct HomeView: View {
     }
   }
 
+  private func loadInitialCountsIfNeeded() {
+    guard !hasLoadedInitialCounts else { return }
+    hasLoadedInitialCounts = true
+    loadCachedCounts()
+    refreshForCurrentMemoryOption()
+  }
+
+  private func loadCachedCounts() {
+    counts = HomeCountCache.load(memoryOptionRawValue: reviewMemoryOptionRawValue)
+  }
+
+  private func refreshForCurrentMemoryOption() {
+    let expensiveModesToRefresh = expensiveCountModes.filter {
+      !HomeCountCache.hasFreshCount(
+        for: $0,
+        memoryOptionRawValue: reviewMemoryOptionRawValue,
+        maxAge: 12 * 60 * 60
+      )
+    }
+    refresh(modes: fastCountModes, deferredModes: expensiveModesToRefresh)
+  }
+
+  private func recordReviewStart(for mode: ReviewMode) {
+    guard PhotoReviewHistory.supportsSkipping(for: mode), reviewMemoryOption != .never else { return }
+    reviewedIdentifierCountsAtReviewStart[mode] = PhotoReviewHistory.reviewedIdentifiers(
+      for: mode,
+      memoryOption: reviewMemoryOption
+    ).count
+  }
+
+  private func applyReviewedCountDelta(for mode: ReviewMode) {
+    guard PhotoReviewHistory.supportsSkipping(for: mode), reviewMemoryOption != .never else { return }
+    guard let beforeCount = reviewedIdentifierCountsAtReviewStart.removeValue(forKey: mode) else { return }
+    let afterCount = PhotoReviewHistory.reviewedIdentifiers(for: mode, memoryOption: reviewMemoryOption).count
+    let reviewedDelta = max(afterCount - beforeCount, 0)
+    guard reviewedDelta > 0, let currentCounts = counts[mode] else { return }
+
+    let adjustedCounts = ReviewModeCounts(
+      total: currentCounts.total,
+      notReviewed: max(currentCounts.notReviewed - reviewedDelta, 0)
+    )
+    counts[mode] = adjustedCounts
+    HomeCountCache.store([mode: adjustedCounts], memoryOptionRawValue: reviewMemoryOptionRawValue)
+  }
+
+  private func refresh(
+    modes modesToRefresh: [ReviewMode],
+    deferredModes: [ReviewMode]
+  ) {
+    authStatus = PhotoLibrary.authorizationStatus()
+    let refreshID = UUID()
+    countRefreshID = refreshID
+    guard canAccessPhotos else {
+      counts = [:]
+      isRefreshingCounts = false
+      return
+    }
+    guard !modesToRefresh.isEmpty || !deferredModes.isEmpty else {
+      isRefreshingCounts = false
+      return
+    }
+
+    isRefreshingCounts = !modesToRefresh.isEmpty
+    let reviewMemoryOption = reviewMemoryOption
+    let reviewMemoryOptionRawValue = reviewMemoryOptionRawValue
+    Task.detached(priority: .userInitiated) {
+      if !modesToRefresh.isEmpty {
+        let refreshedCounts = Self.fetchCounts(for: modesToRefresh, reviewMemoryOption: reviewMemoryOption)
+        HomeCountCache.store(refreshedCounts, memoryOptionRawValue: reviewMemoryOptionRawValue)
+        await MainActor.run {
+          guard countRefreshID == refreshID else { return }
+          counts.merge(refreshedCounts) { _, new in new }
+          isRefreshingCounts = false
+        }
+      }
+
+      guard !deferredModes.isEmpty, !Task.isCancelled else { return }
+      try? await Task.sleep(for: .seconds(2))
+      let deferredCounts = Self.fetchCounts(for: deferredModes, reviewMemoryOption: reviewMemoryOption)
+      HomeCountCache.store(deferredCounts, memoryOptionRawValue: reviewMemoryOptionRawValue)
+      await MainActor.run {
+        guard countRefreshID == refreshID else { return }
+        counts.merge(deferredCounts) { _, new in new }
+      }
+    }
+  }
+
+  nonisolated private static func fetchCounts(
+    for modes: [ReviewMode],
+    reviewMemoryOption: ReviewMemoryOption
+  ) -> [ReviewMode: ReviewModeCounts] {
+    var next: [ReviewMode: ReviewModeCounts] = [:]
+    for mode in modes {
+      next[mode] = PhotoLibrary.fetchCounts(for: mode, reviewMemory: reviewMemoryOption)
+    }
+    return next
+  }
+
   private var allCountModes: [ReviewMode] {
     ReviewMode.allCases.filter { $0 != .similar }
   }
 
-  private var imageCountModes: [ReviewMode] {
-    allCountModes.filter { !$0.reviewsVideos }
+  private var fastCountModes: [ReviewMode] {
+    allCountModes.filter { !expensiveCountModes.contains($0) }
+  }
+
+  private var expensiveCountModes: [ReviewMode] {
+    [.largePhotos, .recentlyEdited]
   }
 
   private var videoCountModes: [ReviewMode] {
@@ -345,16 +525,38 @@ struct HomeView: View {
   }
 
   private func countRefreshModes(afterReviewing mode: ReviewMode) -> [ReviewMode] {
-    if mode.reviewsVideos {
+    switch mode {
+    case .today:
+      return [.today, .screenshots, .random]
+    case .onThisDay:
+      return [.onThisDay, .random]
+    case .random:
+      return [.random]
+    case .screenshots:
+      return [.today, .screenshots, .oldScreenshots, .random]
+    case .oldScreenshots:
+      return [.screenshots, .oldScreenshots, .random]
+    case .videos, .screenRecordings:
       return videoCountModes
+    case .largePhotos:
+      return counts[.largePhotos] == nil ? [.largePhotos, .today, .random] : [.today, .random]
+    case .livePhotos:
+      return [.today, .random, .livePhotos]
+    case .bursts:
+      return [.today, .random, .bursts]
+    case .recentlyEdited:
+      return counts[.recentlyEdited] == nil ? [.today, .random, .recentlyEdited] : [.today, .random]
+    case .oldFavorites:
+      return [.random, .oldFavorites]
+    case .similar:
+      return []
     }
-    return imageCountModes
   }
 }
 
 private struct ActionCard: View {
   let mode: ReviewMode
-  let counts: ReviewModeCounts
+  let counts: ReviewModeCounts?
   let isDisabled: Bool
   let reviewMemory: ReviewMemoryOption
   var reservesAccessorySpace = false
@@ -403,6 +605,7 @@ private struct ActionCard: View {
     if mode == .similar {
       return "Scan"
     }
+    guard let counts else { return "..." }
     let count = PhotoReviewHistory.supportsSkipping(for: mode) && reviewMemory != .never
       ? counts.notReviewed
       : counts.total
@@ -411,6 +614,7 @@ private struct ActionCard: View {
 
   private var countSummary: String? {
     guard mode != .similar else { return nil }
+    guard let counts else { return nil }
     if PhotoReviewHistory.supportsSkipping(for: mode), reviewMemory != .never {
       return "\(counts.notReviewed) not reviewed · \(counts.total) total"
     }
