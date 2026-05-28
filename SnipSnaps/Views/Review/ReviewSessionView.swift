@@ -27,7 +27,7 @@ enum PhotoDecision {
   case delete
 }
 
-private struct CachedAssetRequest: Equatable {
+private struct CachedAssetRequest: Equatable, Hashable {
   let asset: PHAsset
   let targetSize: CGSize
   let contentMode: PHImageContentMode
@@ -35,9 +35,17 @@ private struct CachedAssetRequest: Equatable {
   static func == (lhs: CachedAssetRequest, rhs: CachedAssetRequest) -> Bool {
     lhs.asset.localIdentifier == rhs.asset.localIdentifier && lhs.targetSize == rhs.targetSize && lhs.contentMode == rhs.contentMode
   }
+
+  func hash(into hasher: inout Hasher) {
+    hasher.combine(asset.localIdentifier)
+    hasher.combine(targetSize.width)
+    hasher.combine(targetSize.height)
+    hasher.combine(contentMode.rawValue)
+  }
 }
 
 private struct ReviewPhotoDetails {
+  let estimatedBytes: Int
   let captureDateText: String
   let captureAgeText: String
   let captureDateSummaryText: String
@@ -57,9 +65,9 @@ private struct ReviewPhotoDetails {
     captureDateSummaryText = "\(captureDateText) · \(captureAgeText)"
     captureTimestampText = creationDate.map(Self.timestampFormatter.string(from:)) ?? "Unknown"
 
-    let bytes = PhotoLibrary.estimatedBytes(for: asset)
-    if bytes > 0 {
-      fileSizeText = ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+    estimatedBytes = PhotoLibrary.estimatedBytes(for: asset)
+    if estimatedBytes > 0 {
+      fileSizeText = ByteCountFormatter.string(fromByteCount: Int64(estimatedBytes), countStyle: .file)
     } else {
       fileSizeText = "Unavailable"
     }
@@ -264,20 +272,16 @@ struct ReviewSessionView: View {
     return ByteCountFormatter.string(fromByteCount: Int64(totalDeletedBytes), countStyle: .file)
   }
 
-  private var infoPanelOverlayOpacity: Double {
-    0.34 + (1 - Double(swipeProgress)) * 0.48
-  }
-
   private var shouldAutoplayVideo: Bool {
     scenePhase == .active && !showMetadataSheet && !showSummary && !isAnimatingCard
   }
 
   private var assetSingularName: String {
-    mode == .videos ? "video" : "photo"
+    mode.reviewsVideos ? "video" : "photo"
   }
 
   private var assetPluralName: String {
-    mode == .videos ? "videos" : "photos"
+    mode.reviewsVideos ? "videos" : "photos"
   }
 
   var body: some View {
@@ -392,7 +396,7 @@ struct ReviewSessionView: View {
               .fill(.ultraThinMaterial)
               .overlay {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                  .fill(AppColor.card.opacity(infoPanelOverlayOpacity))
+                  .fill(AppColor.card.opacity(0.72))
               }
           }
         }
@@ -402,7 +406,6 @@ struct ReviewSessionView: View {
       }
     }
     .animation(.interactiveSpring(response: 0.28, dampingFraction: 0.86), value: currentAsset?.localIdentifier)
-    .animation(.interactiveSpring(response: 0.24, dampingFraction: 0.9), value: swipeProgress)
   }
 
   private var cardStack: some View {
@@ -667,7 +670,7 @@ struct ReviewSessionView: View {
 
   private var emptyView: some View {
     ContentUnavailableView {
-      Label("No \(assetPluralName.capitalized) Found", systemImage: mode == .videos ? "video" : "photo.on.rectangle.angled")
+      Label("No \(assetPluralName.capitalized) Found", systemImage: mode.reviewsVideos ? "video" : "photo.on.rectangle.angled")
     } description: {
       Text("Try a different review mode, or check your photo library.")
     } actions: {
@@ -781,20 +784,23 @@ struct ReviewSessionView: View {
     guard cardSize != .zero else { return }
     let nextRequests = upcomingAssets.map { asset in
       let fittedSize = PhotoLibrary.fittedSize(for: asset, in: cardSize)
-        return CachedAssetRequest(
-          asset: asset,
-          targetSize: PhotoLibrary.imageRequestSize(for: asset, displaySize: fittedSize, scale: displayScale),
-          contentMode: .aspectFit
-        )
-      }
+      return CachedAssetRequest(
+        asset: asset,
+        targetSize: PhotoLibrary.imageRequestSize(for: asset, displaySize: fittedSize, scale: displayScale),
+        contentMode: .aspectFit
+      )
+    }
 
     guard nextRequests != cachedRequests else { return }
 
-    for request in cachedRequests {
+    let previousRequests = Set(cachedRequests)
+    let incomingRequests = Set(nextRequests)
+
+    for request in previousRequests.subtracting(incomingRequests) {
       PhotoLibrary.stopCachingAssets([request.asset], targetSize: request.targetSize, contentMode: request.contentMode)
     }
 
-    for request in nextRequests {
+    for request in incomingRequests.subtracting(previousRequests) {
       PhotoLibrary.startCachingAssets([request.asset], targetSize: request.targetSize, contentMode: request.contentMode)
     }
 
@@ -888,6 +894,15 @@ struct SimilarReviewSessionView: View {
   @State private var errorMessage = ""
   @State private var deleteInProgress = false
   @State private var deletedCount = 0
+  @State private var scanProgress = SimilarPhotoScanProgress(
+    phase: .preparing,
+    completedCount: 0,
+    totalCount: 0,
+    groupsFound: 0
+  )
+  @State private var scanTask: Task<Void, Never>?
+  @State private var similarDetailsByIdentifier: [String: ReviewPhotoDetails] = [:]
+  @State private var similarBytesByIdentifier: [String: Int] = [:]
   @AppStorage("reviewLimit") private var reviewLimit: Int = 20
   @AppStorage("similarSortOption") private var similarSortOptionRawValue: String = SimilarSortOption.recent.rawValue
   @AppStorage("totalDeletedCount") private var totalDeletedCount: Int = 0
@@ -915,7 +930,8 @@ struct SimilarReviewSessionView: View {
   }
 
   private var selectedPhotoDetails: ReviewPhotoDetails? {
-    selectedAsset.map(ReviewPhotoDetails.init)
+    guard let selectedAsset else { return nil }
+    return details(for: selectedAsset)
   }
 
   private var currentMarkedCount: Int {
@@ -945,7 +961,7 @@ struct SimilarReviewSessionView: View {
   }
 
   private var estimatedDeleteBytes: Int {
-    PhotoLibrary.estimatedBytes(for: deleteAssets)
+    estimatedBytes(for: deleteAssets)
   }
 
   private var estimatedDeleteBytesText: String {
@@ -960,7 +976,7 @@ struct SimilarReviewSessionView: View {
       ? Set(currentGroup.assets.prefix(1).map(\.localIdentifier))
       : keepAssetIdentifiers
     let markedAssets = currentGroup.assets.filter { !keepIdentifiers.contains($0.localIdentifier) }
-    let bytes = PhotoLibrary.estimatedBytes(for: markedAssets)
+    let bytes = estimatedBytes(for: markedAssets)
     guard bytes > 0 else { return "Unknown" }
     return ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
   }
@@ -992,6 +1008,7 @@ struct SimilarReviewSessionView: View {
       if !showSummary {
         ToolbarItem(placement: .topBarLeading) {
           Button {
+            cancelScan()
             dismiss()
           } label: {
             Image(systemName: "xmark")
@@ -1007,6 +1024,7 @@ struct SimilarReviewSessionView: View {
     }
     .toolbar(.hidden, for: .tabBar)
     .onAppear { loadGroups() }
+    .onDisappear { cancelScan() }
     .alert("Something went wrong", isPresented: $showError) {
       Button("OK", role: .cancel) {}
     } message: {
@@ -1039,6 +1057,10 @@ struct SimilarReviewSessionView: View {
                 RoundedRectangle(cornerRadius: 26, style: .continuous)
                   .strokeBorder(Color.white.opacity(0.28), lineWidth: 0.5)
               )
+              .overlay(alignment: .bottomLeading) {
+                comparisonFooter(for: selectedAsset)
+                  .padding(12)
+              }
               .shadow(color: AppColor.shadow.opacity(1.35), radius: 22, x: 0, y: 12)
               .transition(.opacity.combined(with: .scale(scale: 0.985)))
 
@@ -1141,6 +1163,10 @@ struct SimilarReviewSessionView: View {
                 .padding(10)
             }
           }
+          .overlay(alignment: .bottomLeading) {
+            comparisonFooter(for: asset)
+              .padding(10)
+          }
         }
         .buttonStyle(.plain)
       }
@@ -1185,8 +1211,41 @@ struct SimilarReviewSessionView: View {
     .frame(height: 80)
   }
 
+  private func comparisonFooter(for asset: PHAsset) -> some View {
+    let details = details(for: asset)
+    return VStack(alignment: .leading, spacing: 2) {
+      Text(details.resolutionText)
+      Text("\(details.fileSizeText) · \(details.captureDateText)")
+    }
+    .font(.caption2.weight(.semibold))
+    .foregroundStyle(.white)
+    .lineLimit(1)
+    .padding(.horizontal, 9)
+    .padding(.vertical, 6)
+    .background(.black.opacity(0.48), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+  }
+
   private func keepBadgeTitle(for asset: PHAsset, in group: SimilarPhotoGroup) -> String {
-    asset.localIdentifier == group.assets.first?.localIdentifier ? "Best Pick" : "Keep"
+    guard asset.localIdentifier == bestDefaultKeepAsset(in: group)?.localIdentifier else {
+      return "Keep"
+    }
+
+    if asset.isFavorite {
+      return "Favorite"
+    }
+
+    let assetPixels = asset.pixelWidth * asset.pixelHeight
+    let largestPixels = group.assets.map { $0.pixelWidth * $0.pixelHeight }.max() ?? 0
+    if assetPixels == largestPixels, largestPixels > 0 {
+      return "Highest Res"
+    }
+
+    let newestDate = group.assets.compactMap(\.creationDate).max()
+    if asset.creationDate == newestDate {
+      return "Newest"
+    }
+
+    return "Best Pick"
   }
 
   private var decisionBar: some View {
@@ -1411,16 +1470,56 @@ struct SimilarReviewSessionView: View {
 
   private var scanningView: some View {
     VStack(spacing: 14) {
-      ProgressView()
-        .controlSize(.large)
-      Text("Scanning similar photos")
+      if let fractionCompleted = scanProgress.fractionCompleted {
+        ProgressView(value: fractionCompleted)
+          .tint(AppColor.primary)
+          .frame(maxWidth: 220)
+      } else {
+        ProgressView()
+          .controlSize(.large)
+      }
+
+      Text(scanProgress.phase.title)
         .font(.headline)
-      Text("Comparing up to \(scanLimit) photos. \(similarSortOption.subtitle).")
+
+      Text(scanStatusText)
         .font(.subheadline)
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
         .padding(.horizontal, 32)
+
+      if !groups.isEmpty {
+        Button {
+          reviewCurrentPartialGroups()
+        } label: {
+          Label(reviewFoundTitle, systemImage: "square.stack.3d.up")
+            .fontWeight(.semibold)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(AppColor.primary)
+        .controlSize(.large)
+        .padding(.top, 4)
+      }
     }
+  }
+
+  private var scanStatusText: String {
+    let countText: String
+    if scanProgress.totalCount > 0 {
+      countText = "\(scanProgress.completedCount) of \(scanProgress.totalCount)"
+    } else {
+      countText = "up to \(scanLimit)"
+    }
+
+    if groups.isEmpty {
+      return "Comparing \(countText) photos. \(similarSortOption.subtitle)."
+    }
+
+    return "Comparing \(countText) photos. \(groups.count) groups found."
+  }
+
+  private var reviewFoundTitle: String {
+    groups.count == 1 ? "Review 1 Found" : "Review \(groups.count) Found"
   }
 
   private var emptyView: some View {
@@ -1435,37 +1534,122 @@ struct SimilarReviewSessionView: View {
 
   private func loadGroups() {
     guard groups.isEmpty else { return }
+    scanTask?.cancel()
     isScanning = true
-    Task {
+    scanProgress = SimilarPhotoScanProgress(
+      phase: .preparing,
+      completedCount: 0,
+      totalCount: scanLimit,
+      groupsFound: 0
+    )
+    scanTask = Task {
       let status = await PhotoLibrary.ensureAuthorization()
       await MainActor.run { authStatus = status }
       guard PhotoLibrary.canAccessPhotos(status) else {
-        await MainActor.run { isScanning = false }
+        await MainActor.run {
+          isScanning = false
+          scanTask = nil
+        }
         return
       }
 
       let scanLimit = scanLimit
       let maxGroups = maxGroups
       let similarSortOption = similarSortOption
-      let fetchedGroups = await Task.detached(priority: .userInitiated) {
+      let worker = Task.detached(priority: .userInitiated) {
         await PhotoLibrary.fetchSimilarPhotoGroups(
           scanLimit: scanLimit,
           maxGroups: maxGroups,
-          sort: similarSortOption
+          sort: similarSortOption,
+          progressHandler: { progress in
+            await MainActor.run {
+              guard isScanning else { return }
+              scanProgress = progress
+            }
+          },
+          partialGroupsHandler: { partialGroups in
+            await MainActor.run {
+              guard isScanning else { return }
+              applyScannedGroups(partialGroups, resetSession: false)
+            }
+          }
         )
-      }.value
+      }
+      let fetchedGroups = await withTaskCancellationHandler(operation: {
+        await worker.value
+      }, onCancel: {
+        worker.cancel()
+      })
+      guard !Task.isCancelled else { return }
       await MainActor.run {
-        groups = fetchedGroups
-        currentGroupIndex = 0
-        keptAssets = []
-        deleteAssets = []
-        markedGroups = []
-        lastSimilarUndo = nil
+        applyScannedGroups(fetchedGroups, resetSession: true)
         deletedCount = 0
-        selectDefaultKeepAsset(in: fetchedGroups.first)
         isScanning = false
+        scanTask = nil
       }
     }
+  }
+
+  private func applyScannedGroups(_ scannedGroups: [SimilarPhotoGroup], resetSession: Bool) {
+    groups = scannedGroups
+    updateSimilarMetadataCache(for: scannedGroups)
+
+    if resetSession {
+      currentGroupIndex = 0
+      keptAssets = []
+      deleteAssets = []
+      markedGroups = []
+      lastSimilarUndo = nil
+    } else if currentGroupIndex >= scannedGroups.count {
+      currentGroupIndex = max(scannedGroups.count - 1, 0)
+    }
+
+    let visibleGroup = scannedGroups.indices.contains(currentGroupIndex) ? scannedGroups[currentGroupIndex] : scannedGroups.first
+    let visibleIdentifiers = Set(visibleGroup?.assets.map(\.localIdentifier) ?? [])
+    if focusedAssetIdentifier == nil || resetSession || !visibleIdentifiers.contains(focusedAssetIdentifier ?? "") {
+      selectDefaultKeepAsset(in: visibleGroup)
+    }
+  }
+
+  private func updateSimilarMetadataCache(for groups: [SimilarPhotoGroup]) {
+    var nextDetails = similarDetailsByIdentifier
+    var nextBytes = similarBytesByIdentifier
+
+    for asset in groups.flatMap(\.assets) where nextDetails[asset.localIdentifier] == nil {
+      let details = ReviewPhotoDetails(asset: asset)
+      nextDetails[asset.localIdentifier] = details
+      nextBytes[asset.localIdentifier] = details.estimatedBytes
+    }
+
+    similarDetailsByIdentifier = nextDetails
+    similarBytesByIdentifier = nextBytes
+  }
+
+  private func reviewCurrentPartialGroups() {
+    guard !groups.isEmpty else { return }
+    scanTask?.cancel()
+    scanTask = nil
+    isScanning = false
+    if focusedAssetIdentifier == nil {
+      selectDefaultKeepAsset(in: groups.first)
+    }
+  }
+
+  private func cancelScan() {
+    scanTask?.cancel()
+    scanTask = nil
+  }
+
+  private func details(for asset: PHAsset) -> ReviewPhotoDetails {
+    similarDetailsByIdentifier[asset.localIdentifier] ?? ReviewPhotoDetails(asset: asset)
+  }
+
+  private func estimatedBytes(for asset: PHAsset) -> Int {
+    similarBytesByIdentifier[asset.localIdentifier] ?? PhotoLibrary.estimatedBytes(for: asset)
+  }
+
+  private func estimatedBytes(for assets: [PHAsset]) -> Int {
+    assets.reduce(0) { $0 + estimatedBytes(for: $1) }
   }
 
   private func keepAllAndAdvance() {
@@ -1951,6 +2135,7 @@ private struct PhotoAssetImageView: View {
   @State private var requestId: PHImageRequestID?
   @State private var previewRequestId: PHImageRequestID?
   @State private var isLoaded = false
+  @State private var activeRequestKey: String?
 
   private var requestSize: CGSize {
     PhotoLibrary.imageRequestSize(for: asset, displaySize: targetSize, scale: displayScale)
@@ -2007,16 +2192,19 @@ private struct PhotoAssetImageView: View {
 
   private func requestImage() {
     let cacheKey = PhotoLibrary.imageCacheKey(for: asset, targetSize: requestSize, contentMode: imageContentMode)
+    let requestKey = String(cacheKey)
     let prefersHighQualityImage = contentMode == .fit
 
     if let cachedImage = PhotoLibrary.cachedImage(forKey: cacheKey) {
+      cancelRequest()
+      activeRequestKey = requestKey
       image = cachedImage
       isLoaded = true
-      cancelRequest()
       return
     }
 
     cancelRequest()
+    activeRequestKey = requestKey
     image = nil
     isLoaded = false
     let options = PHImageRequestOptions()
@@ -2024,7 +2212,6 @@ private struct PhotoAssetImageView: View {
     options.deliveryMode = prefersHighQualityImage ? .highQualityFormat : .opportunistic
     options.resizeMode = .exact
 
-    let identifier = asset.localIdentifier
     if prefersHighQualityImage {
       let previewOptions = PHImageRequestOptions()
       previewOptions.isNetworkAccessAllowed = true
@@ -2042,7 +2229,7 @@ private struct PhotoAssetImageView: View {
         guard !isCancelled else { return }
 
         Task { @MainActor in
-          guard identifier == asset.localIdentifier, image == nil else { return }
+          guard activeRequestKey == requestKey, image == nil else { return }
           image = result
           isLoaded = true
         }
@@ -2056,9 +2243,11 @@ private struct PhotoAssetImageView: View {
       options: options
     ) { result, info in
       guard let result else { return }
+      let isCancelled = (info?[PHImageCancelledKey] as? Bool) ?? false
+      guard !isCancelled else { return }
       let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
       Task { @MainActor in
-        guard identifier == asset.localIdentifier else { return }
+        guard activeRequestKey == requestKey else { return }
         if prefersHighQualityImage && isDegraded {
           return
         }
@@ -2084,6 +2273,7 @@ private struct PhotoAssetImageView: View {
     }
     requestId = nil
     previewRequestId = nil
+    activeRequestKey = nil
   }
 }
 

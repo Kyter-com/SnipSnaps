@@ -53,6 +53,38 @@ enum SimilarGroupConfidence {
   }
 }
 
+struct SimilarPhotoScanProgress: Equatable {
+  enum Phase: String {
+    case preparing
+    case fingerprinting
+    case comparing
+    case finishing
+
+    var title: String {
+      switch self {
+      case .preparing:
+        return "Preparing scan"
+      case .fingerprinting:
+        return "Reading thumbnails"
+      case .comparing:
+        return "Comparing photos"
+      case .finishing:
+        return "Finishing scan"
+      }
+    }
+  }
+
+  let phase: Phase
+  let completedCount: Int
+  let totalCount: Int
+  let groupsFound: Int
+
+  var fractionCompleted: Double? {
+    guard totalCount > 0 else { return nil }
+    return min(max(Double(completedCount) / Double(totalCount), 0), 1)
+  }
+}
+
 struct SimilarPhotoGroup: Identifiable {
   let assets: [PHAsset]
   let confidence: SimilarGroupConfidence
@@ -129,8 +161,50 @@ enum PhotoLibrary {
         PHAssetMediaSubtype.photoScreenshot.rawValue
       )
       return fetchScreenshotAssets(options: options, sort: screenshotSort, limit: limit)
+    case .oldScreenshots:
+      let cutoff = Calendar.current.date(byAdding: .day, value: -30, to: Date()) ?? Date()
+      options.predicate = NSPredicate(
+        format: "(mediaSubtype & %d) != 0 AND creationDate < %@",
+        PHAssetMediaSubtype.photoScreenshot.rawValue,
+        cutoff as NSDate
+      )
+      options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
+      options.fetchLimit = limit
+      return fetchAssets(options: options, limit: limit)
     case .videos:
       return fetchVideoAssets(options: options, sort: videoSort, limit: limit)
+    case .screenRecordings:
+      options.predicate = NSPredicate(
+        format: "(mediaSubtype & %d) != 0",
+        PHAssetMediaSubtype.videoScreenRecording.rawValue
+      )
+      options.fetchLimit = limit
+      return fetchAssets(mediaType: .video, options: options, limit: limit)
+    case .largePhotos:
+      return fetchLargePhotoAssets(options: options, limit: limit)
+    case .livePhotos:
+      options.predicate = NSPredicate(
+        format: "(mediaSubtype & %d) != 0",
+        PHAssetMediaSubtype.photoLive.rawValue
+      )
+      options.fetchLimit = limit
+      return fetchAssets(options: options, limit: limit)
+    case .bursts:
+      return fetchBurstAssets(limit: limit)
+    case .recentlyEdited:
+      options.predicate = NSPredicate(format: "modificationDate != nil")
+      options.sortDescriptors = [NSSortDescriptor(key: "modificationDate", ascending: false)]
+      options.fetchLimit = limit
+      return fetchAssets(options: options, limit: limit)
+    case .oldFavorites:
+      let cutoff = Calendar.current.date(byAdding: .year, value: -1, to: Date()) ?? Date()
+      options.predicate = NSPredicate(
+        format: "favorite == YES AND creationDate < %@",
+        cutoff as NSDate
+      )
+      options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
+      options.fetchLimit = limit
+      return fetchAssets(options: options, limit: limit)
     case .similar:
       options.fetchLimit = limit
       return fetchAssets(options: options, limit: limit)
@@ -162,20 +236,51 @@ enum PhotoLibrary {
         format: "(mediaSubtype & %d) != 0",
         PHAssetMediaSubtype.photoScreenshot.rawValue
       )
+    case .oldScreenshots:
+      let cutoff = Calendar.current.date(byAdding: .day, value: -30, to: Date()) ?? Date()
+      options.predicate = NSPredicate(
+        format: "(mediaSubtype & %d) != 0 AND creationDate < %@",
+        PHAssetMediaSubtype.photoScreenshot.rawValue,
+        cutoff as NSDate
+      )
     case .videos:
       break
+    case .screenRecordings:
+      options.predicate = NSPredicate(
+        format: "(mediaSubtype & %d) != 0",
+        PHAssetMediaSubtype.videoScreenRecording.rawValue
+      )
+    case .largePhotos:
+      break
+    case .livePhotos:
+      options.predicate = NSPredicate(
+        format: "(mediaSubtype & %d) != 0",
+        PHAssetMediaSubtype.photoLive.rawValue
+      )
+    case .bursts:
+      return fetchBurstAssetCount()
+    case .recentlyEdited:
+      options.predicate = NSPredicate(format: "modificationDate != nil")
+    case .oldFavorites:
+      let cutoff = Calendar.current.date(byAdding: .year, value: -1, to: Date()) ?? Date()
+      options.predicate = NSPredicate(
+        format: "favorite == YES AND creationDate < %@",
+        cutoff as NSDate
+      )
     case .similar:
       options.fetchLimit = 1_000
     case .random:
       break
     }
-    return PHAsset.fetchAssets(with: mode == .videos ? .video : .image, options: options).count
+    return PHAsset.fetchAssets(with: mode.reviewsVideos ? .video : .image, options: options).count
   }
 
   static func fetchSimilarPhotoGroups(
     scanLimit: Int,
     maxGroups: Int,
-    sort: SimilarSortOption = .recent
+    sort: SimilarSortOption = .recent,
+    progressHandler: ((SimilarPhotoScanProgress) async -> Void)? = nil,
+    partialGroupsHandler: (([SimilarPhotoGroup]) async -> Void)? = nil
   ) async -> [SimilarPhotoGroup] {
     #if canImport(UIKit)
     let options = PHFetchOptions()
@@ -186,10 +291,17 @@ enum PhotoLibrary {
 
     let result = PHAsset.fetchAssets(with: .image, options: options)
     guard result.count > 1 else { return [] }
+    await progressHandler?(SimilarPhotoScanProgress(
+      phase: .preparing,
+      completedCount: 0,
+      totalCount: result.count,
+      groupsFound: 0
+    ))
 
     var assets: [PHAsset] = []
     assets.reserveCapacity(result.count)
     for index in 0..<result.count {
+      guard !Task.isCancelled else { return [] }
       assets.append(result.object(at: index))
     }
     if sort == .random {
@@ -198,25 +310,59 @@ enum PhotoLibrary {
 
     var usedIdentifiers = Set<String>()
     var groups = burstSimilarGroups(from: assets, usedIdentifiers: &usedIdentifiers)
+    if !groups.isEmpty {
+      let sortedBurstGroups = sortedSimilarGroups(groups, sort: sort).prefix(maxGroups).map { $0 }
+      await partialGroupsHandler?(sortedBurstGroups)
+      if groups.count >= maxGroups, sort != .largest, sort != .mostMatches {
+        return sortedBurstGroups
+      }
+    }
 
     var fingerprints: [SimilarPhotoFingerprint] = []
     fingerprints.reserveCapacity(assets.count)
-    for asset in assets where !usedIdentifiers.contains(asset.localIdentifier) {
-      guard let image = thumbnailImage(for: asset, targetSize: CGSize(width: 18, height: 16)),
-            let hash = differenceHash(for: image) else {
-        continue
+    for (index, asset) in assets.enumerated() {
+      guard !Task.isCancelled else { return sortedSimilarGroups(groups, sort: sort).prefix(maxGroups).map { $0 } }
+      if !usedIdentifiers.contains(asset.localIdentifier),
+         let image = thumbnailImage(
+          for: asset,
+          targetSize: CGSize(width: 18, height: 16),
+          deliveryMode: .highQualityFormat
+         ),
+         let hash = differenceHash(for: image) {
+        fingerprints.append(SimilarPhotoFingerprint(asset: asset, hash: hash, aspectRatio: aspectRatio(for: asset)))
       }
-      fingerprints.append(SimilarPhotoFingerprint(asset: asset, hash: hash, aspectRatio: aspectRatio(for: asset)))
+      if index == 0 || index == assets.count - 1 || index.isMultiple(of: 20) {
+        await progressHandler?(SimilarPhotoScanProgress(
+          phase: .fingerprinting,
+          completedCount: index + 1,
+          totalCount: assets.count,
+          groupsFound: groups.count
+        ))
+      }
     }
 
     var featurePrints: [String: VNFeaturePrintObservation] = [:]
-    for fingerprint in fingerprints {
-      guard !usedIdentifiers.contains(fingerprint.asset.localIdentifier) else { continue }
+    for (index, fingerprint) in fingerprints.enumerated() {
+      guard !Task.isCancelled else { return sortedSimilarGroups(groups, sort: sort).prefix(maxGroups).map { $0 } }
+      guard !usedIdentifiers.contains(fingerprint.asset.localIdentifier) else {
+        if index == 0 || index == fingerprints.count - 1 || index.isMultiple(of: 5) {
+          await progressHandler?(SimilarPhotoScanProgress(
+            phase: .comparing,
+            completedCount: index + 1,
+            totalCount: max(fingerprints.count, 1),
+            groupsFound: groups.count
+          ))
+        }
+        continue
+      }
 
       var matches = [fingerprint.asset]
       var closestHashDistance = Int.max
       var closestDistance = Float.greatestFiniteMagnitude
-      for candidate in fingerprints {
+      for (candidateIndex, candidate) in fingerprints.enumerated() {
+        if candidateIndex.isMultiple(of: 24), Task.isCancelled {
+          return sortedSimilarGroups(groups, sort: sort).prefix(maxGroups).map { $0 }
+        }
         guard fingerprint.asset.localIdentifier != candidate.asset.localIdentifier,
               !usedIdentifiers.contains(candidate.asset.localIdentifier) else {
           continue
@@ -249,7 +395,17 @@ enum PhotoLibrary {
         matches.append(candidate.asset)
       }
 
-      guard matches.count > 1 else { continue }
+      guard matches.count > 1 else {
+        if index == 0 || index == fingerprints.count - 1 || index.isMultiple(of: 5) {
+          await progressHandler?(SimilarPhotoScanProgress(
+            phase: .comparing,
+            completedCount: index + 1,
+            totalCount: max(fingerprints.count, 1),
+            groupsFound: groups.count
+          ))
+        }
+        continue
+      }
       let orderedMatches = orderSimilarAssetsForReview(matches)
       for asset in orderedMatches {
         usedIdentifiers.insert(asset.localIdentifier)
@@ -262,9 +418,29 @@ enum PhotoLibrary {
           closestFeatureDistance: closestDistance
         )
       ))
+      await partialGroupsHandler?(sortedSimilarGroups(groups, sort: sort).prefix(maxGroups).map { $0 })
+      if index == 0 || index == fingerprints.count - 1 || index.isMultiple(of: 5) {
+        await progressHandler?(SimilarPhotoScanProgress(
+          phase: .comparing,
+          completedCount: index + 1,
+          totalCount: max(fingerprints.count, 1),
+          groupsFound: groups.count
+        ))
+      }
+      if groups.count >= maxGroups, sort != .largest, sort != .mostMatches {
+        break
+      }
     }
 
-    return sortedSimilarGroups(groups, sort: sort).prefix(maxGroups).map { $0 }
+    let sortedGroups = sortedSimilarGroups(groups, sort: sort).prefix(maxGroups).map { $0 }
+    await progressHandler?(SimilarPhotoScanProgress(
+      phase: .finishing,
+      completedCount: sortedGroups.count,
+      totalCount: max(sortedGroups.count, 1),
+      groupsFound: sortedGroups.count
+    ))
+    await partialGroupsHandler?(sortedGroups)
+    return sortedGroups
     #else
     return []
     #endif
@@ -435,6 +611,81 @@ enum PhotoLibrary {
     }
 
     return indices.shuffled().map { result.object(at: $0) }
+  }
+
+  private static func fetchLargePhotoAssets(options: PHFetchOptions, limit: Int) -> [PHAsset] {
+    options.sortDescriptors = nil
+    let result = PHAsset.fetchAssets(with: .image, options: options)
+    guard result.count > 0 else { return [] }
+
+    var assets: [PHAsset] = []
+    assets.reserveCapacity(result.count)
+    for index in 0..<result.count {
+      assets.append(result.object(at: index))
+    }
+
+    assets.sort { lhs, rhs in
+      let lhsPixels = lhs.pixelWidth * lhs.pixelHeight
+      let rhsPixels = rhs.pixelWidth * rhs.pixelHeight
+      if lhsPixels == rhsPixels {
+        return (lhs.creationDate ?? .distantPast) > (rhs.creationDate ?? .distantPast)
+      }
+      return lhsPixels > rhsPixels
+    }
+
+    let candidateCount = min(assets.count, max(limit * 8, 200))
+    var assetsWithBytes: [(asset: PHAsset, bytes: Int)] = []
+    assetsWithBytes.reserveCapacity(candidateCount)
+    for asset in assets.prefix(candidateCount) {
+      assetsWithBytes.append((asset: asset, bytes: estimatedBytes(for: asset)))
+    }
+
+    assetsWithBytes.sort { lhs, rhs in
+      if lhs.bytes == rhs.bytes {
+        let lhsPixels = lhs.asset.pixelWidth * lhs.asset.pixelHeight
+        let rhsPixels = rhs.asset.pixelWidth * rhs.asset.pixelHeight
+        if lhsPixels == rhsPixels {
+          return (lhs.asset.creationDate ?? .distantPast) > (rhs.asset.creationDate ?? .distantPast)
+        }
+        return lhsPixels > rhsPixels
+      }
+      return lhs.bytes > rhs.bytes
+    }
+
+    return Array(assetsWithBytes.prefix(limit).map(\.asset))
+  }
+
+  private static func fetchBurstAssets(limit: Int) -> [PHAsset] {
+    let collections = PHAssetCollection.fetchAssetCollections(
+      with: .smartAlbum,
+      subtype: .smartAlbumBursts,
+      options: nil
+    )
+    guard let collection = collections.firstObject else { return [] }
+
+    let options = PHFetchOptions()
+    options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+    options.fetchLimit = limit
+    let result = PHAsset.fetchAssets(in: collection, options: options)
+    let count = min(result.count, limit)
+    guard count > 0 else { return [] }
+
+    var assets: [PHAsset] = []
+    assets.reserveCapacity(count)
+    for index in 0..<count {
+      assets.append(result.object(at: index))
+    }
+    return assets
+  }
+
+  private static func fetchBurstAssetCount() -> Int {
+    let collections = PHAssetCollection.fetchAssetCollections(
+      with: .smartAlbum,
+      subtype: .smartAlbumBursts,
+      options: nil
+    )
+    guard let collection = collections.firstObject else { return 0 }
+    return PHAsset.fetchAssets(in: collection, options: nil).count
   }
 
   private static func fetchScreenshotAssets(

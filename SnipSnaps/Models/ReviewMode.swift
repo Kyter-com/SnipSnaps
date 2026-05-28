@@ -5,7 +5,14 @@ enum ReviewMode: String, CaseIterable, Identifiable {
   case onThisDay
   case random
   case screenshots
+  case oldScreenshots
   case videos
+  case screenRecordings
+  case largePhotos
+  case livePhotos
+  case bursts
+  case recentlyEdited
+  case oldFavorites
   case similar
 
   var id: String { rawValue }
@@ -20,8 +27,22 @@ enum ReviewMode: String, CaseIterable, Identifiable {
       return "Random"
     case .screenshots:
       return "Screenshots"
+    case .oldScreenshots:
+      return "Old Screenshots"
     case .videos:
       return "Videos"
+    case .screenRecordings:
+      return "Screen Recordings"
+    case .largePhotos:
+      return "Large Photos"
+    case .livePhotos:
+      return "Live Photos"
+    case .bursts:
+      return "Bursts"
+    case .recentlyEdited:
+      return "Recently Edited"
+    case .oldFavorites:
+      return "Old Favorites"
     case .similar:
       return "Similar"
     }
@@ -37,8 +58,22 @@ enum ReviewMode: String, CaseIterable, Identifiable {
       return "A surprise mix from your library"
     case .screenshots:
       return "Clear the clutter fast"
+    case .oldScreenshots:
+      return "Screenshots older than a month"
     case .videos:
       return "Review space-hungry clips"
+    case .screenRecordings:
+      return "Find recorded clips"
+    case .largePhotos:
+      return "Review high-resolution space savers"
+    case .livePhotos:
+      return "Review animated photos"
+    case .bursts:
+      return "Choose the best from bursts"
+    case .recentlyEdited:
+      return "Check touched-up shots"
+    case .oldFavorites:
+      return "Revisit favorites from past years"
     case .similar:
       return "Review duplicate-looking groups"
     }
@@ -54,11 +89,29 @@ enum ReviewMode: String, CaseIterable, Identifiable {
       return "shuffle"
     case .screenshots:
       return "rectangle.on.rectangle"
+    case .oldScreenshots:
+      return "clock.badge.xmark"
     case .videos:
       return "video.fill"
+    case .screenRecordings:
+      return "record.circle"
+    case .largePhotos:
+      return "internaldrive"
+    case .livePhotos:
+      return "livephoto"
+    case .bursts:
+      return "bolt.fill"
+    case .recentlyEdited:
+      return "slider.horizontal.3"
+    case .oldFavorites:
+      return "heart.fill"
     case .similar:
       return "square.stack.3d.up"
     }
+  }
+
+  var reviewsVideos: Bool {
+    self == .videos || self == .screenRecordings
   }
 
   private var monthDayText: String {

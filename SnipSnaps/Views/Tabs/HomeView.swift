@@ -8,6 +8,13 @@
 import Photos
 import SwiftUI
 
+private struct ReviewModeSection: Identifiable {
+  let title: String
+  let modes: [ReviewMode]
+
+  var id: String { title }
+}
+
 struct HomeView: View {
   @State private var authStatus = PhotoLibrary.authorizationStatus()
   @State private var counts: [ReviewMode: Int] = [:]
@@ -16,6 +23,12 @@ struct HomeView: View {
   @AppStorage("screenshotSortOption") private var screenshotSortOptionRawValue: String = ScreenshotSortOption.recent.rawValue
   @AppStorage("videoSortOption") private var videoSortOptionRawValue: String = VideoSortOption.largest.rawValue
   @AppStorage("similarSortOption") private var similarSortOptionRawValue: String = SimilarSortOption.recent.rawValue
+
+  private let reviewSections = [
+    ReviewModeSection(title: "Quick Clean", modes: [.today, .screenshots, .oldScreenshots, .random]),
+    ReviewModeSection(title: "Space Savers", modes: [.videos, .screenRecordings, .largePhotos, .similar]),
+    ReviewModeSection(title: "Memories", modes: [.onThisDay, .livePhotos, .bursts, .recentlyEdited, .oldFavorites])
+  ]
 
   private var canAccessPhotos: Bool {
     PhotoLibrary.canAccessPhotos(authStatus)
@@ -61,9 +74,21 @@ struct HomeView: View {
             accessCard
           }
 
-          VStack(spacing: 12) {
-            ForEach(ReviewMode.allCases) { mode in
-              reviewModeCard(for: mode)
+          VStack(alignment: .leading, spacing: 18) {
+            ForEach(reviewSections) { section in
+              VStack(alignment: .leading, spacing: 10) {
+                Text(section.title)
+                  .font(.footnote.weight(.semibold))
+                  .foregroundStyle(.secondary)
+                  .textCase(.uppercase)
+                  .padding(.horizontal, 4)
+
+                VStack(spacing: 12) {
+                  ForEach(section.modes) { mode in
+                    reviewModeCard(for: mode)
+                  }
+                }
+              }
             }
           }
         }
