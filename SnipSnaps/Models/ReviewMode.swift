@@ -11,7 +11,6 @@ enum ReviewMode: String, CaseIterable, Identifiable {
   case largePhotos
   case livePhotos
   case bursts
-  case recentlyEdited
   case oldFavorites
   case similar
 
@@ -39,8 +38,6 @@ enum ReviewMode: String, CaseIterable, Identifiable {
       return "Live Photos"
     case .bursts:
       return "Bursts"
-    case .recentlyEdited:
-      return "Recently Edited"
     case .oldFavorites:
       return "Old Favorites"
     case .similar:
@@ -53,7 +50,7 @@ enum ReviewMode: String, CaseIterable, Identifiable {
     case .today:
       return "Review your newest shots"
     case .onThisDay:
-      return "Photos from \(monthDayText) across the years"
+      return "Photos from \(monthDayText) in past years"
     case .random:
       return "A surprise mix from your library"
     case .screenshots:
@@ -65,13 +62,11 @@ enum ReviewMode: String, CaseIterable, Identifiable {
     case .screenRecordings:
       return "Find recorded clips"
     case .largePhotos:
-      return "Review high-resolution space savers"
+      return "Big files and high-res shots"
     case .livePhotos:
       return "Review animated photos"
     case .bursts:
       return "Choose the best from bursts"
-    case .recentlyEdited:
-      return "Check touched-up shots"
     case .oldFavorites:
       return "Revisit favorites from past years"
     case .similar:
@@ -101,8 +96,6 @@ enum ReviewMode: String, CaseIterable, Identifiable {
       return "livephoto"
     case .bursts:
       return "bolt.fill"
-    case .recentlyEdited:
-      return "slider.horizontal.3"
     case .oldFavorites:
       return "heart.fill"
     case .similar:

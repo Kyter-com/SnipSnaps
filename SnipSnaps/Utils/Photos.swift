@@ -111,6 +111,7 @@ struct ReviewModeCounts {
 
 enum PhotoReviewHistory {
   private static let keyPrefix = "reviewedAssetIdentifiers"
+  private static let legacyModeRawValues = ["recentlyEdited"]
   private static let maxIdentifiersPerMode = 5_000
   private static let maxPersistentHistoryAge: TimeInterval = 5 * 365 * 24 * 60 * 60
   private static let sessionLock = NSLock()
@@ -118,7 +119,7 @@ enum PhotoReviewHistory {
 
   static func supportsSkipping(for mode: ReviewMode) -> Bool {
     switch mode {
-    case .today, .onThisDay, .random, .screenshots, .oldScreenshots, .videos, .screenRecordings, .largePhotos, .livePhotos, .bursts, .recentlyEdited, .oldFavorites:
+    case .today, .onThisDay, .random, .screenshots, .oldScreenshots, .videos, .screenRecordings, .largePhotos, .livePhotos, .bursts, .oldFavorites:
       return true
     case .similar:
       return false
@@ -138,6 +139,7 @@ enum PhotoReviewHistory {
   static func hasReviewedIdentifiers() -> Bool {
     !sessionReviewedIdentifiersAreEmpty()
       || ReviewMode.allCases.contains { !persistentEntries(for: $0).isEmpty }
+      || legacyModeRawValues.contains { UserDefaults.standard.object(forKey: key(forRawValue: $0)) != nil }
   }
 
   static func markReviewed(_ asset: PHAsset, for mode: ReviewMode, memoryOption: ReviewMemoryOption) {
@@ -171,6 +173,7 @@ enum PhotoReviewHistory {
     for mode in ReviewMode.allCases where supportsSkipping(for: mode) {
       UserDefaults.standard.removeObject(forKey: key(for: mode))
     }
+    clearLegacyModeKeys()
   }
 
   static func compactStoredHistory() {
@@ -182,10 +185,21 @@ enum PhotoReviewHistory {
         UserDefaults.standard.removeObject(forKey: key(for: mode))
       }
     }
+    clearLegacyModeKeys()
   }
 
   private static func key(for mode: ReviewMode) -> String {
-    "\(keyPrefix).\(mode.rawValue)"
+    key(forRawValue: mode.rawValue)
+  }
+
+  private static func key(forRawValue rawValue: String) -> String {
+    "\(keyPrefix).\(rawValue)"
+  }
+
+  private static func clearLegacyModeKeys() {
+    for rawValue in legacyModeRawValues {
+      UserDefaults.standard.removeObject(forKey: key(forRawValue: rawValue))
+    }
   }
 
   private static func filteredPersistentEntries(for mode: ReviewMode, memoryOption: ReviewMemoryOption) -> [String: TimeInterval] {
@@ -300,12 +314,6 @@ enum PhotoLibrary {
     cache.countLimit = 5_000
     return cache
   }()
-  nonisolated(unsafe) private static let editedPhotoCache: NSCache<NSString, NSNumber> = {
-    let cache = NSCache<NSString, NSNumber>()
-    cache.countLimit = 5_000
-    return cache
-  }()
-
   static func authorizationStatus() -> PHAuthorizationStatus {
     PHPhotoLibrary.authorizationStatus(for: .readWrite)
   }
@@ -386,8 +394,6 @@ enum PhotoLibrary {
       return fetchAssets(options: options, limit: limit, excluding: reviewedIdentifiers)
     case .bursts:
       return fetchBurstAssets(limit: limit, excluding: reviewedIdentifiers)
-    case .recentlyEdited:
-      return fetchRecentlyEditedAssets(limit: limit, excluding: reviewedIdentifiers)
     case .oldFavorites:
       let cutoff = Calendar.current.date(byAdding: .year, value: -1, to: Date()) ?? Date()
       options.predicate = NSPredicate(
@@ -454,8 +460,6 @@ enum PhotoLibrary {
       )
     case .bursts:
       return fetchBurstAssetCounts(excluding: reviewedIdentifiers)
-    case .recentlyEdited:
-      return fetchRecentlyEditedAssetCounts(excluding: reviewedIdentifiers)
     case .oldFavorites:
       let cutoff = Calendar.current.date(byAdding: .year, value: -1, to: Date()) ?? Date()
       options.predicate = NSPredicate(
@@ -723,7 +727,6 @@ enum PhotoLibrary {
   static func clearMemoryCaches() {
     imageCache.removeAllObjects()
     estimatedBytesCache.removeAllObjects()
-    editedPhotoCache.removeAllObjects()
     imageManager.stopCachingImagesForAllAssets()
   }
 
@@ -923,67 +926,6 @@ enum PhotoLibrary {
     guard !asset.mediaSubtypes.contains(.photoScreenshot) else { return false }
     let pixels = asset.pixelWidth * asset.pixelHeight
     return bytes >= largePhotoMinimumBytes || pixels >= largePhotoMinimumPixels
-  }
-
-  private static func fetchRecentlyEditedAssets(
-    limit: Int,
-    excluding reviewedIdentifiers: Set<String> = []
-  ) -> [PHAsset] {
-    let options = PHFetchOptions()
-    options.predicate = NSPredicate(format: "modificationDate != nil")
-    options.sortDescriptors = [NSSortDescriptor(key: "modificationDate", ascending: false)]
-    let result = PHAsset.fetchAssets(with: .image, options: options)
-    guard result.count > 0 else { return [] }
-
-    var assets: [PHAsset] = []
-    assets.reserveCapacity(min(result.count, limit))
-    for index in 0..<result.count {
-      let asset = result.object(at: index)
-      guard !reviewedIdentifiers.contains(asset.localIdentifier),
-            isEditedPhoto(asset) else { continue }
-      assets.append(asset)
-      if assets.count >= limit {
-        break
-      }
-    }
-    return assets
-  }
-
-  private static func fetchRecentlyEditedAssetCount() -> Int {
-    fetchRecentlyEditedAssetCounts(excluding: []).total
-  }
-
-  private static func fetchRecentlyEditedAssetCounts(excluding reviewedIdentifiers: Set<String>) -> ReviewModeCounts {
-    let options = PHFetchOptions()
-    options.predicate = NSPredicate(format: "modificationDate != nil")
-    let result = PHAsset.fetchAssets(with: .image, options: options)
-    guard result.count > 0 else { return ReviewModeCounts(total: 0, notReviewed: 0) }
-
-    var count = 0
-    var notReviewedCount = 0
-    for index in 0..<result.count {
-      let asset = result.object(at: index)
-      if isEditedPhoto(asset) {
-        count += 1
-        if !reviewedIdentifiers.contains(asset.localIdentifier) {
-          notReviewedCount += 1
-        }
-      }
-    }
-    return ReviewModeCounts(total: count, notReviewed: notReviewedCount)
-  }
-
-  private static func isEditedPhoto(_ asset: PHAsset) -> Bool {
-    let cacheKey = metadataCacheKey(for: asset)
-    if let cachedValue = editedPhotoCache.object(forKey: cacheKey) {
-      return cachedValue.boolValue
-    }
-
-    let isEdited = PHAssetResource.assetResources(for: asset).contains { resource in
-      resource.type == .adjustmentData || resource.type == .adjustmentBasePhoto
-    }
-    editedPhotoCache.setObject(NSNumber(value: isEdited), forKey: cacheKey)
-    return isEdited
   }
 
   private static func fetchBurstAssets(
@@ -1480,8 +1422,8 @@ enum PhotoLibrary {
     let calendar = Calendar.current
     let firstYear = calendar.component(.year, from: oldestAssetDate)
     let currentYear = calendar.component(.year, from: referenceDate)
-    guard firstYear <= currentYear else { return nil }
-    return firstYear...currentYear
+    guard firstYear < currentYear else { return nil }
+    return firstYear...(currentYear - 1)
   }
 
   private static func aspectRatio(for asset: PHAsset) -> CGFloat {

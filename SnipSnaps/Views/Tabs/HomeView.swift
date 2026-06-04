@@ -102,7 +102,7 @@ struct HomeView: View {
   private let reviewSections = [
     ReviewModeSection(title: "Quick Clean", modes: [.today, .screenshots, .oldScreenshots, .random]),
     ReviewModeSection(title: "Space Savers", modes: [.videos, .screenRecordings, .largePhotos, .similar]),
-    ReviewModeSection(title: "Memories", modes: [.onThisDay, .livePhotos, .bursts, .recentlyEdited, .oldFavorites])
+    ReviewModeSection(title: "Library Finds", modes: [.onThisDay, .livePhotos, .bursts, .oldFavorites])
   ]
 
   private var canAccessPhotos: Bool {
@@ -517,7 +517,7 @@ struct HomeView: View {
   }
 
   private var expensiveCountModes: [ReviewMode] {
-    [.largePhotos, .recentlyEdited]
+    [.largePhotos]
   }
 
   private var videoCountModes: [ReviewMode] {
@@ -544,8 +544,6 @@ struct HomeView: View {
       return [.today, .random, .livePhotos]
     case .bursts:
       return [.today, .random, .bursts]
-    case .recentlyEdited:
-      return counts[.recentlyEdited] == nil ? [.today, .random, .recentlyEdited] : [.today, .random]
     case .oldFavorites:
       return [.random, .oldFavorites]
     case .similar:
