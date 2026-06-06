@@ -10,7 +10,7 @@ Prepared non-image release metadata for App Store Connect.
 - Secondary category: Utilities
 - Bundle ID: com.kyter.SnipSnaps
 - Version: 1.0.2
-- Build: 37
+- Build: 38
 - Content rights: The app does not contain, show, or access third-party content outside the user's own photo library.
 - Encryption: Uses no non-exempt encryption (`ITSAppUsesNonExemptEncryption` is false).
 

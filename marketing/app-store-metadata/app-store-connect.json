@@ -3,7 +3,7 @@
   "subtitle": "Clean up your photo library",
   "bundleId": "com.kyter.SnipSnaps",
   "versionString": "1.0.2",
-  "buildNumber": "37",
+  "buildNumber": "38",
   "primaryCategory": "PHOTO_AND_VIDEO",
   "secondaryCategory": "UTILITIES",
   "description": "SnipSnaps helps you clean up your photo library in quick, focused review sessions.\n\nSwipe through recent photos, screenshots, videos, screen recordings, large photos, Live Photos, bursts, photos from this day in past years, random shots, or duplicate-looking photos. Keep the photos and videos that matter, mark the ones you do not need, and delete them when you are ready. Every session is designed to be fast enough for a spare minute and careful enough to avoid accidental cleanup.\n\nUse SnipSnaps to:\n\n- Review your newest photos before clutter builds up\n- Clear recent or older screenshots without digging through Photos\n- Sort videos by size, length, or date before reviewing\n- Review screen recordings, large photos, Live Photos, bursts, and older favorites\n- Revisit pictures from this day across past years\n- Find similar-looking groups and choose the best shot\n- See how many photos and videos, and how much storage you have cleared\n\nSnipSnaps works with your photo library on device. It asks for Photos access only so you can review and delete the photos and videos you choose.",
