@@ -1,6 +1,6 @@
 {
   "name": "@kyter/snipsnaps-ios",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "description": "Release notes and changelog tooling for SnipSnaps iOS.",
   "packageManager": "npm@11.8.0",
