@@ -18,27 +18,42 @@ Do not assume the local Python development checkout of `asc-cli` has the same fl
 /opt/homebrew/bin/asc builds test-notes update --app <bundle-id-or-app-id> --build-number <build> --version <version> --platform IOS --locale en-US --whats-new "<notes>"
 ```
 
-If reusing environment files from a local `asc-cli` checkout, verify the variable names expected by Homebrew `asc`. Older env files may use `ASC_KEY_PATH`; Homebrew `asc` expects `ASC_PRIVATE_KEY_PATH`.
-
-Generic mapping pattern:
+For release scripts, prefer the 1Password item-backed auth flow instead of storing private key paths in repo-local files:
 
 ```sh
-set -a
-source /path/to/asc-cli/.env.<profile>
-set +a
-
-export ASC_PRIVATE_KEY_PATH="$ASC_KEY_PATH"
-export ASC_BYPASS_KEYCHAIN=1
+ASC_OP_ITEM=<1password-item-id-or-name> npm run release:status
 ```
 
-Only use real private key paths from the local developer environment. Never commit `.p8` files, key IDs, issuer IDs, private key contents, or private `.env` files. If App Store Connect calls fail with a missing private key file, stop and report that the key must be restored locally; it cannot be recreated from the key ID or issuer ID.
+The script reads `key_id`, `issuer_id`, and `credential` from the 1Password item, writes the private key to a temporary `0600` file for `asc`, and deletes it on exit.
 
-## Release Metadata
+To discover the right item, inspect only 1Password item metadata and field labels/types. Do not print field values.
 
-Keep local release metadata in sync when bumping a build or marketing version:
+```sh
+op item list --format json --long
+op item get <candidate-item> --format json
+```
 
-- `SnipSnaps.xcodeproj/project.pbxproj`
-- `marketing/app-store-metadata/README.md`
-- `marketing/app-store-metadata/app-store-connect.json`
+If calling `asc` directly, use a private environment outside this repo and never print credential values.
+
+Generic direct-`asc` variables:
+
+```sh
+ASC_KEY_ID=<from-private-env>
+ASC_ISSUER_ID=<from-private-env>
+ASC_PRIVATE_KEY_PATH=<local-private-key-path>
+ASC_BYPASS_KEYCHAIN=1
+```
+
+Only use real private key paths from the local developer environment. Never commit `.p8` files, key IDs, issuer IDs, private key contents, or private `.env` files.
+
+## Release Tracking
+
+ASC plus git plus Changesets are the release source of truth.
+
+- Use `npm run changeset` for user-facing changes.
+- Use `npm run version` to snapshot `docs/next-release-notes.md`, consume changesets into `CHANGELOG.md`, and sync Xcode `MARKETING_VERSION`.
+- Use `ASC_OP_ITEM=<1password-item-id-or-name> npm run release:next-build -- --apply` to get the next build number from ASC and sync Xcode `CURRENT_PROJECT_VERSION`.
+- Use `ASC_OP_ITEM=<1password-item-id-or-name> npm run release:backfill` to regenerate `docs/apple-release-history.md` from ASC and git.
+- Do not treat `marketing/app-store-metadata/app-store-connect.json` as authoritative release metadata; it may be stale.
 
 Use the actual bullet glyph `•` for App Store "What's New" bullet-style notes.
