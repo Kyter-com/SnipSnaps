@@ -603,30 +603,31 @@ enum PhotoLibrary {
         }
 
         let hashDistance = hammingDistance(fingerprint.hash, candidate.hash)
+        // Cheap structural pre-filter: same shape and roughly similar layout.
         guard abs(fingerprint.aspectRatio - candidate.aspectRatio) < 0.12,
               hashDistance <= 14 else {
           continue
         }
 
-        if hashDistance <= 6 {
-          closestHashDistance = min(closestHashDistance, hashDistance)
-          matches.append(candidate.asset)
-          continue
-        }
-
-        guard let distance = featurePrintDistance(
+        // The Vision feature print is the authoritative, semantic check. Its
+        // distances are small — ~0 identical, <= ~0.35 genuinely similar, >= ~0.5
+        // different scenes — so this is the gate that keeps unrelated photos out.
+        // dHash alone collides on flat/low-detail photos (sky, walls, dark
+        // shots), so we only fall back to a strict hash-only match when the
+        // feature print can't be computed and the frames are near-identical.
+        if let distance = featurePrintDistance(
           from: fingerprint.asset,
           to: candidate.asset,
           cache: &featurePrints
-        ) else {
-          continue
+        ) {
+          closestDistance = min(closestDistance, distance)
+          guard distance <= similarFeatureMatchThreshold else { continue }
+          closestHashDistance = min(closestHashDistance, hashDistance)
+          matches.append(candidate.asset)
+        } else if hashDistance <= 4 {
+          closestHashDistance = min(closestHashDistance, hashDistance)
+          matches.append(candidate.asset)
         }
-        closestDistance = min(closestDistance, distance)
-        guard distance <= 11 else {
-          continue
-        }
-        closestHashDistance = min(closestHashDistance, hashDistance)
-        matches.append(candidate.asset)
       }
 
       guard matches.count > 1 else {
@@ -1185,6 +1186,12 @@ enum PhotoLibrary {
     let aspectRatio: CGFloat
   }
 
+  // Vision feature-print distance below which two photos count as similar. The
+  // scale is small: ~0 identical, ~0.35 genuinely similar, ~0.5 unrelated photos
+  // of the same general scene. Lower toward 0.3 for stricter matching, raise
+  // toward 0.4 for looser.
+  private static let similarFeatureMatchThreshold: Float = 0.35
+
   private static func burstSimilarGroups(
     from assets: [PHAsset],
     usedIdentifiers: inout Set<String>
@@ -1229,7 +1236,7 @@ enum PhotoLibrary {
     closestHashDistance: Int,
     closestFeatureDistance: Float
   ) -> SimilarGroupConfidence {
-    if hashMatches > 2 || closestHashDistance <= 6 || closestFeatureDistance <= 7 {
+    if hashMatches > 2 || closestHashDistance <= 6 || closestFeatureDistance <= 0.2 {
       return .strong
     }
     return .likely

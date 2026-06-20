@@ -959,10 +959,6 @@ struct SimilarReviewSessionView: View {
     currentGroup?.assets ?? []
   }
 
-  private var isPairGroup: Bool {
-    groupAssets.count == 2
-  }
-
   private var currentPhoto: PHAsset? {
     guard groupAssets.indices.contains(photoCursor) else { return nil }
     return groupAssets[photoCursor]
@@ -1097,15 +1093,10 @@ struct SimilarReviewSessionView: View {
     }
   }
 
-  // MARK: - Review (router)
+  // MARK: - Review
 
-  @ViewBuilder
   private var reviewView: some View {
-    if isPairGroup, let group = currentGroup {
-      pairReviewView(group)
-    } else {
-      swipeReviewView
-    }
+    swipeReviewView
   }
 
   private var groupHeader: some View {
@@ -1390,109 +1381,6 @@ struct SimilarReviewSessionView: View {
         .buttonStyle(.bordered)
         .controlSize(.small)
       }
-    }
-  }
-
-  // MARK: - Pair flow (2 photos)
-
-  private func pairReviewView(_ group: SimilarPhotoGroup) -> some View {
-    VStack(spacing: 12) {
-      groupHeader
-        .padding(.horizontal, 20)
-        .padding(.top, 8)
-
-      Text("Keep one of these two")
-        .font(.subheadline)
-        .foregroundStyle(.secondary)
-
-      GeometryReader { proxy in
-        HStack(spacing: 12) {
-          ForEach(group.assets, id: \.localIdentifier) { asset in
-            pairCard(asset, height: proxy.size.height)
-          }
-        }
-        .frame(width: proxy.size.width, height: proxy.size.height)
-      }
-      .padding(.horizontal, 20)
-    }
-    .animation(.snappy(duration: 0.24, extraBounce: 0.02), value: currentGroupIndex)
-    .safeAreaInset(edge: .bottom, spacing: 0) {
-      pairDecisionBar(group)
-        .padding(.horizontal, 20)
-        .padding(.top, 12)
-        .padding(.bottom, 8)
-        .background(.bar)
-    }
-  }
-
-  private func pairCard(_ asset: PHAsset, height: CGFloat) -> some View {
-    let imageHeight = max(height - 56, 120)
-    return VStack(spacing: 8) {
-      PhotoAssetImageView(
-        asset: asset,
-        targetSize: CGSize(width: 220, height: imageHeight),
-        contentMode: .fit,
-        enableLivePhotoPlayback: true
-      )
-      .frame(maxWidth: .infinity, minHeight: imageHeight, maxHeight: imageHeight)
-      .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-      .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-      .overlay {
-        RoundedRectangle(cornerRadius: 22, style: .continuous)
-          .strokeBorder(Color.black.opacity(0.06), lineWidth: 0.5)
-      }
-      .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-      .onTapGesture {
-        zoomTarget = ZoomTarget(asset: asset)
-        selectionHaptic()
-      }
-
-      VStack(spacing: 2) {
-        if isSuggested(asset, in: currentGroup) {
-          Text("Suggested keep")
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(AppColor.primary)
-        }
-        Text(captionText(for: asset))
-          .font(.caption2)
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
-          .minimumScaleFactor(0.8)
-      }
-    }
-  }
-
-  private func pairDecisionBar(_ group: SimilarPhotoGroup) -> some View {
-    VStack(spacing: 12) {
-      HStack(spacing: 12) {
-        Button {
-          keepOneInPair(keep: group.assets[0], delete: group.assets[1])
-        } label: {
-          HStack(spacing: 6) {
-            Image(systemName: "arrow.left")
-            Text("Keep left")
-          }
-          .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.large)
-        .tint(AppColor.success)
-
-        Button {
-          keepOneInPair(keep: group.assets[1], delete: group.assets[0])
-        } label: {
-          HStack(spacing: 6) {
-            Text("Keep right")
-            Image(systemName: "arrow.right")
-          }
-          .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.large)
-        .tint(AppColor.success)
-      }
-
-      secondaryActionRow
     }
   }
 
@@ -1927,15 +1815,6 @@ struct SimilarReviewSessionView: View {
     }
   }
 
-  private func keepOneInPair(keep: PHAsset, delete: PHAsset) {
-    guard !isAnimatingCard else { return }
-    pushUndo(addedKept: [keep], addedDelete: [delete], restoredKept: [], restoredDelete: [])
-    appendUnique([keep], to: &keptAssets)
-    appendUnique([delete], to: &deleteAssets)
-    selectionHaptic()
-    advanceGroupAnimated()
-  }
-
   // Defers the entire current group: clears any decisions already made for its
   // photos so nothing is kept or deleted, then moves on. The group reappears on
   // the next scan (Similar does not track review memory).
@@ -1967,7 +1846,7 @@ struct SimilarReviewSessionView: View {
   }
 
   // Advances to the next group with a brief animation lock so a rapid double-tap
-  // on Keep left / Keep right or Skip group cannot advance two groups at once.
+  // on Skip group cannot advance two groups at once.
   private func advanceGroupAnimated() {
     isAnimatingCard = true
     withAnimation(.spring(duration: 0.34, bounce: 0.14)) {
