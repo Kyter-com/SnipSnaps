@@ -4,7 +4,8 @@
 
 ### Patch Changes
 
-- Redesigned the Similar photos review. Every photo now gets a clear Keep or Delete choice instead of selecting which ones to keep. Swipe through a group one photo at a time, or compare a pair side by side and keep the one you want. Tap any photo to open it full screen and zoom in to compare details, skip a group to decide later, and undo your last choice at any time.
+- Redesigned the Similar photos review. Every photo now gets a clear Keep or Delete choice instead of selecting which ones to keep. Swipe through each photo in a group, tap any photo to open it full screen and zoom in to compare details, skip a group to decide later, and undo your last choice at any time.
+- Improved how similar photos are grouped, so unrelated photos are much less likely to appear together.
 - d9293a8: Reviewed photos now stay reviewed across every category. Once you keep or remove an item, it no longer reappears in another category until your Remember Reviewed window passes.
 
   The Delete button on the review summary is pinned to the bottom, so finishing a cleanup no longer means scrolling past the marked photos to find it.
