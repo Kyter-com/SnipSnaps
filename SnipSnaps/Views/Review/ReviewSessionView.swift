@@ -314,19 +314,14 @@ struct ReviewSessionView: View {
       }
     }
     .toolbar {
-      if !showSummary {
+      if !showSummary || !deleteAssets.isEmpty {
         ToolbarItem(placement: .topBarLeading) {
           Button {
             dismiss()
           } label: {
             Image(systemName: "xmark")
           }
-          .accessibilityLabel("Close review")
-        }
-      }
-      if showSummary {
-        ToolbarItem(placement: .topBarTrailing) {
-          Button("Done") { dismiss() }
+          .accessibilityLabel(showSummary ? "Close without deleting" : "Close review")
         }
       }
     }
@@ -586,27 +581,6 @@ struct ReviewSessionView: View {
           .background(AppColor.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
 
-        if !deleteAssets.isEmpty {
-          Button(role: .destructive) {
-            deleteSelected()
-          } label: {
-            HStack {
-              if deleteInProgress {
-                ProgressView().tint(.white)
-              } else {
-                Image(systemName: "trash.fill")
-              }
-              Text("Delete \(deleteAssets.count) \(deleteAssets.count == 1 ? assetSingularName.capitalized : assetPluralName.capitalized)")
-                .fontWeight(.semibold)
-            }
-            .frame(maxWidth: .infinity)
-          }
-          .buttonStyle(.borderedProminent)
-          .tint(AppColor.delete)
-          .controlSize(.large)
-          .disabled(deleteInProgress)
-        }
-
         if lastReviewUndo != nil {
           Button {
             undoLastReviewDecision()
@@ -619,7 +593,40 @@ struct ReviewSessionView: View {
           .controlSize(.large)
           .disabled(deleteInProgress)
         }
+      }
+      .padding(.horizontal, 20)
+      .padding(.bottom, 32)
+    }
+    .safeAreaInset(edge: .bottom, spacing: 0) {
+      summaryActionBar
+    }
+  }
 
+  // Pinned to the bottom so the primary action is always reachable without
+  // scrolling. When items are marked, the destructive Delete is the only
+  // bottom action; once nothing is left to delete it becomes Done.
+  private var summaryActionBar: some View {
+    Group {
+      if !deleteAssets.isEmpty {
+        Button(role: .destructive) {
+          deleteSelected()
+        } label: {
+          HStack {
+            if deleteInProgress {
+              ProgressView().tint(.white)
+            } else {
+              Image(systemName: "trash.fill")
+            }
+            Text("Delete \(deleteAssets.count) \(deleteAssets.count == 1 ? assetSingularName.capitalized : assetPluralName.capitalized)")
+              .fontWeight(.semibold)
+          }
+          .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(AppColor.delete)
+        .controlSize(.large)
+        .disabled(deleteInProgress)
+      } else {
         Button {
           dismiss()
         } label: {
@@ -627,13 +634,14 @@ struct ReviewSessionView: View {
             .fontWeight(.semibold)
             .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(.borderedProminent)
         .controlSize(.large)
-        .disabled(deleteInProgress)
       }
-      .padding(.horizontal, 20)
-      .padding(.bottom, 32)
     }
+    .padding(.horizontal, 20)
+    .padding(.top, 12)
+    .padding(.bottom, 8)
+    .background(.bar)
   }
 
   private func summaryBanner(title: String, subtitle: String, systemImage: String, tint: Color) -> some View {
@@ -1020,7 +1028,7 @@ struct SimilarReviewSessionView: View {
     .navigationBarTitleDisplayMode(.inline)
     .navigationBarBackButtonHidden(true)
     .toolbar {
-      if !showSummary {
+      if !showSummary || !deleteAssets.isEmpty {
         ToolbarItem(placement: .topBarLeading) {
           Button {
             cancelScan()
@@ -1028,12 +1036,7 @@ struct SimilarReviewSessionView: View {
           } label: {
             Image(systemName: "xmark")
           }
-          .accessibilityLabel("Close similar review")
-        }
-      }
-      if showSummary {
-        ToolbarItem(placement: .topBarTrailing) {
-          Button("Done") { dismiss() }
+          .accessibilityLabel(showSummary ? "Close without deleting" : "Close similar review")
         }
       }
     }
@@ -1401,27 +1404,6 @@ struct SimilarReviewSessionView: View {
           .background(AppColor.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
 
-        if !deleteAssets.isEmpty {
-          Button(role: .destructive) {
-            deleteSelected()
-          } label: {
-            HStack {
-              if deleteInProgress {
-                ProgressView().tint(.white)
-              } else {
-                Image(systemName: "trash.fill")
-              }
-              Text("Delete \(deleteAssets.count) Photos")
-                .fontWeight(.semibold)
-            }
-            .frame(maxWidth: .infinity)
-          }
-          .buttonStyle(.borderedProminent)
-          .tint(AppColor.delete)
-          .controlSize(.large)
-          .disabled(deleteInProgress)
-        }
-
         if lastSimilarUndo != nil {
           Button {
             undoLastSimilarDecision()
@@ -1434,7 +1416,39 @@ struct SimilarReviewSessionView: View {
           .controlSize(.large)
           .disabled(deleteInProgress)
         }
+      }
+      .padding(.horizontal, 20)
+      .padding(.bottom, 32)
+    }
+    .safeAreaInset(edge: .bottom, spacing: 0) {
+      summaryActionBar
+    }
+  }
 
+  // Pinned to the bottom so Delete is always reachable without scrolling past
+  // the marked-photo grid. Falls back to Done once nothing is left to delete.
+  private var summaryActionBar: some View {
+    Group {
+      if !deleteAssets.isEmpty {
+        Button(role: .destructive) {
+          deleteSelected()
+        } label: {
+          HStack {
+            if deleteInProgress {
+              ProgressView().tint(.white)
+            } else {
+              Image(systemName: "trash.fill")
+            }
+            Text("Delete \(deleteAssets.count) \(deleteAssets.count == 1 ? "Photo" : "Photos")")
+              .fontWeight(.semibold)
+          }
+          .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(AppColor.delete)
+        .controlSize(.large)
+        .disabled(deleteInProgress)
+      } else {
         Button {
           dismiss()
         } label: {
@@ -1442,13 +1456,14 @@ struct SimilarReviewSessionView: View {
             .fontWeight(.semibold)
             .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(.borderedProminent)
         .controlSize(.large)
-        .disabled(deleteInProgress)
       }
-      .padding(.horizontal, 20)
-      .padding(.bottom, 32)
     }
+    .padding(.horizontal, 20)
+    .padding(.top, 12)
+    .padding(.bottom, 8)
+    .background(.bar)
   }
 
   private func similarSummaryBanner(title: String, subtitle: String, systemImage: String, tint: Color) -> some View {

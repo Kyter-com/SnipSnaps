@@ -42,7 +42,7 @@ struct SettingsView: View {
         } header: {
           Text("Review")
         } footer: {
-          Text("Review size controls how many items appear in each session. Remember Reviewed skips items you already chose for each review mode.")
+          Text("Review size controls how many items appear in each session. Remember Reviewed skips items you've already reviewed so they don't show up again in any category.")
         }
 
         Section("Lifetime Stats") {

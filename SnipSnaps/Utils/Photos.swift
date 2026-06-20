@@ -111,17 +111,27 @@ struct ReviewModeCounts {
 
 enum PhotoReviewHistory {
   private static let keyPrefix = "reviewedAssetIdentifiers"
+  // Review memory is shared across every review mode: once an asset is reviewed
+  // in any category it is skipped in all categories until the memory window
+  // elapses. Older builds stored a separate list per mode; those lists are
+  // merged into this shared store the first time it is accessed.
+  private static let sharedKey = "reviewedAssetIdentifiers.shared"
   private static let legacyModeRawValues = ["recentlyEdited"]
-  private static let maxIdentifiersPerMode = 5_000
+  private static let maxIdentifiers = 20_000
   private static let maxPersistentHistoryAge: TimeInterval = 5 * 365 * 24 * 60 * 60
   private static let sessionLock = NSLock()
-  nonisolated(unsafe) private static var sessionIdentifiersByMode: [ReviewMode: Set<String>] = [:]
+  private static let migrationLock = NSLock()
+  nonisolated(unsafe) private static var sessionIdentifiers: Set<String> = []
+  nonisolated(unsafe) private static var didMigrateLegacyStores = false
 
   static func supportsSkipping(for mode: ReviewMode) -> Bool {
     switch mode {
-    case .today, .onThisDay, .random, .screenshots, .oldScreenshots, .videos, .screenRecordings, .largePhotos, .livePhotos, .bursts, .oldFavorites:
+    case .today, .random, .screenshots, .oldScreenshots, .videos, .screenRecordings, .largePhotos, .livePhotos, .bursts, .oldFavorites:
       return true
-    case .similar:
+    // On This Day is a revisit surface, not a cleanup queue: it always
+    // resurfaces past-year photos, so it neither skips reviewed items nor
+    // records its own. Similar uses its own group-based review flow.
+    case .onThisDay, .similar:
       return false
     }
   }
@@ -130,62 +140,57 @@ enum PhotoReviewHistory {
     guard supportsSkipping(for: mode) else { return [] }
     guard memoryOption != .never else { return [] }
     if memoryOption == .session {
-      return sessionReviewedIdentifiers(for: mode)
+      return sessionReviewedIdentifiers()
     }
 
-    return Set(filteredPersistentEntries(for: mode, memoryOption: memoryOption).keys)
+    return Set(filteredPersistentEntries(memoryOption: memoryOption).keys)
   }
 
   static func hasReviewedIdentifiers() -> Bool {
-    !sessionReviewedIdentifiersAreEmpty()
-      || ReviewMode.allCases.contains { !persistentEntries(for: $0).isEmpty }
-      || legacyModeRawValues.contains { UserDefaults.standard.object(forKey: key(forRawValue: $0)) != nil }
+    !sessionReviewedIdentifiersAreEmpty() || !persistentEntries().isEmpty
   }
 
   static func markReviewed(_ asset: PHAsset, for mode: ReviewMode, memoryOption: ReviewMemoryOption) {
     guard supportsSkipping(for: mode) else { return }
     guard memoryOption != .never else { return }
     if memoryOption == .session {
-      insertSessionReviewedIdentifier(asset.localIdentifier, for: mode)
+      insertSessionReviewedIdentifier(asset.localIdentifier)
       return
     }
 
-    var entries = persistentEntries(for: mode)
+    var entries = persistentEntries()
     entries[asset.localIdentifier] = Date().timeIntervalSince1970
-    storePersistentEntries(entries, for: mode)
+    storePersistentEntries(entries)
   }
 
   static func unmarkReviewed(_ asset: PHAsset, for mode: ReviewMode, memoryOption: ReviewMemoryOption) {
     guard supportsSkipping(for: mode) else { return }
     guard memoryOption != .never else { return }
     if memoryOption == .session {
-      removeSessionReviewedIdentifier(asset.localIdentifier, for: mode)
+      removeSessionReviewedIdentifier(asset.localIdentifier)
       return
     }
 
-    var entries = persistentEntries(for: mode)
+    var entries = persistentEntries()
     entries.removeValue(forKey: asset.localIdentifier)
-    storePersistentEntries(entries, for: mode)
+    storePersistentEntries(entries)
   }
 
   static func clearAll() {
     clearSessionReviewedIdentifiers()
-    for mode in ReviewMode.allCases where supportsSkipping(for: mode) {
+    UserDefaults.standard.removeObject(forKey: sharedKey)
+    for mode in ReviewMode.allCases {
       UserDefaults.standard.removeObject(forKey: key(for: mode))
     }
     clearLegacyModeKeys()
+    migrationLock.lock()
+    didMigrateLegacyStores = true
+    migrationLock.unlock()
   }
 
   static func compactStoredHistory() {
     trimSessionReviewedIdentifiers()
-    for mode in ReviewMode.allCases {
-      if supportsSkipping(for: mode) {
-        storePersistentEntries(compactedPersistentEntries(for: mode), for: mode)
-      } else {
-        UserDefaults.standard.removeObject(forKey: key(for: mode))
-      }
-    }
-    clearLegacyModeKeys()
+    storePersistentEntries(persistentEntries())
   }
 
   private static func key(for mode: ReviewMode) -> String {
@@ -202,8 +207,11 @@ enum PhotoReviewHistory {
     }
   }
 
-  private static func filteredPersistentEntries(for mode: ReviewMode, memoryOption: ReviewMemoryOption) -> [String: TimeInterval] {
-    let entries = persistentEntries(for: mode)
+  // Callers (reviewedIdentifiers) handle .never and .session before reaching
+  // here, so the only options that arrive are .forever (nil interval -> keep
+  // everything) and the timed windows (keep entries newer than the cutoff).
+  private static func filteredPersistentEntries(memoryOption: ReviewMemoryOption) -> [String: TimeInterval] {
+    let entries = persistentEntries()
     guard let expirationInterval = memoryOption.expirationInterval, expirationInterval > 0 else {
       return entries
     }
@@ -212,8 +220,12 @@ enum PhotoReviewHistory {
     return entries.filter { $0.value >= cutoff }
   }
 
-  private static func persistentEntries(for mode: ReviewMode) -> [String: TimeInterval] {
-    let key = key(for: mode)
+  private static func persistentEntries() -> [String: TimeInterval] {
+    migrateLegacyStoresIfNeeded()
+    return decodeEntries(forKey: sharedKey)
+  }
+
+  private static func decodeEntries(forKey key: String) -> [String: TimeInterval] {
     if let dictionary = UserDefaults.standard.dictionary(forKey: key) {
       return dictionary.compactMapValues { value in
         if let timestamp = value as? TimeInterval {
@@ -231,8 +243,32 @@ enum PhotoReviewHistory {
     return Dictionary(uniqueKeysWithValues: legacyIdentifiers.map { ($0, Date().timeIntervalSince1970) })
   }
 
-  private static func compactedPersistentEntries(for mode: ReviewMode) -> [String: TimeInterval] {
-    compactedPersistentEntries(persistentEntries(for: mode))
+  // Folds any per-mode review lists written by older builds into the shared
+  // store so reviewed assets are skipped across every category. Runs once.
+  private static func migrateLegacyStoresIfNeeded() {
+    migrationLock.lock()
+    defer { migrationLock.unlock() }
+    guard !didMigrateLegacyStores else { return }
+    didMigrateLegacyStores = true
+
+    let defaults = UserDefaults.standard
+    var merged = decodeEntries(forKey: sharedKey)
+    var didFindLegacy = false
+
+    let legacyKeys = ReviewMode.allCases.map { key(for: $0) }
+      + legacyModeRawValues.map { key(forRawValue: $0) }
+    for legacyKey in legacyKeys where legacyKey != sharedKey {
+      let entries = decodeEntries(forKey: legacyKey)
+      guard !entries.isEmpty else { continue }
+      didFindLegacy = true
+      for (identifier, timestamp) in entries {
+        merged[identifier] = max(merged[identifier] ?? 0, timestamp)
+      }
+      defaults.removeObject(forKey: legacyKey)
+    }
+
+    guard didFindLegacy else { return }
+    storePersistentEntries(merged)
   }
 
   private static func compactedPersistentEntries(_ entries: [String: TimeInterval]) -> [String: TimeInterval] {
@@ -240,61 +276,55 @@ enum PhotoReviewHistory {
     return entries.filter { $0.value >= cutoff }
   }
 
-  private static func storePersistentEntries(_ entries: [String: TimeInterval], for mode: ReviewMode) {
+  private static func storePersistentEntries(_ entries: [String: TimeInterval]) {
     let compactedEntries = compactedPersistentEntries(entries)
-    let limitedEntries = compactedEntries.sorted { $0.value > $1.value }.prefix(maxIdentifiersPerMode)
+    let limitedEntries = compactedEntries.sorted { $0.value > $1.value }.prefix(maxIdentifiers)
     let dictionary = Dictionary(uniqueKeysWithValues: limitedEntries.map { ($0.key, $0.value) })
     guard !dictionary.isEmpty else {
-      UserDefaults.standard.removeObject(forKey: key(for: mode))
+      UserDefaults.standard.removeObject(forKey: sharedKey)
       return
     }
-    UserDefaults.standard.set(dictionary, forKey: key(for: mode))
+    UserDefaults.standard.set(dictionary, forKey: sharedKey)
   }
 
-  private static func sessionReviewedIdentifiers(for mode: ReviewMode) -> Set<String> {
+  private static func sessionReviewedIdentifiers() -> Set<String> {
     sessionLock.lock()
     defer { sessionLock.unlock() }
-    return sessionIdentifiersByMode[mode] ?? []
+    return sessionIdentifiers
   }
 
   private static func sessionReviewedIdentifiersAreEmpty() -> Bool {
     sessionLock.lock()
     defer { sessionLock.unlock() }
-    return sessionIdentifiersByMode.values.allSatisfy(\.isEmpty)
+    return sessionIdentifiers.isEmpty
   }
 
-  private static func insertSessionReviewedIdentifier(_ identifier: String, for mode: ReviewMode) {
+  private static func insertSessionReviewedIdentifier(_ identifier: String) {
     sessionLock.lock()
     defer { sessionLock.unlock() }
-    var identifiers = sessionIdentifiersByMode[mode, default: []]
-    identifiers.insert(identifier)
-    while identifiers.count > maxIdentifiersPerMode, let excessIdentifier = identifiers.first {
-      identifiers.remove(excessIdentifier)
+    sessionIdentifiers.insert(identifier)
+    while sessionIdentifiers.count > maxIdentifiers, let excessIdentifier = sessionIdentifiers.first {
+      sessionIdentifiers.remove(excessIdentifier)
     }
-    sessionIdentifiersByMode[mode] = identifiers
   }
 
-  private static func removeSessionReviewedIdentifier(_ identifier: String, for mode: ReviewMode) {
+  private static func removeSessionReviewedIdentifier(_ identifier: String) {
     sessionLock.lock()
     defer { sessionLock.unlock() }
-    sessionIdentifiersByMode[mode]?.remove(identifier)
+    sessionIdentifiers.remove(identifier)
   }
 
   private static func clearSessionReviewedIdentifiers() {
     sessionLock.lock()
     defer { sessionLock.unlock() }
-    sessionIdentifiersByMode.removeAll()
+    sessionIdentifiers.removeAll()
   }
 
   private static func trimSessionReviewedIdentifiers() {
     sessionLock.lock()
     defer { sessionLock.unlock() }
-    for mode in sessionIdentifiersByMode.keys {
-      var identifiers = sessionIdentifiersByMode[mode] ?? []
-      while identifiers.count > maxIdentifiersPerMode, let excessIdentifier = identifiers.first {
-        identifiers.remove(excessIdentifier)
-      }
-      sessionIdentifiersByMode[mode] = identifiers
+    while sessionIdentifiers.count > maxIdentifiers, let excessIdentifier = sessionIdentifiers.first {
+      sessionIdentifiers.remove(excessIdentifier)
     }
   }
 }

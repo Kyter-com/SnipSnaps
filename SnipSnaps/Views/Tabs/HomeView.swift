@@ -525,30 +525,20 @@ struct HomeView: View {
   }
 
   private func countRefreshModes(afterReviewing mode: ReviewMode) -> [ReviewMode] {
-    switch mode {
-    case .today:
-      return [.today, .screenshots, .random]
-    case .onThisDay:
-      return [.onThisDay, .random]
-    case .random:
-      return [.random]
-    case .screenshots:
-      return [.today, .screenshots, .oldScreenshots, .random]
-    case .oldScreenshots:
-      return [.screenshots, .oldScreenshots, .random]
-    case .videos, .screenRecordings:
+    // Review memory is shared across categories, so reviewing in one mode can
+    // change the not-reviewed count of every mode that scans the same media
+    // type. Refresh all inexpensive same-type modes immediately. Large Photos
+    // is expensive to recount, so it only refreshes when it was the mode just
+    // reviewed; after an unrelated image review its card updates on the next
+    // launch or memory-setting change rather than mid-session.
+    if mode.reviewsVideos {
       return videoCountModes
-    case .largePhotos:
-      return counts[.largePhotos] == nil ? [.largePhotos, .today, .random] : [.today, .random]
-    case .livePhotos:
-      return [.today, .random, .livePhotos]
-    case .bursts:
-      return [.today, .random, .bursts]
-    case .oldFavorites:
-      return [.random, .oldFavorites]
-    case .similar:
-      return []
     }
+    var modes = fastCountModes.filter { !$0.reviewsVideos }
+    if mode == .largePhotos {
+      modes.append(.largePhotos)
+    }
+    return modes
   }
 }
 
