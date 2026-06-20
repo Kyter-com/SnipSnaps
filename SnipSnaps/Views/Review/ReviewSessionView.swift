@@ -1106,22 +1106,51 @@ struct SimilarReviewSessionView: View {
           .font(.footnote.weight(.medium))
           .foregroundStyle(.secondary)
           .monospacedDigit()
-        Spacer(minLength: 0)
-        Text("\(groupAssets.count) photos")
-          .font(.footnote)
-          .foregroundStyle(.secondary)
-          .monospacedDigit()
+        ProgressView(value: progressValue)
+          .tint(AppColor.primary)
+          .animation(.snappy(duration: 0.28, extraBounce: 0.02), value: progressValue)
       }
-      ProgressView(value: progressValue)
-        .tint(AppColor.primary)
-        .animation(.snappy(duration: 0.28, extraBounce: 0.02), value: progressValue)
+
+      if let asset = currentPhoto {
+        let detail = details(for: asset)
+        Button {
+          metadataTarget = MetadataTarget(asset: asset, details: detail)
+        } label: {
+          HStack(spacing: 12) {
+            Label(detail.captureDateSummaryText, systemImage: "calendar")
+              .lineLimit(1)
+            Spacer(minLength: 0)
+            Label(detail.fileSizeText, systemImage: "internaldrive")
+              .lineLimit(1)
+            Image(systemName: "info.circle")
+              .foregroundStyle(AppColor.primary)
+          }
+          .font(.footnote.weight(.medium))
+          .foregroundStyle(.secondary)
+          .padding(.horizontal, 14)
+          .padding(.vertical, 12)
+          .frame(maxWidth: .infinity)
+          .background {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+              .fill(.ultraThinMaterial)
+              .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                  .fill(AppColor.card.opacity(0.72))
+              }
+          }
+        }
+        .id(asset.localIdentifier)
+        .transition(.opacity.combined(with: .scale(scale: 0.985)))
+        .buttonStyle(.plain)
+      }
     }
+    .animation(.interactiveSpring(response: 0.28, dampingFraction: 0.86), value: currentPhoto?.localIdentifier)
   }
 
   // MARK: - Swipe flow (3+ photos)
 
   private var swipeReviewView: some View {
-    VStack(spacing: 12) {
+    VStack(spacing: 14) {
       groupHeader
         .padding(.horizontal, 20)
         .padding(.top, 8)
@@ -1130,9 +1159,6 @@ struct SimilarReviewSessionView: View {
         .padding(.horizontal, 20)
 
       cardStack
-        .padding(.horizontal, 20)
-
-      captionRow
         .padding(.horizontal, 20)
     }
     .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -1266,7 +1292,7 @@ struct SimilarReviewSessionView: View {
       SwipeOverlayView(offset: activeCardOffset.width)
     }
     .onTapGesture {
-      zoomTarget = ZoomTarget(asset: asset)
+      metadataTarget = MetadataTarget(asset: asset, details: details(for: asset))
     }
     .gesture(
       DragGesture(minimumDistance: 4)
@@ -1281,107 +1307,49 @@ struct SimilarReviewSessionView: View {
     )
   }
 
-  private var captionRow: some View {
-    HStack(spacing: 8) {
-      if let asset = currentPhoto, isSuggested(asset, in: currentGroup) {
-        Text("Suggested keep")
-          .font(.footnote.weight(.semibold))
-          .foregroundStyle(AppColor.primary)
-        Text("·")
-          .font(.footnote)
-          .foregroundStyle(.secondary)
-      }
-      if let asset = currentPhoto {
-        Text(captionText(for: asset))
-          .font(.footnote)
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
-          .minimumScaleFactor(0.85)
-      }
-      Spacer(minLength: 0)
-      if let asset = currentPhoto {
-        Button {
-          metadataTarget = MetadataTarget(asset: asset, details: details(for: asset))
-        } label: {
-          Image(systemName: "info.circle")
-            .font(.footnote)
-            .foregroundStyle(AppColor.primary)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Photo details")
-      }
-    }
-  }
-
   private var swipeDecisionBar: some View {
-    VStack(spacing: 12) {
-      secondaryActionRow
-      HStack(alignment: .top) {
-        decisionButton(
-          systemImage: "xmark",
-          title: "Delete",
-          tint: AppColor.delete,
-          backgroundTint: AppColor.deleteBackground,
-          accessibilityLabel: "Delete photo"
-        ) {
-          applyPhotoDecision(.delete)
-        }
-
-        Spacer(minLength: 0)
-
-        decisionButton(
-          systemImage: "checkmark",
-          title: "Keep",
-          tint: AppColor.success,
-          backgroundTint: AppColor.keepBackground,
-          accessibilityLabel: "Keep photo"
-        ) {
-          applyPhotoDecision(.keep)
-        }
-      }
-      .frame(maxWidth: .infinity)
-    }
-  }
-
-  private func decisionButton(
-    systemImage: String,
-    title: String,
-    tint: Color,
-    backgroundTint: Color,
-    accessibilityLabel: String,
-    action: @escaping () -> Void
-  ) -> some View {
-    VStack(spacing: 6) {
+    HStack(spacing: 18) {
       ReviewActionButton(
-        systemImage: systemImage,
-        tint: tint,
-        backgroundTint: backgroundTint,
-        accessibilityLabel: accessibilityLabel,
-        action: action
-      )
-      Text(title)
-        .font(.caption2.weight(.medium))
-        .foregroundStyle(.secondary)
-    }
-  }
-
-  private var secondaryActionRow: some View {
-    HStack(spacing: 12) {
-      Button("Skip group") {
-        skipGroup()
+        systemImage: "xmark",
+        tint: AppColor.delete,
+        backgroundTint: AppColor.deleteBackground,
+        accessibilityLabel: "Delete photo"
+      ) {
+        applyPhotoDecision(.delete)
       }
-      .buttonStyle(.bordered)
-      .controlSize(.small)
-      .tint(.gray)
 
-      if !undoStack.isEmpty {
-        Button("Undo") {
-          undo()
+      Spacer(minLength: 0)
+
+      HStack(spacing: 10) {
+        Button("Skip group") {
+          skipGroup()
         }
+        .font(.footnote.weight(.semibold))
         .buttonStyle(.bordered)
         .controlSize(.small)
+
+        if !undoStack.isEmpty {
+          Button("Undo") {
+            undo()
+          }
+          .font(.footnote.weight(.semibold))
+          .buttonStyle(.bordered)
+          .controlSize(.small)
+        }
+      }
+
+      Spacer(minLength: 0)
+
+      ReviewActionButton(
+        systemImage: "checkmark",
+        tint: AppColor.success,
+        backgroundTint: AppColor.keepBackground,
+        accessibilityLabel: "Keep photo"
+      ) {
+        applyPhotoDecision(.keep)
       }
     }
+    .frame(maxWidth: .infinity)
   }
 
   // MARK: - Non-review states
@@ -1719,32 +1687,6 @@ struct SimilarReviewSessionView: View {
 
   private func estimatedBytes(for assets: [PHAsset]) -> Int {
     assets.reduce(0) { $0 + estimatedBytes(for: $1) }
-  }
-
-  private func captionText(for asset: PHAsset) -> String {
-    let details = details(for: asset)
-    return "\(details.resolutionText) · \(details.fileSizeText) · \(details.captureDateText)"
-  }
-
-  // The single quietly-suggested keeper for a group: favorite, else highest
-  // resolution, else newest. Surfaced only as a "Suggested keep" caption.
-  private func bestDefaultKeepAsset(in group: SimilarPhotoGroup?) -> PHAsset? {
-    group?.assets.max {
-      if $0.isFavorite != $1.isFavorite {
-        return !$0.isFavorite && $1.isFavorite
-      }
-      let lhsPixels = $0.pixelWidth * $0.pixelHeight
-      let rhsPixels = $1.pixelWidth * $1.pixelHeight
-      if lhsPixels != rhsPixels {
-        return lhsPixels < rhsPixels
-      }
-      return ($0.creationDate ?? .distantPast) < ($1.creationDate ?? .distantPast)
-    }
-  }
-
-  private func isSuggested(_ asset: PHAsset?, in group: SimilarPhotoGroup?) -> Bool {
-    guard let asset, let best = bestDefaultKeepAsset(in: group) else { return false }
-    return asset.localIdentifier == best.localIdentifier
   }
 
   private func decision(for asset: PHAsset) -> PhotoDecision? {
