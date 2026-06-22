@@ -29,6 +29,13 @@ struct ContentView: View {
           Label("Home", systemImage: "house")
         }
         .tag(0)
+      #if os(macOS)
+      FilesView()
+        .tabItem {
+          Label("Files", systemImage: "folder")
+        }
+        .tag(2)
+      #endif
       SettingsView()
         .tabItem {
           Label("Settings", systemImage: "gearshape")

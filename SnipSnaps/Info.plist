@@ -6,5 +6,11 @@
 	<false/>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>SnipSnaps needs access to your photo library so you can review your photos and pick which ones to delete. For example, you swipe through your recent photos or screenshots, mark the ones you do not want, and SnipSnaps deletes only the ones you confirm.</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>SnipSnaps reviews files in folders you choose so you can clean up clutter. It only ever moves the files you confirm to the Trash.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>SnipSnaps reviews files in folders you choose so you can clean up clutter. It only ever moves the files you confirm to the Trash.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>SnipSnaps reviews files in folders you choose so you can clean up clutter. It only ever moves the files you confirm to the Trash.</string>
 </dict>
 </plist>
