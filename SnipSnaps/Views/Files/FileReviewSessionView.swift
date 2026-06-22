@@ -24,11 +24,16 @@ struct FileReviewSessionView: View {
   @AppStorage("reviewLimit") private var reviewLimit: Int = 20
   @AppStorage("totalDeletedCount") private var totalDeletedCount: Int = 0
   @AppStorage("totalDeletedBytes") private var totalDeletedBytes: Int = 0
+  @AppStorage("reviewMemoryOption") private var reviewMemoryOptionRawValue: String = ReviewMemoryOption.thirtyDays.rawValue
 
   private struct UndoStep {
     let item: FileItem
     let decision: FileDecision
     let index: Int
+  }
+
+  private var reviewMemoryOption: ReviewMemoryOption {
+    ReviewMemoryOption(rawValue: reviewMemoryOptionRawValue) ?? .thirtyDays
   }
 
   private var current: FileItem? {
@@ -343,9 +348,10 @@ struct FileReviewSessionView: View {
     let folders = folders
     let category = category
     let limit = max(5, min(reviewLimit, 200))
+    let reviewed = FileReviewHistory.reviewedPaths(memoryOption: reviewMemoryOption)
     Task {
       let scanned = await Task.detached(priority: .userInitiated) {
-        FileLibrary.scan(folders: folders, category: category, limit: limit)
+        FileLibrary.scan(folders: folders, category: category, limit: limit, excluding: reviewed)
       }.value
       await MainActor.run {
         items = scanned
@@ -367,6 +373,7 @@ struct FileReviewSessionView: View {
     case .keep: kept.append(item)
     case .delete: toDelete.append(item)
     }
+    FileReviewHistory.markReviewed(item.url.path, memoryOption: reviewMemoryOption)
     dragOffset = .zero
     advance()
   }
@@ -384,6 +391,7 @@ struct FileReviewSessionView: View {
     case .keep: kept.removeAll { $0.id == step.item.id }
     case .delete: toDelete.removeAll { $0.id == step.item.id }
     }
+    FileReviewHistory.unmarkReviewed(step.item.url.path, memoryOption: reviewMemoryOption)
     showSummary = false
     index = step.index
     lastUndo = nil
