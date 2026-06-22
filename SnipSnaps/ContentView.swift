@@ -37,8 +37,10 @@ struct ContentView: View {
     }
       .accentColor(AppColor.primary)
       .onChange(of: selectedTab) {
+        #if canImport(UIKit)
         let generator = UIImpactFeedbackGenerator(style: .light)
         generator.impactOccurred()
+        #endif
       }
   }
 }

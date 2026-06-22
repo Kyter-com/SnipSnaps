@@ -103,7 +103,7 @@ private struct ScreenshotHomeDemo: View {
                       .foregroundStyle(.secondary)
                       .padding(.horizontal, 10)
                       .padding(.vertical, 6)
-                      .background(Color(.tertiarySystemGroupedBackground), in: Capsule(style: .continuous))
+                      .background(AppColor.chip, in: Capsule(style: .continuous))
                       .padding(.top, 2)
                     }
                     if title == "Similar Photos" {
@@ -117,7 +117,7 @@ private struct ScreenshotHomeDemo: View {
                       .foregroundStyle(.secondary)
                       .padding(.horizontal, 10)
                       .padding(.vertical, 6)
-                      .background(Color(.tertiarySystemGroupedBackground), in: Capsule(style: .continuous))
+                      .background(AppColor.chip, in: Capsule(style: .continuous))
                       .padding(.top, 2)
                     }
                     if title == "Videos" {
@@ -131,7 +131,7 @@ private struct ScreenshotHomeDemo: View {
                       .foregroundStyle(.secondary)
                       .padding(.horizontal, 10)
                       .padding(.vertical, 6)
-                      .background(Color(.tertiarySystemGroupedBackground), in: Capsule(style: .continuous))
+                      .background(AppColor.chip, in: Capsule(style: .continuous))
                       .padding(.top, 2)
                     }
                   }
@@ -307,7 +307,7 @@ private struct ScreenshotSummaryDemo: View {
               }
             }
             .padding(10)
-            .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .background(AppColor.chip, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
           }
         }
         .padding(16)
@@ -368,7 +368,7 @@ private struct ScreenshotSettingsDemo: View {
             Image(systemName: "chevron.right")
               .font(.footnote)
               .fontWeight(.semibold)
-              .foregroundStyle(Color(UIColor.tertiaryLabel))
+              .foregroundStyle(.tertiary)
           }
         } footer: {
           Text("Resets review size, sorting, review memory, and lifetime deleted stats on this device. This does not delete photos.")

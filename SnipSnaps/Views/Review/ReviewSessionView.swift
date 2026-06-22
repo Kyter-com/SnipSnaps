@@ -300,8 +300,10 @@ struct ReviewSessionView: View {
       }
     }
     .navigationTitle(mode.title)
+    #if os(iOS)
     .navigationBarTitleDisplayMode(.inline)
     .navigationBarBackButtonHidden(true)
+    #endif
     .sheet(isPresented: $showMetadataSheet) {
       if let asset = currentAsset,
          let currentPhotoDetails {
@@ -310,7 +312,7 @@ struct ReviewSessionView: View {
     }
     .toolbar {
       if !showSummary || !deleteAssets.isEmpty {
-        ToolbarItem(placement: .topBarLeading) {
+        ToolbarItem(placement: .cancellationAction) {
           Button {
             dismiss()
           } label: {
@@ -320,7 +322,9 @@ struct ReviewSessionView: View {
         }
       }
     }
+    #if os(iOS)
     .toolbar(.hidden, for: .tabBar)
+    #endif
     .onAppear { loadAssets() }
     .onChange(of: currentIndex) { _, _ in
       updateCaching()
@@ -1060,11 +1064,13 @@ struct SimilarReviewSessionView: View {
       }
     }
     .navigationTitle("Similar")
+    #if os(iOS)
     .navigationBarTitleDisplayMode(.inline)
     .navigationBarBackButtonHidden(true)
+    #endif
     .toolbar {
       if !showSummary || !deleteAssets.isEmpty {
-        ToolbarItem(placement: .topBarLeading) {
+        ToolbarItem(placement: .cancellationAction) {
           Button {
             cancelScan()
             dismiss()
@@ -1075,10 +1081,18 @@ struct SimilarReviewSessionView: View {
         }
       }
     }
+    #if os(iOS)
     .toolbar(.hidden, for: .tabBar)
+    #endif
+    #if os(iOS)
     .fullScreenCover(item: $zoomTarget) { target in
       FullScreenPhotoView(asset: target.asset)
     }
+    #else
+    .sheet(item: $zoomTarget) { target in
+      FullScreenPhotoView(asset: target.asset)
+    }
+    #endif
     .sheet(item: $metadataTarget) { target in
       PhotoMetadataSheet(asset: target.asset, details: target.details)
     }
@@ -1978,7 +1992,9 @@ private struct FullScreenPhotoView: View {
       .padding(.trailing, 16)
       .accessibilityLabel("Close")
     }
+    #if os(iOS)
     .statusBarHidden(true)
+    #endif
   }
 
   private func magnification(in size: CGSize) -> some Gesture {
@@ -2090,14 +2106,18 @@ private struct PhotoMetadataSheet: View {
         #endif
       }
       .navigationTitle(asset.mediaType == .video ? "Video Details" : "Photo Details")
+      #if os(iOS)
       .navigationBarTitleDisplayMode(.inline)
+      #endif
       .toolbar {
-        ToolbarItem(placement: .topBarTrailing) {
+        ToolbarItem(placement: .confirmationAction) {
           Button("Done") { dismiss() }
         }
       }
     }
+    #if os(iOS)
     .presentationDetents([.medium, .large])
+    #endif
   }
 }
 
@@ -2123,7 +2143,7 @@ private struct AssetLocationMapView: View {
     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     .overlay {
       RoundedRectangle(cornerRadius: 14, style: .continuous)
-        .strokeBorder(Color(.separator).opacity(0.35), lineWidth: 0.5)
+        .strokeBorder(AppColor.separator.opacity(0.35), lineWidth: 0.5)
     }
     .accessibilityLabel("Capture location map")
   }
@@ -2178,7 +2198,7 @@ private struct PhotoCardView: View {
       }
     }
     .frame(width: fittedSize.width, height: fittedSize.height)
-    .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+    .background(AppColor.elevatedCard, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
     .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
     .overlay(
       RoundedRectangle(cornerRadius: 28, style: .continuous)
@@ -2312,7 +2332,7 @@ private struct CardBackdropView: View {
 
   var body: some View {
     RoundedRectangle(cornerRadius: 28, style: .continuous)
-      .fill(Color(.secondarySystemBackground))
+      .fill(AppColor.elevatedCard)
       .overlay(
         RoundedRectangle(cornerRadius: 28, style: .continuous)
           .strokeBorder(Color.white.opacity(0.24), lineWidth: 0.5)
@@ -2379,7 +2399,7 @@ private struct PhotoAssetImageView: View {
           .opacity(isLoaded ? 1 : 0)
       } else {
         Rectangle()
-          .fill(Color(.tertiarySystemFill))
+          .fill(AppColor.fill)
       }
 
       #if canImport(PhotosUI) && canImport(UIKit)
