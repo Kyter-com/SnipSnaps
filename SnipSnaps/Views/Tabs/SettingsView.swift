@@ -132,6 +132,7 @@ struct SettingsView: View {
           )
         }
       }
+      .formStyle(.grouped)
       .navigationTitle("Settings")
       .alert("Reset Local Settings?", isPresented: $showResetLocalSettingsAlert) {
         Button("Reset", role: .destructive) {
