@@ -4,9 +4,14 @@ import AppKit
 
 struct FilesView: View {
   @StateObject private var store = FileFolderStore()
-  @State private var counts: [FileReviewCategory: Int] = [:]
+  @State private var counts: [FileReviewCategory: FileCounts] = [:]
   @State private var isCounting = false
   @State private var selectedCategory: FileReviewCategory?
+  @AppStorage("reviewMemoryOption") private var reviewMemoryOptionRawValue: String = ReviewMemoryOption.thirtyDays.rawValue
+
+  private var reviewMemoryOption: ReviewMemoryOption {
+    ReviewMemoryOption(rawValue: reviewMemoryOptionRawValue) ?? .thirtyDays
+  }
 
   var body: some View {
     NavigationStack {
@@ -46,6 +51,7 @@ struct FilesView: View {
     .onChange(of: selectedCategory) { _, newValue in
       if newValue == nil { refreshCounts() }
     }
+    .onChange(of: reviewMemoryOptionRawValue) { _, _ in refreshCounts() }
     .onAppear { refreshCounts() }
   }
 
@@ -153,7 +159,11 @@ struct FilesView: View {
           Button {
             selectedCategory = category
           } label: {
-            FileCategoryCard(category: category, count: counts[category])
+            FileCategoryCard(
+              category: category,
+              counts: counts[category],
+              memoryActive: reviewMemoryOption != .never
+            )
           }
           .buttonStyle(.plain)
         }
@@ -184,9 +194,10 @@ struct FilesView: View {
       return
     }
     isCounting = true
+    let reviewed = FileReviewHistory.reviewedPaths(memoryOption: reviewMemoryOption)
     Task {
       let tally = await Task.detached(priority: .utility) {
-        FileLibrary.counts(folders: folders)
+        FileLibrary.counts(folders: folders, reviewedPaths: reviewed)
       }.value
       await MainActor.run {
         counts = tally
@@ -208,7 +219,8 @@ struct FilesView: View {
 
 private struct FileCategoryCard: View {
   let category: FileReviewCategory
-  let count: Int?
+  let counts: FileCounts?
+  let memoryActive: Bool
 
   var body: some View {
     HStack(spacing: 16) {
@@ -224,9 +236,15 @@ private struct FileCategoryCard: View {
         Text(category.subtitle)
           .font(.subheadline)
           .foregroundStyle(.secondary)
+        if let summary = countSummary {
+          Text(summary)
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.tertiary)
+            .monospacedDigit()
+        }
       }
       Spacer()
-      Text(countText)
+      Text(displayCount)
         .font(.title2.weight(.bold))
         .foregroundStyle(.tertiary)
         .monospacedDigit()
@@ -236,9 +254,19 @@ private struct FileCategoryCard: View {
     .background(AppColor.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
   }
 
-  private var countText: String {
-    guard let count else { return "…" }
-    return count > 9999 ? "9999+" : "\(count)"
+  private var displayCount: String {
+    if category.showsScanAction { return "Scan" }
+    guard let counts else { return "…" }
+    let value = memoryActive ? counts.notReviewed : counts.total
+    return value > 9999 ? "9999+" : "\(value)"
+  }
+
+  private var countSummary: String? {
+    guard !category.showsScanAction, let counts else { return nil }
+    if memoryActive {
+      return "\(counts.notReviewed) not reviewed · \(counts.total) total"
+    }
+    return "\(counts.total) total"
   }
 }
 #endif

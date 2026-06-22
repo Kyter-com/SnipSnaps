@@ -211,6 +211,9 @@ struct SettingsView: View {
     similarSortOptionRawValue = SimilarSortOption.recent.rawValue
     reviewMemoryOptionRawValue = ReviewMemoryOption.thirtyDays.rawValue
     PhotoReviewHistory.clearAll()
+    #if os(macOS)
+    FileReviewHistory.clearAll()
+    #endif
     totalDeletedCount = 0
     totalDeletedBytes = 0
   }

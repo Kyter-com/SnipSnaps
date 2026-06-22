@@ -13,6 +13,9 @@ struct SnipSnapsApp: App {
 
   init() {
     PhotoReviewHistory.compactStoredHistory()
+    #if os(macOS)
+    FileReviewHistory.compact()
+    #endif
   }
 
   var body: some Scene {

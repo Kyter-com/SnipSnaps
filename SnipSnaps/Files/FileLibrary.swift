@@ -1,6 +1,7 @@
 #if os(macOS)
 import Foundation
 import UniformTypeIdentifiers
+import CryptoKit
 
 // On-disk analog of PhotoLibrary: enumerates the user-granted folders, buckets
 // files into review categories, and moves confirmed files to the Trash
@@ -18,7 +19,11 @@ enum FileLibrary {
     .isPackageKey, .contentTypeKey
   ]
 
-  static func scan(folders: [URL], category: FileReviewCategory, limit: Int) -> [FileItem] {
+  static func scan(folders: [URL], category: FileReviewCategory, limit: Int, excluding reviewed: Set<String> = []) -> [FileItem] {
+    if category == .duplicates {
+      return duplicateRedundantCopies(folders: folders, excluding: reviewed, limit: limit)
+    }
+
     let oldCutoff = Calendar.current.date(byAdding: .day, value: -oldFileAgeDays, to: Date()) ?? .distantPast
     var items: [FileItem] = []
     var examined = 0
@@ -29,7 +34,7 @@ enum FileLibrary {
         if examined >= maxFilesExamined { break }
         guard let item = makeItem(url) else { continue }
         examined += 1
-        if matches(item, category: category, oldCutoff: oldCutoff) {
+        if matches(item, category: category, oldCutoff: oldCutoff), !reviewed.contains(item.url.path) {
           items.append(item)
         }
       }
@@ -38,10 +43,12 @@ enum FileLibrary {
     return Array(sorted(items, category: category).prefix(limit))
   }
 
-  // Single-pass tally for the category cards.
-  static func counts(folders: [URL]) -> [FileReviewCategory: Int] {
+  // Single-pass tally for the category cards: total and not-yet-reviewed per
+  // category (duplicates is scan-on-demand, so it is omitted here).
+  static func counts(folders: [URL], reviewedPaths reviewed: Set<String>) -> [FileReviewCategory: FileCounts] {
     let oldCutoff = Calendar.current.date(byAdding: .day, value: -oldFileAgeDays, to: Date()) ?? .distantPast
-    var counts: [FileReviewCategory: Int] = [:]
+    var total: [FileReviewCategory: Int] = [:]
+    var fresh: [FileReviewCategory: Int] = [:]
     var examined = 0
 
     for folder in folders {
@@ -50,13 +57,66 @@ enum FileLibrary {
         if examined >= maxFilesExamined { break }
         guard let item = makeItem(url) else { continue }
         examined += 1
-        counts[.everything, default: 0] += 1
-        if item.size >= largeFileMinimumBytes { counts[.large, default: 0] += 1 }
-        if item.modified < oldCutoff { counts[.old, default: 0] += 1 }
-        if item.isScreenshot { counts[.screenshots, default: 0] += 1 }
+        let notReviewed = !reviewed.contains(item.url.path)
+        func bump(_ category: FileReviewCategory) {
+          total[category, default: 0] += 1
+          if notReviewed { fresh[category, default: 0] += 1 }
+        }
+        bump(.everything)
+        if item.size >= largeFileMinimumBytes { bump(.large) }
+        if item.modified < oldCutoff { bump(.old) }
+        if item.isScreenshot { bump(.screenshots) }
       }
     }
-    return counts
+
+    var result: [FileReviewCategory: FileCounts] = [:]
+    for category in [FileReviewCategory.everything, .large, .old, .screenshots] {
+      result[category] = FileCounts(total: total[category] ?? 0, notReviewed: fresh[category] ?? 0)
+    }
+    return result
+  }
+
+  // Exact-content duplicates: bucket by size, hash only collision buckets, then
+  // surface the redundant copies (every copy except the oldest "original" in
+  // each identical group). Unique file sizes never get hashed.
+  static func duplicateRedundantCopies(folders: [URL], excluding reviewed: Set<String>, limit: Int) -> [FileItem] {
+    var bySize: [Int64: [FileItem]] = [:]
+    var examined = 0
+    for folder in folders {
+      guard let enumerator = enumerator(for: folder) else { continue }
+      for case let url as URL in enumerator {
+        if examined >= maxFilesExamined { break }
+        guard let item = makeItem(url), item.size > 0 else { continue }
+        examined += 1
+        bySize[item.size, default: []].append(item)
+      }
+    }
+
+    var redundant: [FileItem] = []
+    for (_, sameSize) in bySize where sameSize.count > 1 {
+      var byHash: [String: [FileItem]] = [:]
+      for item in sameSize {
+        guard let hash = contentHash(item.url) else { continue }
+        byHash[hash, default: []].append(item)
+      }
+      for (_, identical) in byHash where identical.count > 1 {
+        let ordered = identical.sorted { $0.created < $1.created }
+        for copy in ordered.dropFirst() where !reviewed.contains(copy.url.path) {
+          redundant.append(copy)
+        }
+      }
+    }
+    return Array(redundant.sorted { $0.size > $1.size }.prefix(limit))
+  }
+
+  private static func contentHash(_ url: URL) -> String? {
+    guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+    defer { try? handle.close() }
+    var hasher = SHA256()
+    while let chunk = try? handle.read(upToCount: 1 << 20), !chunk.isEmpty {
+      hasher.update(data: chunk)
+    }
+    return hasher.finalize().map { String(format: "%02x", $0) }.joined()
   }
 
   struct TrashResult: Sendable {
@@ -118,6 +178,7 @@ enum FileLibrary {
     case .large: return item.size >= largeFileMinimumBytes
     case .old: return item.modified < oldCutoff
     case .screenshots: return item.isScreenshot
+    case .duplicates: return false // handled separately via duplicateRedundantCopies
     }
   }
 
@@ -127,7 +188,7 @@ enum FileLibrary {
       return items.sorted { $0.size > $1.size }
     case .old:
       return items.sorted { $0.modified < $1.modified }
-    case .everything, .screenshots:
+    case .everything, .screenshots, .duplicates:
       return items.sorted { $0.modified > $1.modified }
     }
   }
