@@ -512,7 +512,6 @@ enum PhotoLibrary {
     progressHandler: ((SimilarPhotoScanProgress) async -> Void)? = nil,
     partialGroupsHandler: (([SimilarPhotoGroup]) async -> Void)? = nil
   ) async -> [SimilarPhotoGroup] {
-    #if canImport(UIKit)
     let options = PHFetchOptions()
     options.sortDescriptors = [
       NSSortDescriptor(key: "creationDate", ascending: sort == .oldest)
@@ -557,12 +556,12 @@ enum PhotoLibrary {
     for (index, asset) in assets.enumerated() {
       guard !Task.isCancelled else { return sortedSimilarGroups(groups, sort: sort).prefix(maxGroups).map { $0 } }
       if !usedIdentifiers.contains(asset.localIdentifier),
-         let image = thumbnailImage(
+         let cgImage = thumbnailCGImage(
           for: asset,
           targetSize: CGSize(width: 18, height: 16),
           deliveryMode: .highQualityFormat
          ),
-         let hash = differenceHash(for: image) {
+         let hash = differenceHash(for: cgImage) {
         fingerprints.append(SimilarPhotoFingerprint(asset: asset, hash: hash, aspectRatio: aspectRatio(for: asset)))
       }
       if index == 0 || index == assets.count - 1 || index.isMultiple(of: 20) {
@@ -676,9 +675,6 @@ enum PhotoLibrary {
     ))
     await partialGroupsHandler?(sortedGroups)
     return sortedGroups
-    #else
-    return []
-    #endif
   }
 
   @discardableResult
@@ -1292,21 +1288,23 @@ enum PhotoLibrary {
     (lhs ^ rhs).nonzeroBitCount
   }
 
-  #if canImport(UIKit)
-  private static func thumbnailImage(
+  // Renders a PHAsset thumbnail straight to a CGImage so the dHash and Vision
+  // comparison core is shared across platforms; only the PlatformImage ->
+  // CGImage step differs (UIImage.cgImage vs NSImage.cgImage(forProposedRect:)).
+  private static func thumbnailCGImage(
     for asset: PHAsset,
     targetSize: CGSize,
     contentMode: PHImageContentMode = .aspectFill,
     deliveryMode: PHImageRequestOptionsDeliveryMode = .fastFormat,
     allowsNetworkAccess: Bool = false
-  ) -> UIImage? {
+  ) -> CGImage? {
     let options = PHImageRequestOptions()
     options.isNetworkAccessAllowed = allowsNetworkAccess
     options.deliveryMode = deliveryMode
     options.resizeMode = .exact
     options.isSynchronous = true
 
-    var image: UIImage?
+    var cgImage: CGImage?
     imageManager.requestImage(
       for: asset,
       targetSize: targetSize,
@@ -1314,10 +1312,15 @@ enum PhotoLibrary {
       options: options
     ) { result, info in
       let isCancelled = (info?[PHImageCancelledKey] as? Bool) ?? false
-      guard !isCancelled else { return }
-      image = result
+      guard !isCancelled, let result else { return }
+      #if canImport(UIKit)
+      cgImage = result.cgImage
+      #elseif canImport(AppKit)
+      var proposedRect = CGRect(origin: .zero, size: result.size)
+      cgImage = result.cgImage(forProposedRect: &proposedRect, context: nil, hints: nil)
+      #endif
     }
-    return image
+    return cgImage
   }
 
   private static func featurePrintDistance(
@@ -1347,12 +1350,11 @@ enum PhotoLibrary {
       return cached
     }
 
-    guard let image = thumbnailImage(
+    guard let cgImage = thumbnailCGImage(
       for: asset,
       targetSize: CGSize(width: 160, height: 160),
       contentMode: .aspectFit
-    ),
-      let cgImage = image.cgImage else {
+    ) else {
       return nil
     }
 
@@ -1370,9 +1372,7 @@ enum PhotoLibrary {
     }
   }
 
-  private static func differenceHash(for image: UIImage) -> UInt64? {
-    guard let cgImage = image.cgImage else { return nil }
-
+  private static func differenceHash(for cgImage: CGImage) -> UInt64? {
     let width = 9
     let height = 8
     var pixels = [UInt8](repeating: 0, count: width * height)
@@ -1410,7 +1410,6 @@ enum PhotoLibrary {
     }
     return hash
   }
-  #endif
 
   private static func onThisDayPredicate(referenceDate: Date = Date()) -> NSPredicate? {
     let calendar = Calendar.current
