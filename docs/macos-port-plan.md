@@ -1,9 +1,45 @@
 # SnipSnaps for macOS — Implementation Plan
 
-**Status:** proposed (planning only — no code changes yet)
+**Status:** in progress — Phases 0–2, 4, 4b implemented on branch `macos-port-phase-0-1` (local, **not pushed**). Phase 3 + a few follow-ups remain.
 **Target:** native macOS destination on the existing SwiftUI target
 **Distribution:** Mac App Store + App Sandbox (decided)
-**Author:** planning doc, 2026-06-22
+**Author:** planning doc, 2026-06-22 · last updated 2026-06-22 (pause point)
+
+---
+
+## Progress log (pause point)
+
+All work is on branch `macos-port-phase-0-1`. Commits, newest first:
+
+| Commit | What |
+|---|---|
+| `9f7c826` | Phase 4b — Files "Remember Reviewed" (`FileReviewHistory`) + duplicate detection (size-bucket + SHA-256) |
+| `b902724` | Files↔Photos cohesion — shared `reviewLimit`, lifetime `totalDeletedCount`/`Bytes`, post-review count refresh |
+| `2a684b7` | Phase 4 — on-disk Files cleanup surface (`SnipSnaps/Files/*`, `Views/Files/*`, macOS-only) |
+| `5259bf4` | Phase 2 — Similar/duplicate scan on macOS (shared `CGImage` core) |
+| `fd8ee7b` | docs — record the Form layout-cycle crash + fix |
+| `7647f1a` | Crash fix — `.formStyle(.grouped)` in Settings |
+| `45264df` | Phase 0–1 — native Mac target, sandbox entitlements, UIKit-only fixes |
+| `1129e0e` | This plan doc |
+
+**Done:** Phase 0–1, Phase 2, Phase 4 (incl. Duplicates), and full Files↔Photos settings/stats cohesion (the original plan folded Phase 3's keyboard shortcuts into the Files review early).
+
+**Deviations from the original plan:**
+- Built order was 0–1 → 2 → **4 → 4b**, skipping Phase 3 (polish) at the user's request to reach the Files feature sooner.
+- Hit and fixed a macOS-only launch crash not anticipated in the plan: the default columnar `Form` style → AppKit "Update Constraints in Window pass" abort (see risk #10). Fix: `.formStyle(.grouped)`.
+- A separate per-SDK entitlements file (`SnipSnaps-macOS.entitlements` via `CODE_SIGN_ENTITLEMENTS[sdk=macosx*]`) is used so iOS keeps its own; the project already had `ENABLE_APP_SANDBOX=YES` / `ENABLE_USER_SELECTED_FILES` build settings (flipped to `readwrite` for Phase 4).
+
+**Verification reality (this machine):**
+- macOS builds verified green at every phase; app launches and the Files surface works live on a real Downloads folder (real scan counts).
+- **iOS not buildable here** — the iOS 26.5 platform isn't installed in this Xcode, so iOS was verified only by construction (changes guarded/behavior-preserving). Build iOS on a normal setup before shipping.
+- **Photos features not runtime-tested** — this Mac's Photos library is empty (0 assets), so Similar-matching accuracy on macOS is unverified.
+- **Destructive Files paths not driven by Claude** — Trash, duplicate review, and remember-reviewed skip were left for the user to exercise (avoiding deletion of real files); they compile and the app launches.
+
+**Remaining:**
+- Phase 3 — move Settings into a macOS `Settings`/⌘, window; Photos-side review keyboard shortcuts.
+- Near-duplicate *image* matching for Files (reuse the Phase 2 dHash+Vision core fed `CGImageSource` from disk).
+- Runtime-confirm the destructive Files flows + Similar matching on a Mac with a populated Photos library; iOS regression build.
+- A macOS app-icon slot in the asset catalog before shipping.
 
 ---
 
