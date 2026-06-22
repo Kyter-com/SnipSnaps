@@ -177,6 +177,7 @@ Suggested sequencing: ship **Phases 0–3 as "SnipSnaps for Mac (Photos)"** firs
 7. **iCloud "Desktop & Documents Folders"** — enumerating/hashing dataless placeholders can pull gigabytes; detect `NSURLUbiquitousItemIsDownloadedKey` and skip/warn.
 8. **Touch-tuned swipe UX** feels wrong with a mouse — Phase 3 keyboard shortcuts + button-first interaction are not optional polish, they're required for a usable desktop loop.
 9. **App Store privacy labels (2026 rules)** — disclose local data handling accurately.
+10. **macOS `Form` default style crashes at launch** *(found + fixed in Phase 1)* — SwiftUI's default columnar `Form` style on macOS can trip an AppKit "Update Constraints in Window pass" cycle (`NSGenericException`/SIGABRT) once a form has enough rows. `TabView` eagerly lays out all tabs on macOS, so a crash in any tab aborts the whole app at launch. Fix: `.formStyle(.grouped)` (no-op on iOS, where grouped is already the default). Watch for the same cycle in any future macOS `Form`/`List`-heavy screens (e.g. the Files-folder settings).
 
 ---
 
