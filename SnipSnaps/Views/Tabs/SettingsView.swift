@@ -51,7 +51,7 @@ struct SettingsView: View {
             Text("No deletions yet.")
               .foregroundStyle(.secondary)
           } else {
-            LabeledContent("Deleted photos", value: "\(totalDeletedCount)")
+            LabeledContent("Deleted items", value: "\(totalDeletedCount)")
             LabeledContent("Space freed", value: totalDeletedBytesText)
           }
         }

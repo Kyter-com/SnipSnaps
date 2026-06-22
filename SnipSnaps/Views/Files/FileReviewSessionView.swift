@@ -17,8 +17,13 @@ struct FileReviewSessionView: View {
   @State private var showSummary = false
   @State private var deleteInProgress = false
   @State private var resultMessage: String?
+  @State private var deletedCount = 0
   @State private var dragOffset: CGSize = .zero
-  @AppStorage("fileReviewLimit") private var reviewLimit = 200
+  // Shared with the Photos review so "Review Size" and the lifetime "Space
+  // freed" stats behave the same across both surfaces.
+  @AppStorage("reviewLimit") private var reviewLimit: Int = 20
+  @AppStorage("totalDeletedCount") private var totalDeletedCount: Int = 0
+  @AppStorage("totalDeletedBytes") private var totalDeletedBytes: Int = 0
 
   private struct UndoStep {
     let item: FileItem
@@ -215,7 +220,7 @@ struct FileReviewSessionView: View {
         VStack(spacing: 6) {
           Text("Review complete")
             .font(.title2.weight(.semibold))
-          Text("\(kept.count) kept · \(toDelete.count) to trash")
+          Text("\(kept.count) kept · \(toDelete.count + deletedCount) to trash")
             .font(.subheadline)
             .foregroundStyle(.secondary)
         }
@@ -255,6 +260,24 @@ struct FileReviewSessionView: View {
                   .foregroundStyle(.secondary)
               }
             }
+          }
+          .padding(16)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .background(AppColor.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+
+        if totalDeletedCount > 0 {
+          VStack(alignment: .leading, spacing: 4) {
+            Text("Lifetime")
+              .font(.footnote.weight(.semibold))
+              .foregroundStyle(.secondary)
+            HStack {
+              Text("\(totalDeletedCount) deleted")
+              Spacer()
+              Text(totalDeletedBytesText)
+            }
+            .font(.footnote)
+            .foregroundStyle(.secondary)
           }
           .padding(16)
           .frame(maxWidth: .infinity, alignment: .leading)
@@ -308,13 +331,18 @@ struct FileReviewSessionView: View {
     return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
   }
 
+  private var totalDeletedBytesText: String {
+    guard totalDeletedBytes > 0 else { return "0 KB" }
+    return ByteCountFormatter.string(fromByteCount: Int64(totalDeletedBytes), countStyle: .file)
+  }
+
   // MARK: - Actions
 
   private func load() {
     isScanning = true
     let folders = folders
     let category = category
-    let limit = max(20, min(reviewLimit, 1000))
+    let limit = max(5, min(reviewLimit, 200))
     Task {
       let scanned = await Task.detached(priority: .userInitiated) {
         FileLibrary.scan(folders: folders, category: category, limit: limit)
@@ -325,6 +353,7 @@ struct FileReviewSessionView: View {
         kept = []
         toDelete = []
         lastUndo = nil
+        deletedCount = 0
         showSummary = false
         isScanning = false
       }
@@ -387,6 +416,9 @@ struct FileReviewSessionView: View {
         } else {
           resultMessage = "Moved \(result.trashed) · \(result.failed.count) couldn't be moved"
         }
+        deletedCount += result.trashed
+        totalDeletedCount += result.trashed
+        totalDeletedBytes += Int(result.freedBytes)
         toDelete = []
         lastUndo = nil
       }
