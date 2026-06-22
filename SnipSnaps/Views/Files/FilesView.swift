@@ -41,6 +41,11 @@ struct FilesView: View {
       }
     }
     .onChange(of: store.folders) { _, _ in refreshCounts() }
+    // Re-tally when a review session closes (files may have been trashed), the
+    // same way HomeView refreshes counts after a Photos review.
+    .onChange(of: selectedCategory) { _, newValue in
+      if newValue == nil { refreshCounts() }
+    }
     .onAppear { refreshCounts() }
   }
 
