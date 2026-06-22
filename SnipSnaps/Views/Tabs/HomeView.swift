@@ -172,9 +172,11 @@ struct HomeView: View {
       }
       .background(AppColor.background)
       .navigationTitle("SnipSnaps")
+      #if os(iOS)
       .navigationBarTitleDisplayMode(.large)
+      #endif
       .toolbar {
-        ToolbarItem(placement: .topBarTrailing) {
+        ToolbarItem(placement: .primaryAction) {
           if isRefreshingCounts {
             updatingCountsIndicator
           }
@@ -271,7 +273,7 @@ struct HomeView: View {
       .foregroundStyle(.secondary)
       .padding(.horizontal, 10)
       .padding(.vertical, 6)
-      .background(Color(.tertiarySystemGroupedBackground), in: Capsule(style: .continuous))
+      .background(AppColor.chip, in: Capsule(style: .continuous))
     }
     .accessibilityLabel("Sort screenshots by \(screenshotSortOption.title)")
   }
@@ -299,7 +301,7 @@ struct HomeView: View {
       .foregroundStyle(.secondary)
       .padding(.horizontal, 10)
       .padding(.vertical, 6)
-      .background(Color(.tertiarySystemGroupedBackground), in: Capsule(style: .continuous))
+      .background(AppColor.chip, in: Capsule(style: .continuous))
     }
     .accessibilityLabel("Sort videos by \(videoSortOption.subtitle)")
   }
@@ -327,7 +329,7 @@ struct HomeView: View {
       .foregroundStyle(.secondary)
       .padding(.horizontal, 10)
       .padding(.vertical, 6)
-      .background(Color(.tertiarySystemGroupedBackground), in: Capsule(style: .continuous))
+      .background(AppColor.chip, in: Capsule(style: .continuous))
     }
     .accessibilityLabel("Sort similar groups by \(similarSortOption.subtitle)")
   }

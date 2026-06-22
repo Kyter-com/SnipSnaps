@@ -11,6 +11,7 @@ import SwiftUI
 struct SettingsView: View {
   private let defaultReviewLimit = 20
 
+  @Environment(\.openURL) private var openURL
   @AppStorage("reviewLimit") private var reviewLimit: Int = 20
   @AppStorage("screenshotSortOption") private var screenshotSortOptionRawValue: String = ScreenshotSortOption.recent.rawValue
   @AppStorage("videoSortOption") private var videoSortOptionRawValue: String = VideoSortOption.largest.rawValue
@@ -75,7 +76,7 @@ struct SettingsView: View {
         Section("Support") {
           Button {
             if let url = URL(string: "https://github.com/Kyter-com/SnipSnaps") {
-              UIApplication.shared.open(url)
+              openURL(url)
             }
           } label: {
             HStack {
@@ -89,7 +90,7 @@ struct SettingsView: View {
               Spacer()
               Image(systemName: "arrow.up.forward")
                 .font(.footnote)
-                .foregroundStyle(Color(UIColor.tertiaryLabel))
+                .foregroundStyle(.tertiary)
             }
           }
           settingsLink(
@@ -167,7 +168,7 @@ struct SettingsView: View {
   ) -> some View {
     Button {
       if let url = URL(string: url) {
-        UIApplication.shared.open(url)
+        openURL(url)
       }
     } label: {
       settingsRow(
@@ -198,7 +199,7 @@ struct SettingsView: View {
       Image(systemName: trailingSystemImage)
         .font(.footnote)
         .fontWeight(trailingSystemImage == "chevron.right" ? .semibold : .regular)
-        .foregroundStyle(Color(UIColor.tertiaryLabel))
+        .foregroundStyle(.tertiary)
     }
   }
 
@@ -219,7 +220,7 @@ struct SettingsView: View {
     let encodedSubject = subject.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
 
     if let url = URL(string: "mailto:\(email)?subject=\(encodedSubject)") {
-      UIApplication.shared.open(url)
+      openURL(url)
     }
   }
 }
