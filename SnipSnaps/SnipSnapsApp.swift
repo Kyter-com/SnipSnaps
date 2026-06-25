@@ -35,5 +35,20 @@ struct SnipSnapsApp: App {
           }
         }
     }
+    #if os(macOS)
+    .defaultSize(width: 1000, height: 720)
+    .windowResizability(.contentMinSize)
+    .commands {
+      AppCommands()
+    }
+    #endif
+
+    // Native Settings window, opened by the standard ⌘, menu item.
+    #if os(macOS)
+    Settings {
+      SettingsView()
+        .frame(width: 480, height: 560)
+    }
+    #endif
   }
 }

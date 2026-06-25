@@ -171,14 +171,26 @@ struct HomeView: View {
         .padding(.bottom, 32)
       }
       .background(AppColor.background)
+      #if os(macOS)
+      .navigationTitle("Photos")
+      #else
       .navigationTitle("SnipSnaps")
-      #if os(iOS)
       .navigationBarTitleDisplayMode(.large)
       #endif
       .toolbar {
         ToolbarItem(placement: .primaryAction) {
           if isRefreshingCounts {
             updatingCountsIndicator
+          } else {
+            #if os(macOS)
+            Button {
+              refreshForCurrentMemoryOption()
+            } label: {
+              Image(systemName: "arrow.clockwise")
+            }
+            .help("Refresh counts")
+            .disabled(!canAccessPhotos)
+            #endif
           }
         }
       }
@@ -225,6 +237,7 @@ struct HomeView: View {
         )
       }
       .buttonStyle(.plain)
+      .interactiveCardHover()
       .disabled(!canAccessPhotos)
 
       if mode.usesScreenshotSort {
@@ -356,7 +369,7 @@ struct HomeView: View {
           refreshForCurrentMemoryOption()
         }
       }
-      .buttonStyle(.borderedProminent)
+      .prominentActionButton()
     }
     .frame(maxWidth: .infinity, alignment: .leading)
     .padding(16)
@@ -403,9 +416,11 @@ struct HomeView: View {
         next[mode] = PhotoLibrary.fetchCounts(for: mode, reviewMemory: reviewMemoryOption)
       }
       let refreshedCounts = next
-      HomeCountCache.store(refreshedCounts, memoryOptionRawValue: reviewMemoryOptionRawValue)
       await MainActor.run {
         guard countRefreshID == refreshID else { return }
+        // Cache only a result that still reflects the current generation, so a
+        // superseded recount can't write stale-but-fresh-stamped counts.
+        HomeCountCache.store(refreshedCounts, memoryOptionRawValue: reviewMemoryOptionRawValue)
         counts.merge(refreshedCounts) { _, new in new }
         isRefreshingCounts = false
       }
@@ -480,9 +495,9 @@ struct HomeView: View {
     Task.detached(priority: .userInitiated) {
       if !modesToRefresh.isEmpty {
         let refreshedCounts = Self.fetchCounts(for: modesToRefresh, reviewMemoryOption: reviewMemoryOption)
-        HomeCountCache.store(refreshedCounts, memoryOptionRawValue: reviewMemoryOptionRawValue)
         await MainActor.run {
           guard countRefreshID == refreshID else { return }
+          HomeCountCache.store(refreshedCounts, memoryOptionRawValue: reviewMemoryOptionRawValue)
           counts.merge(refreshedCounts) { _, new in new }
           isRefreshingCounts = false
         }
@@ -491,9 +506,9 @@ struct HomeView: View {
       guard !deferredModes.isEmpty, !Task.isCancelled else { return }
       try? await Task.sleep(for: .seconds(2))
       let deferredCounts = Self.fetchCounts(for: deferredModes, reviewMemoryOption: reviewMemoryOption)
-      HomeCountCache.store(deferredCounts, memoryOptionRawValue: reviewMemoryOptionRawValue)
       await MainActor.run {
         guard countRefreshID == refreshID else { return }
+        HomeCountCache.store(deferredCounts, memoryOptionRawValue: reviewMemoryOptionRawValue)
         counts.merge(deferredCounts) { _, new in new }
       }
     }
@@ -551,20 +566,30 @@ private struct ActionCard: View {
   let reviewMemory: ReviewMemoryOption
   var reservesAccessorySpace = false
 
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
   var body: some View {
     ZStack {
       RoundedRectangle(cornerRadius: 16, style: .continuous)
         .fill(AppColor.card)
 
-      Text(displayCount)
-        .font(.system(size: 96, weight: .heavy, design: .rounded))
-        .foregroundStyle(.quaternary)
-        .lineLimit(1)
-        .minimumScaleFactor(0.5)
-        .frame(maxWidth: .infinity, alignment: .trailing)
-        .padding(.trailing, 16)
-        .allowsHitTesting(false)
-        .clipped()
+      // Decorative oversized count; drop it at accessibility text sizes so the
+      // title/subtitle have room and don't collide with it.
+      if dynamicTypeSize < .accessibility1 {
+        Text(displayCount)
+          .font(.system(size: 96, weight: .heavy, design: .rounded))
+          #if os(macOS)
+          .monospacedDigit()
+          #endif
+          .foregroundStyle(.quaternary)
+          .lineLimit(1)
+          .minimumScaleFactor(0.5)
+          .frame(maxWidth: .infinity, alignment: .trailing)
+          .padding(.trailing, 16)
+          .allowsHitTesting(false)
+          .clipped()
+          .accessibilityHidden(true)
+      }
 
       HStack(alignment: .center, spacing: 16) {
         VStack(alignment: .leading, spacing: 4) {
@@ -587,8 +612,22 @@ private struct ActionCard: View {
       }
       .padding(.horizontal, 16)
     }
-    .frame(height: reservesAccessorySpace ? 112 : 96)
+    .frame(minHeight: reservesAccessorySpace ? 112 : 96)
     .opacity(isDisabled ? 0.5 : 1.0)
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel(mode.title)
+    .accessibilityValue(accessibilityValueText)
+    .accessibilityHint(mode == .similar ? "Scans for similar photos" : "Opens \(mode.title) review")
+  }
+
+  private var accessibilityValueText: String {
+    var parts = [mode.subtitle]
+    if let countSummary {
+      parts.append(countSummary)
+    } else if mode == .similar {
+      parts.append("Tap to scan")
+    }
+    return parts.joined(separator: ", ")
   }
 
   private var displayCount: String {
