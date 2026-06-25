@@ -22,6 +22,14 @@ enum AppColor {
   static let deleteBackground = Color(.systemRed).opacity(0.16)
   static let keepBackground = Color(.systemGreen).opacity(0.16)
 
+  // Hairline edge for raised cards. iOS keeps the specular-white highlight; macOS
+  // uses an adaptive separator so the edge is visible in both Light and Dark.
+  #if canImport(UIKit)
+  static let cardEdge = Color.white.opacity(0.28)
+  #elseif canImport(AppKit)
+  static let cardEdge = Color(nsColor: .separatorColor)
+  #endif
+
   #if canImport(UIKit)
   static let background = Color(.systemGroupedBackground)
   static let card = Color(.secondarySystemGroupedBackground)
@@ -30,10 +38,15 @@ enum AppColor {
   static let fill = Color(.tertiarySystemFill)
   static let separator = Color(.separator)
   #elseif canImport(AppKit)
-  static let background = Color(nsColor: .windowBackgroundColor)
+  // macOS card hierarchy: the window/scroll surface must read as RECESSED and the
+  // cards as RAISED, or both collapse to the same light gray and every card
+  // becomes invisible in Light mode. underPageBackgroundColor is the recessed
+  // backdrop; controlBackgroundColor / textBackgroundColor are the raised (near
+  // white) card surfaces.
+  static let background = Color(nsColor: .underPageBackgroundColor)
   static let card = Color(nsColor: .controlBackgroundColor)
   static let chip = Color(nsColor: .unemphasizedSelectedContentBackgroundColor)
-  static let elevatedCard = Color(nsColor: .controlBackgroundColor)
+  static let elevatedCard = Color(nsColor: .textBackgroundColor)
   static let fill = Color(nsColor: .quaternaryLabelColor)
   static let separator = Color(nsColor: .separatorColor)
   #endif

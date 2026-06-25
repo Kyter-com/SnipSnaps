@@ -11,27 +11,40 @@ enum FileLibrary {
   static let largeFileMinimumBytes: Int64 = 50 * 1024 * 1024
   static let oldFileAgeDays = 180
   // Cap enumeration so a huge folder tree can't stall a scan/count indefinitely.
-  static let maxFilesExamined = 50_000
+  // When the cap is hit, callers are told (truncated) so they don't mistake a
+  // partial scan for an empty result.
+  static let maxFilesExamined = 200_000
+
+  // Outcome of a scan: the ranked items plus whether the file cap was reached.
+  struct ScanResult: Sendable {
+    let items: [FileItem]
+    let truncated: Bool
+
+    static let empty = ScanResult(items: [], truncated: false)
+  }
 
   private static let resourceKeys: Set<URLResourceKey> = [
-    .fileSizeKey, .contentModificationDateKey, .creationDateKey,
+    .fileSizeKey, .totalFileAllocatedSizeKey, .contentModificationDateKey, .creationDateKey,
     .isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey,
-    .isPackageKey, .contentTypeKey
+    .isPackageKey, .contentTypeKey,
+    .isUbiquitousItemKey, .ubiquitousItemDownloadingStatusKey
   ]
 
-  static func scan(folders: [URL], category: FileReviewCategory, limit: Int, excluding reviewed: Set<String> = []) -> [FileItem] {
+  static func scan(folders: [URL], category: FileReviewCategory, limit: Int, excluding reviewed: Set<String> = [], sort: FileSortOption = .largest) -> ScanResult {
     if category == .duplicates {
-      return duplicateRedundantCopies(folders: folders, excluding: reviewed, limit: limit)
+      return duplicateRedundantCopies(folders: folders, excluding: reviewed, limit: limit, sort: sort)
     }
 
     let oldCutoff = Calendar.current.date(byAdding: .day, value: -oldFileAgeDays, to: Date()) ?? .distantPast
     var items: [FileItem] = []
     var examined = 0
+    var truncated = false
 
-    for folder in folders {
+    folderLoop: for folder in folders {
       guard let enumerator = enumerator(for: folder) else { continue }
       for case let url as URL in enumerator {
-        if examined >= maxFilesExamined { break }
+        if Task.isCancelled { return .empty }
+        if examined >= maxFilesExamined { truncated = true; break folderLoop }
         guard let item = makeItem(url) else { continue }
         examined += 1
         if matches(item, category: category, oldCutoff: oldCutoff), !reviewed.contains(item.url.path) {
@@ -40,7 +53,7 @@ enum FileLibrary {
       }
     }
 
-    return Array(sorted(items, category: category).prefix(limit))
+    return ScanResult(items: Array(sortItems(items, by: sort).prefix(limit)), truncated: truncated)
   }
 
   // Single-pass tally for the category cards: total and not-yet-reviewed per
@@ -79,21 +92,27 @@ enum FileLibrary {
   // Exact-content duplicates: bucket by size, hash only collision buckets, then
   // surface the redundant copies (every copy except the oldest "original" in
   // each identical group). Unique file sizes never get hashed.
-  static func duplicateRedundantCopies(folders: [URL], excluding reviewed: Set<String>, limit: Int) -> [FileItem] {
+  static func duplicateRedundantCopies(folders: [URL], excluding reviewed: Set<String>, limit: Int, sort: FileSortOption = .largest) -> ScanResult {
     var bySize: [Int64: [FileItem]] = [:]
     var examined = 0
-    for folder in folders {
+    var truncated = false
+    folderLoop: for folder in folders {
       guard let enumerator = enumerator(for: folder) else { continue }
       for case let url as URL in enumerator {
-        if examined >= maxFilesExamined { break }
-        guard let item = makeItem(url), item.size > 0 else { continue }
+        if Task.isCancelled { return .empty }
+        if examined >= maxFilesExamined { truncated = true; break folderLoop }
+        // Bucket by logical byte length, not allocated size: identical files on
+        // volumes with different block sizes share a logical size but not an
+        // allocated one, and must still be compared.
+        guard let item = makeItem(url), item.logicalSize > 0 else { continue }
         examined += 1
-        bySize[item.size, default: []].append(item)
+        bySize[item.logicalSize, default: []].append(item)
       }
     }
 
     var redundant: [FileItem] = []
     for (_, sameSize) in bySize where sameSize.count > 1 {
+      if Task.isCancelled { return .empty }
       var byHash: [String: [FileItem]] = [:]
       for item in sameSize {
         guard let hash = contentHash(item.url) else { continue }
@@ -106,15 +125,22 @@ enum FileLibrary {
         }
       }
     }
-    return Array(redundant.sorted { $0.size > $1.size }.prefix(limit))
+    return ScanResult(items: Array(sortItems(redundant, by: sort).prefix(limit)), truncated: truncated)
   }
 
   private static func contentHash(_ url: URL) -> String? {
     guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
     defer { try? handle.close() }
     var hasher = SHA256()
-    while let chunk = try? handle.read(upToCount: 1 << 20), !chunk.isEmpty {
-      hasher.update(data: chunk)
+    // Read explicitly (not `try?`) so a mid-file read error returns nil rather than
+    // hashing partial content — a partial hash could collide falsely.
+    do {
+      while let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty {
+        if Task.isCancelled { return nil }
+        hasher.update(data: chunk)
+      }
+    } catch {
+      return nil
     }
     return hasher.finalize().map { String(format: "%02x", $0) }.joined()
   }
@@ -162,10 +188,21 @@ enum FileLibrary {
           rv.isPackage != true else {
       return nil
     }
+    // Skip iCloud placeholders that aren't downloaded locally. Enumerating, hashing,
+    // or trashing them would force a (potentially multi-GB) download, and they use
+    // ~no local disk so they don't belong in a "free up space" review.
+    if rv.isUbiquitousItem == true, rv.ubiquitousItemDownloadingStatus == .notDownloaded {
+      return nil
+    }
     let modified = rv.contentModificationDate ?? .distantPast
+    // Prefer the on-disk allocated size so "Large Files" / "space freed" reflect
+    // disk actually reclaimed; fall back to the logical size.
+    let onDiskSize = rv.totalFileAllocatedSize ?? rv.fileSize ?? 0
+    let logical = Int64(rv.fileSize ?? onDiskSize)
     return FileItem(
       url: url,
-      size: Int64(rv.fileSize ?? 0),
+      size: Int64(onDiskSize),
+      logicalSize: logical,
       modified: modified,
       created: rv.creationDate ?? modified,
       contentType: rv.contentType
@@ -182,14 +219,18 @@ enum FileLibrary {
     }
   }
 
-  private static func sorted(_ items: [FileItem], category: FileReviewCategory) -> [FileItem] {
-    switch category {
-    case .large:
+  private static func sortItems(_ items: [FileItem], by option: FileSortOption) -> [FileItem] {
+    switch option {
+    case .largest:
       return items.sorted { $0.size > $1.size }
-    case .old:
-      return items.sorted { $0.modified < $1.modified }
-    case .everything, .screenshots, .duplicates:
+    case .smallest:
+      return items.sorted { $0.size < $1.size }
+    case .recent:
       return items.sorted { $0.modified > $1.modified }
+    case .oldest:
+      return items.sorted { $0.modified < $1.modified }
+    case .name:
+      return items.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
   }
 }

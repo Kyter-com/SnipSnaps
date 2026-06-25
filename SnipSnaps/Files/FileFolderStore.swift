@@ -16,18 +16,29 @@ final class FileFolderStore: ObservableObject {
   }
 
   @Published private(set) var folders: [Folder] = []
+  // Folders that resolved but whose security scope could not be opened this launch
+  // (the user sees them but scans find nothing — surfaced as "couldn't access").
+  @Published private(set) var inaccessiblePaths: Set<String> = []
 
   private let defaultsKey = "filesGrantedFolderBookmarksV1"
   private var accessing: [URL] = []
+  // Maps a resolved folder path → the exact stored bookmark bytes, so remove() can
+  // drop precisely that bookmark (even if it later stops resolving) without
+  // disturbing other — possibly transiently-offline — grants.
+  private var bookmarkByPath: [String: Data] = [:]
 
   init() {
     restore()
   }
 
-  // The URL comes from NSOpenPanel and is already accessible; capture a durable
-  // app-scoped bookmark so the grant survives relaunch.
+  // The URL comes from NSOpenPanel (or a Finder drag) and is already accessible;
+  // capture a durable app-scoped bookmark so the grant survives relaunch.
   func add(_ url: URL) {
-    guard !folders.contains(where: { $0.url.path == url.path }) else { return }
+    // Already granted AND working — nothing to do. But if the path is listed yet
+    // inaccessible (stale bookmark), fall through to re-grant with the fresh one.
+    if folders.contains(where: { $0.url.path == url.path }), !inaccessiblePaths.contains(url.path) {
+      return
+    }
     do {
       let data = try url.bookmarkData(
         options: .withSecurityScope,
@@ -35,6 +46,11 @@ final class FileFolderStore: ObservableObject {
         relativeTo: nil
       )
       var stored = storedBookmarks()
+      // Re-granting a stale/inaccessible folder: drop its old bookmark first so
+      // the fresh, working one replaces it instead of being deduped away.
+      if let old = bookmarkByPath[url.path] {
+        stored.removeAll { $0 == old }
+      }
       stored.append(data)
       save(stored)
       restore()
@@ -44,10 +60,15 @@ final class FileFolderStore: ObservableObject {
   }
 
   func remove(_ folder: Folder) {
-    let kept = storedBookmarks().filter { data in
-      resolve(data)?.url.path != folder.url.path
+    if let targetData = bookmarkByPath[folder.url.path] {
+      // Drop exactly the targeted bookmark; keep every other stored bookmark
+      // (including any that are transiently offline) untouched.
+      save(storedBookmarks().filter { $0 != targetData })
+    } else {
+      // Fallback: no stored mapping (shouldn't happen for a listed folder) — drop
+      // any bookmark that currently resolves to this path.
+      save(storedBookmarks().filter { resolve($0)?.url.path != folder.url.path })
     }
-    save(kept)
     restore()
   }
 
@@ -62,16 +83,30 @@ final class FileFolderStore: ObservableObject {
 
     var resolved: [Folder] = []
     var refreshed: [Data] = []
+    var byPath: [String: Data] = [:]
+    var inaccessible: Set<String> = []
     for data in storedBookmarks() {
-      guard let entry = resolve(data) else { continue }
+      guard let entry = resolve(data) else {
+        // Transient failure (e.g. an external/network volume that's offline right
+        // now). Keep the bookmark so the grant survives relaunch; just don't list
+        // the folder this session. Only an explicit remove() drops it.
+        refreshed.append(data)
+        continue
+      }
       if resolved.contains(where: { $0.url.path == entry.url.path }) { continue }
+      let freshData = entry.refreshedData ?? data
       if entry.url.startAccessingSecurityScopedResource() {
         accessing.append(entry.url)
+      } else {
+        inaccessible.insert(entry.url.path)
       }
       resolved.append(Folder(url: entry.url))
-      refreshed.append(entry.refreshedData ?? data)
+      refreshed.append(freshData)
+      byPath[entry.url.path] = freshData
     }
     folders = resolved
+    bookmarkByPath = byPath
+    inaccessiblePaths = inaccessible
     save(refreshed)
   }
 

@@ -161,6 +161,7 @@ struct ReviewSessionView: View {
   @Environment(\.dismiss) private var dismiss
   @Environment(\.displayScale) private var displayScale
   @Environment(\.scenePhase) private var scenePhase
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var authStatus = PhotoLibrary.authorizationStatus()
   @State private var isLoading = true
   @State private var assets: [PHAsset] = []
@@ -319,6 +320,10 @@ struct ReviewSessionView: View {
             Image(systemName: "xmark")
           }
           .accessibilityLabel(showSummary ? "Close without deleting" : "Close review")
+          #if os(macOS)
+          .keyboardShortcut(.cancelAction)
+          .help("Close review (esc)")
+          #endif
         }
       }
     }
@@ -339,7 +344,44 @@ struct ReviewSessionView: View {
     } message: {
       Text(errorMessage)
     }
+    #if os(macOS)
+    .focusedSceneValue(\.reviewActions, reviewActions)
+    #endif
   }
+
+  #if os(macOS)
+  // Published to the menu bar so Review ▸ … and Edit ▸ Undo drive this review
+  // while it's on screen. Keep/Delete are nil off the review surface so the menu
+  // items disable; ⌘Z routes here via the focused Undo.
+  private var reviewActions: ReviewActions {
+    let reviewing = canAccessPhotos && !isLoading && !assets.isEmpty && !showSummary
+    return ReviewActions(
+      keep: reviewing ? { applyDecision(.keep) } : nil,
+      delete: reviewing ? { applyDecision(.delete) } : nil,
+      undo: { undoLastReviewDecision() },
+      skipGroup: nil,
+      canUndo: lastReviewUndo != nil && !isAnimatingCard
+    )
+  }
+
+  // Hidden buttons own the bare review keys (proven pattern). Present only while
+  // the review card is showing, so Return is free for the summary's default action.
+  private var reviewKeyboardShortcuts: some View {
+    ZStack {
+      Button("Delete") { applyDecision(.delete) }
+        .keyboardShortcut(.leftArrow, modifiers: [])
+      Button("Delete") { applyDecision(.delete) }
+        .keyboardShortcut(.delete, modifiers: [])
+      Button("Keep") { applyDecision(.keep) }
+        .keyboardShortcut(.rightArrow, modifiers: [])
+      Button("Details") { showMetadataSheet = true }
+        .keyboardShortcut(.space, modifiers: [])
+    }
+    .opacity(0)
+    .frame(width: 0, height: 0)
+    .accessibilityHidden(true)
+  }
+  #endif
 
   private var reviewView: some View {
     VStack(spacing: 18) {
@@ -357,6 +399,9 @@ struct ReviewSessionView: View {
         .padding(.bottom, 8)
         .background(.bar)
     }
+    #if os(macOS)
+    .background(reviewKeyboardShortcuts)
+    #endif
   }
 
   private var reviewHeader: some View {
@@ -390,14 +435,7 @@ struct ReviewSessionView: View {
           .padding(.horizontal, 14)
           .padding(.vertical, 12)
           .frame(maxWidth: .infinity)
-          .background {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-              .fill(.ultraThinMaterial)
-              .overlay {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                  .fill(AppColor.card.opacity(0.72))
-              }
-          }
+          .infoChipBackground()
         }
         .id(currentAsset?.localIdentifier)
         .transition(.opacity.combined(with: .scale(scale: 0.985)))
@@ -488,6 +526,9 @@ struct ReviewSessionView: View {
       ) {
         applyDecision(.delete)
       }
+      #if os(macOS)
+      .help("Delete (← or Delete)")
+      #endif
 
       Spacer(minLength: 0)
 
@@ -496,10 +537,13 @@ struct ReviewSessionView: View {
           undoLastReviewDecision()
         }
         .font(.footnote.weight(.semibold))
-        .buttonStyle(.bordered)
+        .secondaryActionButton()
         .controlSize(.small)
+        #if os(macOS)
+        .help("Undo (⌘Z)")
+        #endif
       } else {
-        Text("Swipe or tap")
+        Text(macSwipeHint)
           .font(.footnote.weight(.medium))
           .foregroundStyle(.secondary)
           .lineLimit(1)
@@ -515,8 +559,19 @@ struct ReviewSessionView: View {
       ) {
         applyDecision(.keep)
       }
+      #if os(macOS)
+      .help("Keep (→ or Return)")
+      #endif
     }
     .frame(maxWidth: .infinity)
+  }
+
+  private var macSwipeHint: String {
+    #if os(macOS)
+    return "← delete · → keep"
+    #else
+    return "Swipe or tap"
+    #endif
   }
 
   private var summaryView: some View {
@@ -621,10 +676,13 @@ struct ReviewSessionView: View {
           }
           .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.borderedProminent)
+        .prominentActionButton()
         .tint(AppColor.delete)
         .controlSize(.large)
         .disabled(deleteInProgress)
+        #if os(macOS)
+        .keyboardShortcut(.defaultAction)
+        #endif
       } else {
         Button {
           dismiss()
@@ -633,8 +691,11 @@ struct ReviewSessionView: View {
             .fontWeight(.semibold)
             .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.borderedProminent)
+        .prominentActionButton()
         .controlSize(.large)
+        #if os(macOS)
+        .keyboardShortcut(.defaultAction)
+        #endif
       }
     }
     .padding(.horizontal, 20)
@@ -671,7 +732,7 @@ struct ReviewSessionView: View {
           loadAssets()
         }
       }
-      .buttonStyle(.borderedProminent)
+      .prominentActionButton()
     }
   }
 
@@ -756,6 +817,15 @@ struct ReviewSessionView: View {
       deleteAssets.append(asset)
     }
     PhotoReviewHistory.markReviewed(asset, for: mode, memoryOption: reviewMemoryOption)
+    #if os(macOS)
+    if reduceMotion {
+      // Skip the card fling; advance with a brief cross-fade and release the lock.
+      cardDepartureOffset = .zero
+      withAnimation(.easeInOut(duration: 0.15)) { advance() }
+      isAnimatingCard = false
+      return
+    }
+    #endif
     let direction: CGFloat = decision == .keep ? 1 : -1
     let exitDistance = max(cardSize.width, 500) * 1.35
     cardDepartureOffset = startingOffset
@@ -903,6 +973,7 @@ struct SimilarReviewSessionView: View {
   @Environment(\.dismiss) private var dismiss
   @Environment(\.displayScale) private var displayScale
   @Environment(\.scenePhase) private var scenePhase
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var authStatus = PhotoLibrary.authorizationStatus()
   @State private var isScanning = true
   @State private var groups: [SimilarPhotoGroup] = []
@@ -1078,6 +1149,10 @@ struct SimilarReviewSessionView: View {
             Image(systemName: "xmark")
           }
           .accessibilityLabel(showSummary ? "Close without deleting" : "Close similar review")
+          #if os(macOS)
+          .keyboardShortcut(.cancelAction)
+          .help("Close review (esc)")
+          #endif
         }
       }
     }
@@ -1105,12 +1180,53 @@ struct SimilarReviewSessionView: View {
     } message: {
       Text(errorMessage)
     }
+    #if os(macOS)
+    .focusedSceneValue(\.reviewActions, reviewActions)
+    #endif
   }
+
+  #if os(macOS)
+  private var reviewActions: ReviewActions {
+    let reviewing = canAccessPhotos && !isScanning && !groups.isEmpty && !showSummary
+    return ReviewActions(
+      keep: reviewing ? { applyPhotoDecision(.keep) } : nil,
+      delete: reviewing ? { applyPhotoDecision(.delete) } : nil,
+      undo: { undo() },
+      skipGroup: reviewing ? { skipGroup() } : nil,
+      canUndo: !undoStack.isEmpty && !isAnimatingCard
+    )
+  }
+
+  private var similarKeyboardShortcuts: some View {
+    ZStack {
+      Button("Delete") { applyPhotoDecision(.delete) }
+        .keyboardShortcut(.leftArrow, modifiers: [])
+      Button("Delete") { applyPhotoDecision(.delete) }
+        .keyboardShortcut(.delete, modifiers: [])
+      Button("Keep") { applyPhotoDecision(.keep) }
+        .keyboardShortcut(.rightArrow, modifiers: [])
+      Button("Skip Group") { skipGroup() }
+        .keyboardShortcut("s", modifiers: [])
+      if let asset = currentPhoto {
+        Button("Details") { metadataTarget = MetadataTarget(asset: asset, details: details(for: asset)) }
+          .keyboardShortcut(.space, modifiers: [])
+      }
+    }
+    .opacity(0)
+    .frame(width: 0, height: 0)
+    .accessibilityHidden(true)
+  }
+  #endif
 
   // MARK: - Review
 
   private var reviewView: some View {
+    #if os(macOS)
     swipeReviewView
+      .background(similarKeyboardShortcuts)
+    #else
+    swipeReviewView
+    #endif
   }
 
   private var groupHeader: some View {
@@ -1144,14 +1260,7 @@ struct SimilarReviewSessionView: View {
           .padding(.horizontal, 14)
           .padding(.vertical, 12)
           .frame(maxWidth: .infinity)
-          .background {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-              .fill(.ultraThinMaterial)
-              .overlay {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                  .fill(AppColor.card.opacity(0.72))
-              }
-          }
+          .infoChipBackground()
         }
         .id(asset.localIdentifier)
         .transition(.opacity.combined(with: .scale(scale: 0.985)))
@@ -1380,7 +1489,7 @@ struct SimilarReviewSessionView: View {
           loadGroups()
         }
       }
-      .buttonStyle(.borderedProminent)
+      .prominentActionButton()
     }
   }
 
@@ -1411,7 +1520,7 @@ struct SimilarReviewSessionView: View {
           Label(reviewFoundTitle, systemImage: "square.stack.3d.up")
             .fontWeight(.semibold)
         }
-        .buttonStyle(.borderedProminent)
+        .prominentActionButton()
         .tint(AppColor.primary)
         .controlSize(.large)
         .padding(.top, 4)
@@ -1549,10 +1658,13 @@ struct SimilarReviewSessionView: View {
           }
           .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.borderedProminent)
+        .prominentActionButton()
         .tint(AppColor.delete)
         .controlSize(.large)
         .disabled(deleteInProgress)
+        #if os(macOS)
+        .keyboardShortcut(.defaultAction)
+        #endif
       } else {
         Button {
           dismiss()
@@ -1561,8 +1673,11 @@ struct SimilarReviewSessionView: View {
             .fontWeight(.semibold)
             .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.borderedProminent)
+        .prominentActionButton()
         .controlSize(.large)
+        #if os(macOS)
+        .keyboardShortcut(.defaultAction)
+        #endif
       }
     }
     .padding(.horizontal, 20)
@@ -1748,6 +1863,14 @@ struct SimilarReviewSessionView: View {
     case .delete:
       appendUnique([asset], to: &deleteAssets)
     }
+    #if os(macOS)
+    if reduceMotion {
+      cardDepartureOffset = .zero
+      withAnimation(.easeInOut(duration: 0.15)) { advancePhoto() }
+      isAnimatingCard = false
+      return
+    }
+    #endif
     let direction: CGFloat = decision == .keep ? 1 : -1
     let exitDistance = max(cardSize.width, 500) * 1.35
     cardDepartureOffset = startingOffset
@@ -1991,6 +2114,9 @@ private struct FullScreenPhotoView: View {
       .padding(.top, 12)
       .padding(.trailing, 16)
       .accessibilityLabel("Close")
+      #if os(macOS)
+      .keyboardShortcut(.cancelAction)
+      #endif
     }
     #if os(iOS)
     .statusBarHidden(true)
@@ -2202,7 +2328,7 @@ private struct PhotoCardView: View {
     .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
     .overlay(
       RoundedRectangle(cornerRadius: 28, style: .continuous)
-        .strokeBorder(Color.white.opacity(0.28), lineWidth: 0.5)
+        .strokeBorder(AppColor.cardEdge, lineWidth: 0.5)
     )
     .shadow(color: AppColor.shadow.opacity(1.35), radius: 22, x: 0, y: 12)
     .frame(width: bounds.width, height: bounds.height)
@@ -2335,7 +2461,7 @@ private struct CardBackdropView: View {
       .fill(AppColor.elevatedCard)
       .overlay(
         RoundedRectangle(cornerRadius: 28, style: .continuous)
-          .strokeBorder(Color.white.opacity(0.24), lineWidth: 0.5)
+          .strokeBorder(AppColor.cardEdge, lineWidth: 0.5)
       )
       .shadow(color: AppColor.shadow.opacity(1.2), radius: 18, x: 0, y: 10)
       .frame(width: bounds.width, height: bounds.height)

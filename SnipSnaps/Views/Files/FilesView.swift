@@ -7,6 +7,8 @@ struct FilesView: View {
   @State private var counts: [FileReviewCategory: FileCounts] = [:]
   @State private var isCounting = false
   @State private var selectedCategory: FileReviewCategory?
+  @State private var folderPendingRemoval: FileFolderStore.Folder?
+  @State private var isDropTargeted = false
   @AppStorage("reviewMemoryOption") private var reviewMemoryOptionRawValue: String = ReviewMemoryOption.thirtyDays.rawValue
 
   private var reviewMemoryOption: ReviewMemoryOption {
@@ -44,6 +46,20 @@ struct FilesView: View {
       .navigationDestination(item: $selectedCategory) { category in
         FileReviewSessionView(category: category, folders: store.folders.map(\.url))
       }
+    }
+    .focusedSceneValue(\.addFolderAction, { chooseFolder() })
+    .confirmationDialog(
+      "Stop reviewing this folder?",
+      isPresented: Binding(
+        get: { folderPendingRemoval != nil },
+        set: { if !$0 { folderPendingRemoval = nil } }
+      ),
+      presenting: folderPendingRemoval
+    ) { folder in
+      Button("Stop Reviewing", role: .destructive) { store.remove(folder) }
+      Button("Cancel", role: .cancel) {}
+    } message: { folder in
+      Text("SnipSnaps will lose access to “\(folder.name)”. No files are deleted — you can grant access again anytime.")
     }
     .onChange(of: store.folders) { _, _ in refreshCounts() }
     // Re-tally when a review session closes (files may have been trashed), the
@@ -84,13 +100,36 @@ struct FilesView: View {
         .controlSize(.large)
       }
 
-      Text("SnipSnaps can only see folders you pick here.")
+      Text("SnipSnaps can only see folders you pick here. You can also drag a folder here from Finder.")
         .font(.footnote)
         .foregroundStyle(.tertiary)
     }
     .frame(maxWidth: .infinity, alignment: .leading)
     .padding(20)
     .background(AppColor.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    .overlay(
+      RoundedRectangle(cornerRadius: 16, style: .continuous)
+        .strokeBorder(AppColor.primary, style: StrokeStyle(lineWidth: 2, dash: [7]))
+        .opacity(isDropTargeted ? 1 : 0)
+    )
+    .dropDestination(for: URL.self) { urls, _ in
+      addDroppedFolders(urls)
+    } isTargeted: { isDropTargeted = $0 }
+  }
+
+  // A folder dragged from Finder carries an implicit user-selected grant, so we
+  // can bookmark it immediately. Normalize first, then accept only directories.
+  private func addDroppedFolders(_ urls: [URL]) -> Bool {
+    var added = false
+    for url in urls {
+      let standardized = url.standardizedFileURL
+      let isDirectory = (try? standardized.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+      if isDirectory {
+        store.add(standardized)
+        added = true
+      }
+    }
+    return added
   }
 
   private func quickFolderButton(_ title: String, systemImage: String, url: URL?) -> some View {
@@ -101,7 +140,7 @@ struct FilesView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
     .controlSize(.large)
-    .buttonStyle(.borderedProminent)
+    .prominentActionButton()
     .tint(AppColor.primary)
     .disabled(url == nil)
   }
@@ -120,23 +159,46 @@ struct FilesView: View {
               .foregroundStyle(AppColor.primary)
             VStack(alignment: .leading, spacing: 2) {
               Text(folder.name).font(.headline)
-              Text(folder.url.path)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
+              if store.inaccessiblePaths.contains(folder.url.path) {
+                Label("Couldn't access — remove and re-add this folder", systemImage: "exclamationmark.triangle.fill")
+                  .font(.caption)
+                  .foregroundStyle(.orange)
+                  .lineLimit(1)
+              } else {
+                Text(folder.url.path)
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+                  .lineLimit(1)
+                  .truncationMode(.middle)
+              }
             }
             Spacer()
+            Button {
+              FinderActions.revealInFinder(folder.url)
+            } label: {
+              Image(systemName: "arrow.up.forward.app")
+            }
+            .buttonStyle(.borderless)
+            .help("Reveal in Finder")
             Button(role: .destructive) {
-              store.remove(folder)
+              folderPendingRemoval = folder
             } label: {
               Image(systemName: "minus.circle.fill")
             }
             .buttonStyle(.borderless)
+            .frame(width: 28, height: 28)
+            .contentShape(Rectangle())
             .help("Stop reviewing this folder")
+            .accessibilityLabel("Stop reviewing \(folder.name)")
           }
           .padding(12)
           .background(AppColor.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+          .contextMenu {
+            Button("Reveal in Finder") { FinderActions.revealInFinder(folder.url) }
+            Button("Open in Finder") { FinderActions.open(folder.url) }
+            Divider()
+            Button("Stop Reviewing", role: .destructive) { folderPendingRemoval = folder }
+          }
         }
       }
     }
@@ -166,6 +228,7 @@ struct FilesView: View {
             )
           }
           .buttonStyle(.plain)
+          .interactiveCardHover()
         }
       }
     }

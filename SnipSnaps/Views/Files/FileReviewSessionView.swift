@@ -1,6 +1,7 @@
 #if os(macOS)
 import SwiftUI
 import AppKit
+import QuickLook
 import QuickLookThumbnailing
 
 struct FileReviewSessionView: View {
@@ -8,6 +9,7 @@ struct FileReviewSessionView: View {
   let folders: [URL]
 
   @Environment(\.dismiss) private var dismiss
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var isScanning = true
   @State private var items: [FileItem] = []
   @State private var index = 0
@@ -19,12 +21,25 @@ struct FileReviewSessionView: View {
   @State private var resultMessage: String?
   @State private var deletedCount = 0
   @State private var dragOffset: CGSize = .zero
+  @State private var quickLookURL: URL?
+  @State private var scanTask: Task<Void, Never>?
+  @State private var didTruncate = false
+  @State private var trashFailures: [String] = []
+  // The Remember-Reviewed window in effect when this scan started. Snapshotting it
+  // keeps the scan exclusion and mark/unmark consistent even if the user changes
+  // the setting mid-session (the .session and persistent stores are different).
+  @State private var sessionMemoryOption: ReviewMemoryOption = .thirtyDays
   // Shared with the Photos review so "Review Size" and the lifetime "Space
   // freed" stats behave the same across both surfaces.
   @AppStorage("reviewLimit") private var reviewLimit: Int = 20
   @AppStorage("totalDeletedCount") private var totalDeletedCount: Int = 0
   @AppStorage("totalDeletedBytes") private var totalDeletedBytes: Int = 0
   @AppStorage("reviewMemoryOption") private var reviewMemoryOptionRawValue: String = ReviewMemoryOption.thirtyDays.rawValue
+  @AppStorage("fileSortOption") private var fileSortOptionRawValue: String = FileSortOption.largest.rawValue
+
+  private var fileSortOption: FileSortOption {
+    FileSortOption(rawValue: fileSortOptionRawValue) ?? .largest
+  }
 
   private struct UndoStep {
     let item: FileItem
@@ -61,10 +76,101 @@ struct FileReviewSessionView: View {
         } label: {
           Image(systemName: "xmark")
         }
-        .help("Close review")
+        .keyboardShortcut(.cancelAction)
+        .help("Close review (esc)")
+      }
+      ToolbarItem(placement: .primaryAction) {
+        // Re-sorting re-scans from scratch, which would discard in-progress
+        // decisions (and leave them marked reviewed). Lock it once the user has
+        // started deciding so no queued keep/trash choices are silently lost.
+        sortMenu
+          .disabled(isScanning || !kept.isEmpty || !toDelete.isEmpty)
       }
     }
     .onAppear(perform: load)
+    .onDisappear { scanTask?.cancel() }
+    .onChange(of: fileSortOptionRawValue) { _, _ in load() }
+    .focusedSceneValue(\.reviewActions, reviewActions)
+    .quickLookPreview($quickLookURL)
+    .alert("Some files couldn't be moved", isPresented: trashFailureBinding) {
+      Button("OK", role: .cancel) {}
+    } message: {
+      Text(trashFailureMessage)
+    }
+  }
+
+  private var trashFailureBinding: Binding<Bool> {
+    Binding(get: { !trashFailures.isEmpty }, set: { if !$0 { trashFailures = [] } })
+  }
+
+  private var trashFailureMessage: String {
+    let names = trashFailures.prefix(5).joined(separator: "\n")
+    let extra = trashFailures.count > 5 ? "\n…and \(trashFailures.count - 5) more" : ""
+    return "These items are still in place (they may be locked or in use):\n\(names)\(extra)"
+  }
+
+  private var sortMenu: some View {
+    Menu {
+      Picker("Sort By", selection: $fileSortOptionRawValue) {
+        ForEach(FileSortOption.allCases) { option in
+          Label(option.title, systemImage: option.systemImage).tag(option.rawValue)
+        }
+      }
+      .pickerStyle(.inline)
+    } label: {
+      Label("Sort", systemImage: "arrow.up.arrow.down")
+    }
+    .help("Change the review order")
+  }
+
+  // Desktop file keys (Quick Look / Reveal / Open) live on hidden buttons so they
+  // fire from anywhere in the review window without stealing focus.
+  private var fileKeyboardShortcuts: some View {
+    ZStack {
+      Button("Quick Look") { toggleQuickLook() }
+        .keyboardShortcut(.space, modifiers: [])
+      Button("Reveal in Finder") { if let current { FinderActions.revealInFinder(current.url) } }
+        .keyboardShortcut("r", modifiers: .command)
+      Button("Open") { if let current { FinderActions.open(current.url) } }
+        .keyboardShortcut("o", modifiers: .command)
+    }
+    .opacity(0)
+    .frame(width: 0, height: 0)
+    .accessibilityHidden(true)
+  }
+
+  private func toggleQuickLook() {
+    if quickLookURL == nil {
+      quickLookURL = current?.url
+    } else {
+      quickLookURL = nil
+    }
+  }
+
+  // Right-click menu shared by the review card and (lighter) the summary rows.
+  @ViewBuilder
+  private func fileContextMenu(for item: FileItem) -> some View {
+    Button("Quick Look") { quickLookURL = item.url }
+    Button("Open") { FinderActions.open(item.url) }
+    Button("Reveal in Finder") { FinderActions.revealInFinder(item.url) }
+    Divider()
+    Button("Keep") { if item.id == current?.id { applyDecision(.keep) } }
+      .disabled(item.id != current?.id)
+    Button("Move to Trash", role: .destructive) { if item.id == current?.id { applyDecision(.delete) } }
+      .disabled(item.id != current?.id)
+  }
+
+  // Published to the menu bar (Review ▸ … and Edit ▸ Undo) while this review is
+  // on screen. ⌘Z routes here; Keep/Delete disable on the summary screen.
+  private var reviewActions: ReviewActions {
+    let reviewing = !isScanning && !items.isEmpty && !showSummary
+    return ReviewActions(
+      keep: reviewing ? { applyDecision(.keep) } : nil,
+      delete: reviewing ? { applyDecision(.delete) } : nil,
+      undo: { undo() },
+      skipGroup: nil,
+      canUndo: lastUndo != nil
+    )
   }
 
   // MARK: - States
@@ -82,10 +188,22 @@ struct FileReviewSessionView: View {
     ContentUnavailableView {
       Label("Nothing to review", systemImage: category.systemImage)
     } description: {
-      Text("No \(category.title.lowercased()) found in the folders you granted.")
+      Text(didTruncate
+        ? "Scanned the first \(FileLibrary.maxFilesExamined.formatted()) files without finding any \(category.title.lowercased()). These folders are very large — try a more specific folder."
+        : "No \(category.title.lowercased()) found in the folders you granted.")
     } actions: {
       Button("Back") { dismiss() }
     }
+  }
+
+  private var truncationBanner: some View {
+    Label(
+      "Showing matches from the first \(FileLibrary.maxFilesExamined.formatted()) files scanned.",
+      systemImage: "exclamationmark.triangle.fill"
+    )
+    .font(.caption)
+    .foregroundStyle(.secondary)
+    .frame(maxWidth: .infinity, alignment: .leading)
   }
 
   private var reviewView: some View {
@@ -93,6 +211,10 @@ struct FileReviewSessionView: View {
       header
         .padding(.horizontal, 24)
         .padding(.top, 12)
+      if didTruncate {
+        truncationBanner
+          .padding(.horizontal, 24)
+      }
       if let current {
         card(for: current)
           .padding(.horizontal, 24)
@@ -101,6 +223,7 @@ struct FileReviewSessionView: View {
         .padding(.horizontal, 24)
         .padding(.bottom, 14)
     }
+    .background(fileKeyboardShortcuts)
   }
 
   private var header: some View {
@@ -161,7 +284,18 @@ struct FileReviewSessionView: View {
         .onChanged { dragOffset = $0.translation }
         .onEnded(handleDragEnd)
     )
-    .animation(.snappy(duration: 0.28), value: index)
+    .onTapGesture(count: 2) { FinderActions.open(item.url) }
+    .contextMenu { fileContextMenu(for: item) }
+    .help("Space to preview · double-click to open")
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel("\(item.name), \(item.sizeText), modified \(item.modified.formatted(.relative(presentation: .named)))")
+    .accessibilityActions {
+      Button("Keep") { applyDecision(.keep) }
+      Button("Move to Trash") { applyDecision(.delete) }
+      Button("Quick Look") { quickLookURL = item.url }
+      Button("Reveal in Finder") { FinderActions.revealInFinder(item.url) }
+    }
+    .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: index)
     .id(item.id)
   }
 
@@ -204,7 +338,7 @@ struct FileReviewSessionView: View {
         Image(systemName: "arrow.uturn.backward")
       }
       .disabled(lastUndo == nil)
-      .keyboardShortcut("z", modifiers: .command)
+      .help("Undo (⌘Z)")
 
       Button {
         applyDecision(.keep)
@@ -216,7 +350,7 @@ struct FileReviewSessionView: View {
       .keyboardShortcut(.rightArrow, modifiers: [])
     }
     .controlSize(.large)
-    .buttonStyle(.borderedProminent)
+    .prominentActionButton()
   }
 
   private var summaryView: some View {
@@ -238,6 +372,18 @@ struct FileReviewSessionView: View {
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(AppColor.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+
+        if deletedCount > 0 {
+          Button {
+            FinderActions.openTrash()
+          } label: {
+            Label("Show in Trash", systemImage: "trash")
+              .frame(maxWidth: .infinity)
+          }
+          .secondaryActionButton()
+          .controlSize(.large)
+          .help("Open the Trash in Finder to review or restore")
         }
 
         if !toDelete.isEmpty {
@@ -263,6 +409,11 @@ struct FileReviewSessionView: View {
                 Text(item.sizeText)
                   .font(.caption)
                   .foregroundStyle(.secondary)
+              }
+              .contentShape(Rectangle())
+              .contextMenu {
+                Button("Quick Look") { quickLookURL = item.url }
+                Button("Reveal in Finder") { FinderActions.revealInFinder(item.url) }
               }
             }
           }
@@ -304,8 +455,9 @@ struct FileReviewSessionView: View {
         } label: {
           Text("Done").fontWeight(.semibold).frame(maxWidth: .infinity)
         }
-        .buttonStyle(.borderedProminent)
+        .prominentActionButton()
         .controlSize(.large)
+        .keyboardShortcut(.defaultAction)
       } else {
         Button(role: .destructive) {
           performDelete()
@@ -321,10 +473,11 @@ struct FileReviewSessionView: View {
           }
           .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.borderedProminent)
+        .prominentActionButton()
         .tint(AppColor.delete)
         .controlSize(.large)
         .disabled(deleteInProgress)
+        .keyboardShortcut(.defaultAction)
       }
     }
     .padding(16)
@@ -344,17 +497,21 @@ struct FileReviewSessionView: View {
   // MARK: - Actions
 
   private func load() {
+    scanTask?.cancel()
     isScanning = true
     let folders = folders
     let category = category
     let limit = max(5, min(reviewLimit, 200))
-    let reviewed = FileReviewHistory.reviewedPaths(memoryOption: reviewMemoryOption)
-    Task {
-      let scanned = await Task.detached(priority: .userInitiated) {
-        FileLibrary.scan(folders: folders, category: category, limit: limit, excluding: reviewed)
-      }.value
+    sessionMemoryOption = reviewMemoryOption
+    let memory = sessionMemoryOption
+    let reviewed = FileReviewHistory.reviewedPaths(memoryOption: memory)
+    let sort = fileSortOption
+    scanTask = Task.detached(priority: .userInitiated) {
+      let result = FileLibrary.scan(folders: folders, category: category, limit: limit, excluding: reviewed, sort: sort)
+      if Task.isCancelled { return }
       await MainActor.run {
-        items = scanned
+        items = result.items
+        didTruncate = result.truncated
         index = 0
         kept = []
         toDelete = []
@@ -373,7 +530,7 @@ struct FileReviewSessionView: View {
     case .keep: kept.append(item)
     case .delete: toDelete.append(item)
     }
-    FileReviewHistory.markReviewed(item.url.path, memoryOption: reviewMemoryOption)
+    FileReviewHistory.markReviewed(item.url.path, memoryOption: sessionMemoryOption)
     dragOffset = .zero
     advance()
   }
@@ -391,7 +548,7 @@ struct FileReviewSessionView: View {
     case .keep: kept.removeAll { $0.id == step.item.id }
     case .delete: toDelete.removeAll { $0.id == step.item.id }
     }
-    FileReviewHistory.unmarkReviewed(step.item.url.path, memoryOption: reviewMemoryOption)
+    FileReviewHistory.unmarkReviewed(step.item.url.path, memoryOption: sessionMemoryOption)
     showSummary = false
     index = step.index
     lastUndo = nil
@@ -429,6 +586,7 @@ struct FileReviewSessionView: View {
         totalDeletedBytes += Int(result.freedBytes)
         toDelete = []
         lastUndo = nil
+        trashFailures = result.failed
       }
     }
   }

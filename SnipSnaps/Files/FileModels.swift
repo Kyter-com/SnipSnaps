@@ -11,7 +11,8 @@ enum FileDecision {
 // values so it is Sendable and can be scanned off the main actor.
 struct FileItem: Identifiable, Hashable, Sendable {
   let url: URL
-  let size: Int64
+  let size: Int64          // on-disk allocated size — drives "Large Files" + "space freed"
+  let logicalSize: Int64   // logical byte length — used for duplicate size-bucketing
   let modified: Date
   let created: Date
   let contentType: UTType?
@@ -30,11 +31,29 @@ struct FileItem: Identifiable, Hashable, Sendable {
 
   // macOS screenshots land on disk as images named "Screenshot …" / "Screen Shot …".
   // Filenames can be localized or renamed, so this is a heuristic the user confirms.
+  // Matched against the common localized stems so non-English Macs aren't blank.
   var isScreenshot: Bool {
     guard isImage else { return false }
     let lower = name.lowercased()
-    return lower.contains("screenshot") || lower.contains("screen shot")
+    return Self.screenshotStems.contains { lower.contains($0) }
   }
+
+  private static let screenshotStems: [String] = [
+    "screenshot",            // English (also matches "screen shot" lacks space; handled below)
+    "screen shot",           // English (older)
+    "bildschirmfoto",        // German
+    "capture d'écran",       // French (straight quote)
+    "capture d’écran",       // French (typographic quote)
+    "captura de pantalla",   // Spanish
+    "captura de tela",       // Portuguese
+    "schermata",             // Italian
+    "schermafbeelding",      // Dutch
+    "снимок экрана",         // Russian
+    "スクリーンショット",       // Japanese
+    "스크린샷",                // Korean
+    "截屏",                   // Chinese (Simplified)
+    "螢幕快照"                 // Chinese (Traditional)
+  ]
 }
 
 // Total vs not-yet-reviewed tally for a category, mirroring the Photos
@@ -42,6 +61,38 @@ struct FileItem: Identifiable, Hashable, Sendable {
 struct FileCounts: Sendable {
   let total: Int
   let notReviewed: Int
+}
+
+// User-selectable ordering for a Files review session, the on-disk parallel to
+// the Photos sort options.
+enum FileSortOption: String, CaseIterable, Identifiable, Sendable {
+  case largest
+  case smallest
+  case recent
+  case oldest
+  case name
+
+  var id: String { rawValue }
+
+  var title: String {
+    switch self {
+    case .largest: return "Largest"
+    case .smallest: return "Smallest"
+    case .recent: return "Recent"
+    case .oldest: return "Oldest"
+    case .name: return "Name"
+    }
+  }
+
+  var systemImage: String {
+    switch self {
+    case .largest: return "arrow.down.left.and.arrow.up.right"
+    case .smallest: return "arrow.up.right.and.arrow.down.left"
+    case .recent: return "clock.arrow.circlepath"
+    case .oldest: return "calendar"
+    case .name: return "textformat"
+    }
+  }
 }
 
 enum FileReviewCategory: String, CaseIterable, Identifiable, Sendable {

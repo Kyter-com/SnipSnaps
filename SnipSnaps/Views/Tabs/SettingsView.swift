@@ -22,8 +22,19 @@ struct SettingsView: View {
   @State private var showResetLocalSettingsAlert = false
 
   var body: some View {
+    #if os(macOS)
+    // Rendered inside the native ⌘, Settings window — no NavigationStack/title.
+    settingsForm
+    #else
     NavigationStack {
-      Form {
+      settingsForm
+        .navigationTitle("Settings")
+    }
+    #endif
+  }
+
+  private var settingsForm: some View {
+    Form {
         Section {
           Stepper(value: $reviewLimit, in: 10...100, step: 5) {
             HStack {
@@ -133,7 +144,6 @@ struct SettingsView: View {
         }
       }
       .formStyle(.grouped)
-      .navigationTitle("Settings")
       .alert("Reset Local Settings?", isPresented: $showResetLocalSettingsAlert) {
         Button("Reset", role: .destructive) {
           resetLocalSettings()
@@ -142,7 +152,6 @@ struct SettingsView: View {
       } message: {
         Text("This clears your review size preference, sorting, review memory, and lifetime deleted stats on this device. Your photo library will not be changed.")
       }
-    }
   }
 
   private var hasLocalSettingsToReset: Bool {
