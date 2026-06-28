@@ -67,18 +67,16 @@ struct FileReviewSessionView: View {
       } else {
         reviewView
       }
+      // The pushed NavigationStack already shows a Back chevron, so no visible close
+      // button is needed; keep Esc as an invisible accelerator on every state.
+      Button("Close") { dismiss() }
+        .keyboardShortcut(.cancelAction)
+        .opacity(0)
+        .frame(width: 0, height: 0)
+        .accessibilityHidden(true)
     }
     .navigationTitle(category.title)
     .toolbar {
-      ToolbarItem(placement: .cancellationAction) {
-        Button {
-          dismiss()
-        } label: {
-          Image(systemName: "xmark")
-        }
-        .keyboardShortcut(.cancelAction)
-        .help("Close review (esc)")
-      }
       ToolbarItem(placement: .primaryAction) {
         // Re-sorting re-scans from scratch, which would discard in-progress
         // decisions (and leave them marked reviewed). Lock it once the user has
@@ -127,6 +125,10 @@ struct FileReviewSessionView: View {
   // fire from anywhere in the review window without stealing focus.
   private var fileKeyboardShortcuts: some View {
     ZStack {
+      // Forward-delete is the second Trash key (← is bound on the visible button),
+      // matching the Photos review where both ← and Delete trash the current item.
+      Button("Move to Trash") { applyDecision(.delete) }
+        .keyboardShortcut(.delete, modifiers: [])
       Button("Quick Look") { toggleQuickLook() }
         .keyboardShortcut(.space, modifiers: [])
       Button("Reveal in Finder") { if let current { FinderActions.revealInFinder(current.url) } }
@@ -219,9 +221,15 @@ struct FileReviewSessionView: View {
         card(for: current)
           .padding(.horizontal, 24)
       }
+    }
+    // Pin the decision bar in a .bar footer, matching the Photos review and this
+    // view's own summary screen so the primary actions sit in a consistent strip.
+    .safeAreaInset(edge: .bottom, spacing: 0) {
       decisionBar
         .padding(.horizontal, 24)
-        .padding(.bottom, 14)
+        .padding(.top, 12)
+        .padding(.bottom, 8)
+        .background(.bar)
     }
     .background(fileKeyboardShortcuts)
   }
@@ -263,7 +271,7 @@ struct FileReviewSessionView: View {
         .foregroundStyle(.secondary)
         Text(item.parentPath)
           .font(.caption2)
-          .foregroundStyle(.tertiary)
+          .foregroundStyle(.secondary)
           .lineLimit(1)
           .truncationMode(.middle)
       }
@@ -337,6 +345,9 @@ struct FileReviewSessionView: View {
       } label: {
         Image(systemName: "arrow.uturn.backward")
       }
+      // Keep Undo visually secondary (the HStack makes Keep/Trash prominent); this
+      // override mirrors the Photos review, where Undo is a secondary action.
+      .secondaryActionButton()
       .disabled(lastUndo == nil)
       .help("Undo (⌘Z)")
 
@@ -561,7 +572,7 @@ struct FileReviewSessionView: View {
     } else if value.translation.width > threshold {
       applyDecision(.keep)
     } else {
-      withAnimation(.snappy(duration: 0.25)) { dragOffset = .zero }
+      withAnimation(reduceMotion ? nil : .snappy(duration: 0.25)) { dragOffset = .zero }
     }
   }
 

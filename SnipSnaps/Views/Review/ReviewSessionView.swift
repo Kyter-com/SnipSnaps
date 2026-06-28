@@ -22,6 +22,27 @@ import AppKit
 typealias PlatformImage = NSImage
 #endif
 
+#if os(macOS)
+// A concise, fetch-free VoiceOver label for a review card (media type + capture date).
+private extension PHAsset {
+  var reviewAccessibilityLabel: String {
+    var parts: [String] = []
+    if mediaType == .video {
+      parts.append("Video")
+    } else if mediaSubtypes.contains(.photoScreenshot) {
+      parts.append("Screenshot")
+    } else {
+      parts.append("Photo")
+    }
+    if mediaSubtypes.contains(.photoLive) { parts.append("Live Photo") }
+    if let date = creationDate {
+      parts.append(date.formatted(date: .abbreviated, time: .omitted))
+    }
+    return parts.joined(separator: ", ")
+  }
+}
+#endif
+
 enum PhotoDecision {
   case keep
   case delete
@@ -299,6 +320,15 @@ struct ReviewSessionView: View {
       } else {
         reviewView
       }
+      #if os(macOS)
+      // The pushed NavigationStack shows a Back chevron; keep Esc as an invisible
+      // accelerator on every state instead of a redundant visible close button.
+      Button("Close") { dismiss() }
+        .keyboardShortcut(.cancelAction)
+        .opacity(0)
+        .frame(width: 0, height: 0)
+        .accessibilityHidden(true)
+      #endif
     }
     .navigationTitle(mode.title)
     #if os(iOS)
@@ -311,6 +341,9 @@ struct ReviewSessionView: View {
         PhotoMetadataSheet(asset: asset, details: currentPhotoDetails)
       }
     }
+    // iOS hides the back button, so the explicit close stays there; macOS uses the
+    // native Back chevron + the Esc accelerator above.
+    #if os(iOS)
     .toolbar {
       if !showSummary || !deleteAssets.isEmpty {
         ToolbarItem(placement: .cancellationAction) {
@@ -320,14 +353,9 @@ struct ReviewSessionView: View {
             Image(systemName: "xmark")
           }
           .accessibilityLabel(showSummary ? "Close without deleting" : "Close review")
-          #if os(macOS)
-          .keyboardShortcut(.cancelAction)
-          .help("Close review (esc)")
-          #endif
         }
       }
     }
-    #if os(iOS)
     .toolbar(.hidden, for: .tabBar)
     #endif
     .onAppear { loadAssets() }
@@ -503,6 +531,13 @@ struct ReviewSessionView: View {
       .onTapGesture {
         showMetadataSheet = true
       }
+      #if os(macOS)
+      // VoiceOver: label the otherwise-unlabeled photo and expose its tap (Details)
+      // as a rotor action. Keep/Delete stay on the labeled decision buttons.
+      .accessibilityElement(children: .ignore)
+      .accessibilityLabel(asset.reviewAccessibilityLabel)
+      .accessibilityAction(named: "Details") { showMetadataSheet = true }
+      #endif
       .gesture(
         DragGesture(minimumDistance: 4)
           .updating($gestureOffset) { value, state, _ in
@@ -1133,12 +1168,20 @@ struct SimilarReviewSessionView: View {
       } else {
         reviewView
       }
+      #if os(macOS)
+      // The pushed NavigationStack shows a Back chevron; keep Esc as an invisible
+      // accelerator (cancelling any in-flight scan) instead of a visible close.
+      Button("Close") { cancelScan(); dismiss() }
+        .keyboardShortcut(.cancelAction)
+        .opacity(0)
+        .frame(width: 0, height: 0)
+        .accessibilityHidden(true)
+      #endif
     }
     .navigationTitle("Similar")
     #if os(iOS)
     .navigationBarTitleDisplayMode(.inline)
     .navigationBarBackButtonHidden(true)
-    #endif
     .toolbar {
       if !showSummary || !deleteAssets.isEmpty {
         ToolbarItem(placement: .cancellationAction) {
@@ -1149,14 +1192,9 @@ struct SimilarReviewSessionView: View {
             Image(systemName: "xmark")
           }
           .accessibilityLabel(showSummary ? "Close without deleting" : "Close similar review")
-          #if os(macOS)
-          .keyboardShortcut(.cancelAction)
-          .help("Close review (esc)")
-          #endif
         }
       }
     }
-    #if os(iOS)
     .toolbar(.hidden, for: .tabBar)
     #endif
     #if os(iOS)
@@ -1417,6 +1455,12 @@ struct SimilarReviewSessionView: View {
     .onTapGesture {
       metadataTarget = MetadataTarget(asset: asset, details: details(for: asset))
     }
+    #if os(macOS)
+    // VoiceOver: label the photo and expose its tap (Details) as a rotor action.
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel(asset.reviewAccessibilityLabel)
+    .accessibilityAction(named: "Details") { metadataTarget = MetadataTarget(asset: asset, details: details(for: asset)) }
+    #endif
     .gesture(
       DragGesture(minimumDistance: 4)
         .updating($gestureOffset) { value, state, _ in

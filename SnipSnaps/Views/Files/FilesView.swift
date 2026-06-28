@@ -9,6 +9,9 @@ struct FilesView: View {
   @State private var selectedCategory: FileReviewCategory?
   @State private var folderPendingRemoval: FileFolderStore.Folder?
   @State private var isDropTargeted = false
+  // Tracks the in-flight tally so a superseded count can't overwrite a newer one
+  // when several triggers (.onChange/.onAppear) fire close together.
+  @State private var countTask: Task<Void, Never>?
   @AppStorage("reviewMemoryOption") private var reviewMemoryOptionRawValue: String = ReviewMemoryOption.thirtyDays.rawValue
 
   private var reviewMemoryOption: ReviewMemoryOption {
@@ -69,6 +72,7 @@ struct FilesView: View {
     }
     .onChange(of: reviewMemoryOptionRawValue) { _, _ in refreshCounts() }
     .onAppear { refreshCounts() }
+    .onDisappear { countTask?.cancel() }
   }
 
   // MARK: - Onboarding
@@ -251,17 +255,22 @@ struct FilesView: View {
   }
 
   private func refreshCounts() {
+    // Supersede any in-flight tally so its (now-stale) result is discarded rather
+    // than racing to overwrite this one.
+    countTask?.cancel()
     let folders = store.folders.map(\.url)
     guard !folders.isEmpty else {
       counts = [:]
+      isCounting = false
       return
     }
     isCounting = true
     let reviewed = FileReviewHistory.reviewedPaths(memoryOption: reviewMemoryOption)
-    Task {
+    countTask = Task {
       let tally = await Task.detached(priority: .utility) {
         FileLibrary.counts(folders: folders, reviewedPaths: reviewed)
       }.value
+      if Task.isCancelled { return }
       await MainActor.run {
         counts = tally
         isCounting = false
@@ -302,7 +311,7 @@ private struct FileCategoryCard: View {
         if let summary = countSummary {
           Text(summary)
             .font(.caption.weight(.medium))
-            .foregroundStyle(.tertiary)
+            .foregroundStyle(.secondary)
             .monospacedDigit()
         }
       }
@@ -315,6 +324,12 @@ private struct FileCategoryCard: View {
     .padding(16)
     .frame(maxWidth: .infinity)
     .background(AppColor.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    // Consolidate into one VoiceOver element with a clean label/value/hint so the
+    // title, subtitle, count summary, and trailing count aren't read as fragments.
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel(category.title)
+    .accessibilityValue(countSummary ?? category.subtitle)
+    .accessibilityHint(category.showsScanAction ? "Scans this folder set for duplicates" : "Opens \(category.title) review")
   }
 
   private var displayCount: String {

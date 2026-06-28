@@ -31,6 +31,15 @@ final class FileFolderStore: ObservableObject {
     restore()
   }
 
+  // Balance the security scopes opened in restore() if the store is ever torn down
+  // mid-process (deinit is nonisolated; stopAccessingSecurityScopedResource is
+  // thread-safe and `accessing` is a plain value array).
+  deinit {
+    for url in accessing {
+      url.stopAccessingSecurityScopedResource()
+    }
+  }
+
   // The URL comes from NSOpenPanel (or a Finder drag) and is already accessible;
   // capture a durable app-scoped bookmark so the grant survives relaunch.
   func add(_ url: URL) {
@@ -75,11 +84,11 @@ final class FileFolderStore: ObservableObject {
   // MARK: - Private
 
   private func restore() {
-    // Balance any previously-opened scopes before re-opening the fresh set.
-    for url in accessing {
-      url.stopAccessingSecurityScopedResource()
-    }
-    accessing = []
+    // Diff against the scopes already open rather than blanket stop-all/start-all:
+    // re-opening every folder on each add()/remove() would momentarily revoke access
+    // to retained folders, which a background scan/trash task may still be using.
+    let previouslyAccessing = accessing
+    var stillAccessing: [URL] = []
 
     var resolved: [Folder] = []
     var refreshed: [Data] = []
@@ -95,15 +104,31 @@ final class FileFolderStore: ObservableObject {
       }
       if resolved.contains(where: { $0.url.path == entry.url.path }) { continue }
       let freshData = entry.refreshedData ?? data
-      if entry.url.startAccessingSecurityScopedResource() {
-        accessing.append(entry.url)
+      // Reuse the already-open scope (and its URL instance) for a retained folder so
+      // its access is never interrupted; only newly-granted folders open a scope.
+      let folderURL: URL
+      if let open = previouslyAccessing.first(where: { $0.path == entry.url.path }) {
+        stillAccessing.append(open)
+        folderURL = open
+      } else if entry.url.startAccessingSecurityScopedResource() {
+        stillAccessing.append(entry.url)
+        folderURL = entry.url
       } else {
         inaccessible.insert(entry.url.path)
+        folderURL = entry.url
       }
-      resolved.append(Folder(url: entry.url))
+      resolved.append(Folder(url: folderURL))
       refreshed.append(freshData)
-      byPath[entry.url.path] = freshData
+      byPath[folderURL.path] = freshData
     }
+
+    // Release only the scopes for folders that are no longer granted.
+    let retainedPaths = Set(stillAccessing.map(\.path))
+    for url in previouslyAccessing where !retainedPaths.contains(url.path) {
+      url.stopAccessingSecurityScopedResource()
+    }
+
+    accessing = stillAccessing
     folders = resolved
     bookmarkByPath = byPath
     inaccessiblePaths = inaccessible

@@ -37,6 +37,7 @@ enum FileLibrary {
 
     let oldCutoff = Calendar.current.date(byAdding: .day, value: -oldFileAgeDays, to: Date()) ?? .distantPast
     var items: [FileItem] = []
+    var seen = Set<String>()
     var examined = 0
     var truncated = false
 
@@ -44,9 +45,13 @@ enum FileLibrary {
       guard let enumerator = enumerator(for: folder) else { continue }
       for case let url as URL in enumerator {
         if Task.isCancelled { return .empty }
+        // Count every enumerated entry (files, directories, skipped placeholders)
+        // so a directory-heavy or all-iCloud tree still trips the cap instead of
+        // looping for a very long time without ever reaching it.
         if examined >= maxFilesExamined { truncated = true; break folderLoop }
-        guard let item = makeItem(url) else { continue }
         examined += 1
+        guard let item = makeItem(url) else { continue }
+        guard seen.insert(dedupKey(item.url)).inserted else { continue }
         if matches(item, category: category, oldCutoff: oldCutoff), !reviewed.contains(item.url.path) {
           items.append(item)
         }
@@ -62,14 +67,22 @@ enum FileLibrary {
     let oldCutoff = Calendar.current.date(byAdding: .day, value: -oldFileAgeDays, to: Date()) ?? .distantPast
     var total: [FileReviewCategory: Int] = [:]
     var fresh: [FileReviewCategory: Int] = [:]
+    var seen = Set<String>()
     var examined = 0
 
-    for folder in folders {
+    folderLoop: for folder in folders {
       guard let enumerator = enumerator(for: folder) else { continue }
       for case let url as URL in enumerator {
-        if examined >= maxFilesExamined { break }
-        guard let item = makeItem(url) else { continue }
+        if Task.isCancelled { break folderLoop }
+        // Cap is global across all granted folders, not per-folder, so a labeled
+        // break is required (a bare break would only end this folder's loop). Count
+        // every enumerated entry so a directory-heavy tree still trips the cap.
+        if examined >= maxFilesExamined { break folderLoop }
         examined += 1
+        guard let item = makeItem(url) else { continue }
+        // Skip files already tallied via an overlapping grant so the cards don't
+        // double-count the same physical file.
+        guard seen.insert(dedupKey(item.url)).inserted else { continue }
         let notReviewed = !reviewed.contains(item.url.path)
         func bump(_ category: FileReviewCategory) {
           total[category, default: 0] += 1
@@ -94,6 +107,7 @@ enum FileLibrary {
   // each identical group). Unique file sizes never get hashed.
   static func duplicateRedundantCopies(folders: [URL], excluding reviewed: Set<String>, limit: Int, sort: FileSortOption = .largest) -> ScanResult {
     var bySize: [Int64: [FileItem]] = [:]
+    var seen = Set<String>()
     var examined = 0
     var truncated = false
     folderLoop: for folder in folders {
@@ -101,11 +115,15 @@ enum FileLibrary {
       for case let url as URL in enumerator {
         if Task.isCancelled { return .empty }
         if examined >= maxFilesExamined { truncated = true; break folderLoop }
+        examined += 1
         // Bucket by logical byte length, not allocated size: identical files on
         // volumes with different block sizes share a logical size but not an
         // allocated one, and must still be compared.
         guard let item = makeItem(url), item.logicalSize > 0 else { continue }
-        examined += 1
+        // Dedup by real path BEFORE bucketing: a file reachable through two
+        // overlapping grants would otherwise hash-match itself and be surfaced as a
+        // redundant copy — trashing it would delete the only copy of a unique file.
+        guard seen.insert(dedupKey(item.url)).inserted else { continue }
         bySize[item.logicalSize, default: []].append(item)
       }
     }
@@ -177,6 +195,15 @@ enum FileLibrary {
       includingPropertiesForKeys: Array(resourceKeys),
       options: [.skipsHiddenFiles, .skipsPackageDescendants]
     )
+  }
+
+  // Stable per-pass identity for a file. Standardizing collapses the path so a file
+  // reachable through overlapping grants (e.g. both ~/Downloads and
+  // ~/Downloads/installers are granted) resolves to one key — otherwise the same
+  // physical file is enumerated twice, inflating counts and, worse, colliding with
+  // itself in duplicate detection so its only copy gets offered for trashing.
+  private static func dedupKey(_ url: URL) -> String {
+    url.standardizedFileURL.path
   }
 
   private static func makeItem(_ url: URL) -> FileItem? {
