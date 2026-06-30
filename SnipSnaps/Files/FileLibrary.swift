@@ -19,8 +19,9 @@ enum FileLibrary {
   struct ScanResult: Sendable {
     let items: [FileItem]
     let truncated: Bool
+    let accessErrorCount: Int
 
-    static let empty = ScanResult(items: [], truncated: false)
+    static let empty = ScanResult(items: [], truncated: false, accessErrorCount: 0)
   }
 
   private static let resourceKeys: Set<URLResourceKey> = [
@@ -29,6 +30,23 @@ enum FileLibrary {
     .isPackageKey, .contentTypeKey,
     .isUbiquitousItemKey, .ubiquitousItemDownloadingStatusKey
   ]
+
+  private final class AccessErrorCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var rawCount = 0
+
+    var count: Int {
+      lock.lock()
+      defer { lock.unlock() }
+      return rawCount
+    }
+
+    func increment() {
+      lock.lock()
+      rawCount += 1
+      lock.unlock()
+    }
+  }
 
   static func scan(folders: [URL], category: FileReviewCategory, limit: Int, excluding reviewed: Set<String> = [], sort: FileSortOption = .largest) -> ScanResult {
     if category == .duplicates {
@@ -40,9 +58,14 @@ enum FileLibrary {
     var seen = Set<String>()
     var examined = 0
     var truncated = false
+    var accessErrorCount = 0
 
     folderLoop: for folder in folders {
-      guard let enumerator = enumerator(for: folder) else { continue }
+      guard let (enumerator, errors) = enumerator(for: folder) else {
+        accessErrorCount += 1
+        continue
+      }
+      defer { accessErrorCount += errors.count }
       for case let url as URL in enumerator {
         if Task.isCancelled { return .empty }
         // Count every enumerated entry (files, directories, skipped placeholders)
@@ -58,26 +81,32 @@ enum FileLibrary {
       }
     }
 
-    return ScanResult(items: Array(sortItems(items, by: sort).prefix(limit)), truncated: truncated)
+    return ScanResult(items: Array(sortItems(items, by: sort).prefix(limit)), truncated: truncated, accessErrorCount: accessErrorCount)
   }
 
   // Single-pass tally for the category cards: total and not-yet-reviewed per
   // category (duplicates is scan-on-demand, so it is omitted here).
-  static func counts(folders: [URL], reviewedPaths reviewed: Set<String>) -> [FileReviewCategory: FileCounts] {
+  static func counts(folders: [URL], reviewedPaths reviewed: Set<String>) -> FileCountsResult {
     let oldCutoff = Calendar.current.date(byAdding: .day, value: -oldFileAgeDays, to: Date()) ?? .distantPast
     var total: [FileReviewCategory: Int] = [:]
     var fresh: [FileReviewCategory: Int] = [:]
     var seen = Set<String>()
     var examined = 0
+    var truncated = false
+    var accessErrorCount = 0
 
     folderLoop: for folder in folders {
-      guard let enumerator = enumerator(for: folder) else { continue }
+      guard let (enumerator, errors) = enumerator(for: folder) else {
+        accessErrorCount += 1
+        continue
+      }
+      defer { accessErrorCount += errors.count }
       for case let url as URL in enumerator {
         if Task.isCancelled { break folderLoop }
         // Cap is global across all granted folders, not per-folder, so a labeled
         // break is required (a bare break would only end this folder's loop). Count
         // every enumerated entry so a directory-heavy tree still trips the cap.
-        if examined >= maxFilesExamined { break folderLoop }
+        if examined >= maxFilesExamined { truncated = true; break folderLoop }
         examined += 1
         guard let item = makeItem(url) else { continue }
         // Skip files already tallied via an overlapping grant so the cards don't
@@ -99,7 +128,7 @@ enum FileLibrary {
     for category in [FileReviewCategory.everything, .large, .old, .screenshots] {
       result[category] = FileCounts(total: total[category] ?? 0, notReviewed: fresh[category] ?? 0)
     }
-    return result
+    return FileCountsResult(counts: result, truncated: truncated, accessErrorCount: accessErrorCount)
   }
 
   // Exact-content duplicates: bucket by size, hash only collision buckets, then
@@ -110,8 +139,13 @@ enum FileLibrary {
     var seen = Set<String>()
     var examined = 0
     var truncated = false
+    var accessErrorCount = 0
     folderLoop: for folder in folders {
-      guard let enumerator = enumerator(for: folder) else { continue }
+      guard let (enumerator, errors) = enumerator(for: folder) else {
+        accessErrorCount += 1
+        continue
+      }
+      defer { accessErrorCount += errors.count }
       for case let url as URL in enumerator {
         if Task.isCancelled { return .empty }
         if examined >= maxFilesExamined { truncated = true; break folderLoop }
@@ -143,7 +177,7 @@ enum FileLibrary {
         }
       }
     }
-    return ScanResult(items: Array(sortItems(redundant, by: sort).prefix(limit)), truncated: truncated)
+    return ScanResult(items: Array(sortItems(redundant, by: sort).prefix(limit)), truncated: truncated, accessErrorCount: accessErrorCount)
   }
 
   private static func contentHash(_ url: URL) -> String? {
@@ -166,14 +200,14 @@ enum FileLibrary {
   struct TrashResult: Sendable {
     let trashed: Int
     let freedBytes: Int64
-    let failed: [String]
+    let failed: [FileItem]
   }
 
   static func moveToTrash(_ items: [FileItem]) -> TrashResult {
     let fm = FileManager.default
     var trashed = 0
     var freed: Int64 = 0
-    var failed: [String] = []
+    var failed: [FileItem] = []
     for item in items {
       var resultingURL: NSURL?
       do {
@@ -181,7 +215,7 @@ enum FileLibrary {
         trashed += 1
         freed += item.size
       } catch {
-        failed.append(item.name)
+        failed.append(item)
       }
     }
     return TrashResult(trashed: trashed, freedBytes: freed, failed: failed)
@@ -189,12 +223,18 @@ enum FileLibrary {
 
   // MARK: - Private
 
-  private static func enumerator(for folder: URL) -> FileManager.DirectoryEnumerator? {
-    FileManager.default.enumerator(
+  private static func enumerator(for folder: URL) -> (FileManager.DirectoryEnumerator, AccessErrorCounter)? {
+    let errors = AccessErrorCounter()
+    guard let enumerator = FileManager.default.enumerator(
       at: folder,
       includingPropertiesForKeys: Array(resourceKeys),
-      options: [.skipsHiddenFiles, .skipsPackageDescendants]
-    )
+      options: [.skipsHiddenFiles, .skipsPackageDescendants],
+      errorHandler: { _, _ in
+        errors.increment()
+        return true
+      }
+    ) else { return nil }
+    return (enumerator, errors)
   }
 
   // Stable per-pass identity for a file. Standardizing collapses the path so a file

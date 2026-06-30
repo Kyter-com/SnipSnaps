@@ -16,6 +16,9 @@ struct SettingsView: View {
   @AppStorage("screenshotSortOption") private var screenshotSortOptionRawValue: String = ScreenshotSortOption.recent.rawValue
   @AppStorage("videoSortOption") private var videoSortOptionRawValue: String = VideoSortOption.largest.rawValue
   @AppStorage("similarSortOption") private var similarSortOptionRawValue: String = SimilarSortOption.recent.rawValue
+  #if os(macOS)
+  @AppStorage("fileSortOption") private var fileSortOptionRawValue: String = FileSortOption.largest.rawValue
+  #endif
   @AppStorage("reviewMemoryOption") private var reviewMemoryOptionRawValue: String = ReviewMemoryOption.thirtyDays.rawValue
   @AppStorage("totalDeletedCount") private var totalDeletedCount: Int = 0
   @AppStorage("totalDeletedBytes") private var totalDeletedBytes: Int = 0
@@ -81,7 +84,7 @@ struct SettingsView: View {
           }
           .disabled(!hasLocalSettingsToReset)
         } footer: {
-          Text("Resets review size, sorting, review memory, and lifetime deleted stats on this device. This does not delete photos.")
+          Text("Resets review size, Photos and Files sorting, review memory, and lifetime deleted stats on this device. This does not delete photos or files.")
         }
 
         Section("Support") {
@@ -150,7 +153,7 @@ struct SettingsView: View {
         }
         Button("Cancel", role: .cancel) {}
       } message: {
-        Text("This clears your review size preference, sorting, review memory, and lifetime deleted stats on this device. Your photo library will not be changed.")
+        Text("This clears your review size preference, Photos and Files sorting, review memory, and lifetime deleted stats on this device. Your photo library and files will not be changed.")
       }
   }
 
@@ -159,10 +162,19 @@ struct SettingsView: View {
       || screenshotSortOptionRawValue != ScreenshotSortOption.recent.rawValue
       || videoSortOptionRawValue != VideoSortOption.largest.rawValue
       || similarSortOptionRawValue != SimilarSortOption.recent.rawValue
+      || hasFileSettingsToReset
       || reviewMemoryOptionRawValue != ReviewMemoryOption.thirtyDays.rawValue
       || PhotoReviewHistory.hasReviewedIdentifiers()
       || totalDeletedCount != 0
       || totalDeletedBytes != 0
+  }
+
+  private var hasFileSettingsToReset: Bool {
+    #if os(macOS)
+    return fileSortOptionRawValue != FileSortOption.largest.rawValue || FileReviewHistory.hasReviewedPaths()
+    #else
+    return false
+    #endif
   }
 
   private var totalDeletedBytesText: String {
@@ -218,6 +230,9 @@ struct SettingsView: View {
     screenshotSortOptionRawValue = ScreenshotSortOption.recent.rawValue
     videoSortOptionRawValue = VideoSortOption.largest.rawValue
     similarSortOptionRawValue = SimilarSortOption.recent.rawValue
+    #if os(macOS)
+    fileSortOptionRawValue = FileSortOption.largest.rawValue
+    #endif
     reviewMemoryOptionRawValue = ReviewMemoryOption.thirtyDays.rawValue
     PhotoReviewHistory.clearAll()
     #if os(macOS)

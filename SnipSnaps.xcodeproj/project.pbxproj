@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		414D082D3FBC2D8DC4E91899 /* ScreenshotCaptureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8689B4C1EA0471F45B94F97 /* ScreenshotCaptureTests.swift */; };
+		7A23D4B78D6E4D7BA51A0011 /* FileLibraryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A23D4B78D6E4D7BA51A0012 /* FileLibraryTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -31,6 +32,7 @@
 		4720D2FC2DF5493D001FE738 /* SnipSnaps.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SnipSnaps.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4720D30D2DF5493E001FE738 /* SnipSnapsTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SnipSnapsTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		4720D3172DF5493E001FE738 /* SnipSnapsUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SnipSnapsUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		7A23D4B78D6E4D7BA51A0012 /* FileLibraryTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = FileLibraryTests.swift; sourceTree = "<group>"; };
 		B8689B4C1EA0471F45B94F97 /* ScreenshotCaptureTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ScreenshotCaptureTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -94,9 +96,19 @@
 			children = (
 				4720D2FE2DF5493D001FE738 /* SnipSnaps */,
 				4720D2FD2DF5493D001FE738 /* Products */,
+				7A23D4B78D6E4D7BA51A0013 /* SnipSnapsTests */,
 				41BD7844F5E3D03BBC0D7AB1 /* SnipSnapsUITests */,
 			);
 			sourceTree = "<group>";
+		};
+		7A23D4B78D6E4D7BA51A0013 /* SnipSnapsTests */ = {
+			isa = PBXGroup;
+			children = (
+				7A23D4B78D6E4D7BA51A0012 /* FileLibraryTests.swift */,
+			);
+			name = SnipSnapsTests;
+			path = SnipSnapsTests;
+			sourceTree = SOURCE_ROOT;
 		};
 		4720D2FD2DF5493D001FE738 /* Products */ = {
 			isa = PBXGroup;
@@ -247,6 +259,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7A23D4B78D6E4D7BA51A0011 /* FileLibraryTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -496,7 +509,8 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.kyter.SnipSnapsTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = 1;
@@ -518,7 +532,8 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.kyter.SnipSnapsTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = 1;
@@ -539,7 +554,8 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.kyter.SnipSnapsUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = 1;
@@ -560,7 +576,8 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.kyter.SnipSnapsUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = 1;

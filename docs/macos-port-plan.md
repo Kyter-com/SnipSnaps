@@ -1,19 +1,19 @@
 # SnipSnaps for macOS — Implementation Plan
 
-**Status:** in progress — Phases 0–2, 4, 4b + a full **native UI/UX & desktop pass** implemented on branch `macos-port-phase-0-1` (local, **not pushed**). macOS build green + launches.
-**Target:** native macOS destination on the existing SwiftUI target (`MACOSX_DEPLOYMENT_TARGET` now **26.0**; iOS stays 18.5)
+**Status:** in progress — Phases 0–2, 4, 4b + a full **native UI/UX & desktop pass** implemented on branch `macos-port-phase-0-1` (pushed). macOS build green + launches.
+**Target:** native macOS destination on the existing SwiftUI target (`MACOSX_DEPLOYMENT_TARGET` now **15.0** with macOS 26 Liquid Glass availability-gated; iOS stays 18.5)
 **Distribution:** Mac App Store + App Sandbox (decided)
 **Author:** planning doc, 2026-06-22 · last updated 2026-06-24 (UI/UX pass)
 
 ## Native macOS UI/UX & desktop pass (2026-06-24)
 
-A 70-finding audit (native shell / keyboard-menu / Liquid Glass / Finder / bugs / a11y), adversarially verified, then implemented in 6 phases and re-reviewed (3 issues caught + fixed). **Decisions:** bumped the macOS floor to 26.0 (Tahoe) so Liquid Glass APIs are used directly inside `#if os(macOS)` (no availability gating; iOS deployment target is independent and untouched); replaced the iOS bottom `TabView` with a native `NavigationSplitView` sidebar on macOS; moved Settings to a `Settings{}` scene (⌘,). Delivered:
+A 70-finding audit (native shell / keyboard-menu / Liquid Glass / Finder / bugs / a11y), adversarially verified, then implemented in 6 phases and re-reviewed (3 issues caught + fixed). **Decisions:** keep the macOS floor at 15.0, use Liquid Glass only behind `#available(macOS 26, *)` with bordered/material fallbacks, replace the iOS bottom `TabView` with a native `NavigationSplitView` sidebar on macOS, and move Settings to a `Settings{}` scene (⌘,). Delivered:
 
 - **Shell:** sidebar (Photos/Files), ⌘, Settings window, default/min window size, Mac title-bar Refresh, `.accentColor`→`.tint`, `@SceneStorage` sidebar selection.
-- **Keyboard + menu bar:** `Commands/AppCommands.swift` (Edit▸Undo ⌘Z, File▸Add Folder ⇧⌘O, Review menu, Help URLs) bridged via `focusedSceneValue`; ←/→/Delete/Space/Esc/Return shortcuts on all three review surfaces (rule: `.keyboardShortcut` on Buttons, not `.onKeyPress` on non-focusable containers).
+- **Keyboard + menu bar:** `Commands/AppCommands.swift` (Edit▸Undo ⌘Z, File▸Add Folder ⇧⌘O, Review menu, Help URLs) bridged via `focusedSceneValue`; ←/→/Delete/Space/Esc on review surfaces, with Return reserved for summary/default actions (rule: `.keyboardShortcut` on Buttons, not `.onKeyPress` on non-focusable containers).
 - **Finder integration (Files):** Reveal in Finder, Quick Look (Space), Open (double-click/⌘O), right-click context menus, drag-a-folder-to-add, sort menu, Show-in-Trash.
-- **Liquid Glass:** `Design/GlassStyle.swift` (glass buttons, glass info-chips, hover highlight + pointer cursor), adaptive `AppColor.cardEdge`, recessed Mac card-hierarchy colors (fixed near-invisible Light-mode cards), monospaced hero digits.
-- **Bug fixes:** iCloud `.icloud`-placeholder skip + on-disk allocated size (E1); 50k-cap truncation now reported via `ScanResult` instead of silent-empty (E2); cancellable scans (E3); security-scoped-bookmark transient-preserve / removable-dead / re-grant-upgrade / inaccessible-folder warning (E4–E6); HomeView count-cache generation race (E7); trash/hash failure surfacing + memory-option snapshot (E8/E10); duplicate bucketing keyed on logical (not allocated) size.
+- **Liquid Glass:** `Design/GlassStyle.swift` (availability-gated glass buttons/info-chips with pre-macOS 26 fallbacks, hover highlight + pointer cursor), adaptive `AppColor.cardEdge`, recessed Mac card-hierarchy colors (fixed near-invisible Light-mode cards), monospaced hero digits.
+- **Bug fixes:** iCloud `.icloud`-placeholder skip + on-disk allocated size (E1); 200k-cap truncation now reported via `ScanResult`/count warnings instead of silent-empty (E2); cancellable scans (E3); security-scoped-bookmark transient-preserve / removable-dead / re-grant-upgrade / inaccessible-folder warning (E4–E6); HomeView count-cache generation race (E7); trash/hash failure surfacing + memory-option snapshot (E8/E10); duplicate bucketing keyed on logical (not allocated) size.
 - **Accessibility:** Reduce Motion, VoiceOver (decorative count hidden + merged cards + Files swipe actions), Dynamic Type growth, hit targets, `.help` tooltips, localized screenshot-name detection.
 - **macOS app icon:** `mac_*.png` squircle set generated from the iOS artwork, wired into `AppIcon.appiconset/Contents.json`.
 
@@ -148,7 +148,7 @@ The headline 1.0.4 "Similar" mode is a silent empty screen on Mac until this is 
 
 The touch-tuned swipe loop feels broken with a mouse and gives no haptics on Mac.
 
-- [ ] Add keyboard shortcuts via `.keyboardShortcut` / `.onKeyPress`: ← or Delete = delete, → or Return = keep, Cmd-Z = undo, Space = preview.
+- [ ] Add keyboard shortcuts via `.keyboardShortcut` / `.onKeyPress`: ← or Delete = delete, → = keep, Cmd-Z = undo, Space = preview/details, Return = summary/default action.
 - [ ] Make the decision-bar buttons the primary interaction; keep the `DragGesture` swipe for trackpad users.
 - [ ] Optional: `NSHapticFeedbackManager` for trackpad feedback (haptics already no-op on macOS).
 

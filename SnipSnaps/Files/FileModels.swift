@@ -63,6 +63,14 @@ struct FileCounts: Sendable {
   let notReviewed: Int
 }
 
+struct FileCountsResult: Sendable {
+  let counts: [FileReviewCategory: FileCounts]
+  let truncated: Bool
+  let accessErrorCount: Int
+
+  static let empty = FileCountsResult(counts: [:], truncated: false, accessErrorCount: 0)
+}
+
 // User-selectable ordering for a Files review session, the on-disk parallel to
 // the Photos sort options.
 enum FileSortOption: String, CaseIterable, Identifiable, Sendable {
