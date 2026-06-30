@@ -1,3 +1,4 @@
+#if os(iOS)
 import XCTest
 
 /// Drives the real SnipSnaps app through each marketing screen and attaches
@@ -164,3 +165,4 @@ final class ScreenshotCaptureTests: XCTestCase {
     add(attachment)
   }
 }
+#endif

@@ -382,13 +382,13 @@ struct ReviewSessionView: View {
   // while it's on screen. Keep/Delete are nil off the review surface so the menu
   // items disable; ⌘Z routes here via the focused Undo.
   private var reviewActions: ReviewActions {
-    let reviewing = canAccessPhotos && !isLoading && !assets.isEmpty && !showSummary
+    let reviewing = canAccessPhotos && !isLoading && !assets.isEmpty && !showSummary && !deleteInProgress
     return ReviewActions(
       keep: reviewing ? { applyDecision(.keep) } : nil,
       delete: reviewing ? { applyDecision(.delete) } : nil,
-      undo: { undoLastReviewDecision() },
+      undo: deleteInProgress ? nil : { undoLastReviewDecision() },
       skipGroup: nil,
-      canUndo: lastReviewUndo != nil && !isAnimatingCard
+      canUndo: lastReviewUndo != nil && !isAnimatingCard && !deleteInProgress
     )
   }
 
@@ -595,7 +595,7 @@ struct ReviewSessionView: View {
         applyDecision(.keep)
       }
       #if os(macOS)
-      .help("Keep (→ or Return)")
+      .help("Keep (→)")
       #endif
     }
     .frame(maxWidth: .infinity)
@@ -892,7 +892,7 @@ struct ReviewSessionView: View {
   }
 
   private func undoLastReviewDecision() {
-    guard let undo = lastReviewUndo, !isAnimatingCard else { return }
+    guard let undo = lastReviewUndo, !isAnimatingCard, !deleteInProgress else { return }
     switch undo.decision {
     case .keep:
       keptAssets.removeAll { $0.localIdentifier == undo.asset.localIdentifier }
@@ -1225,13 +1225,13 @@ struct SimilarReviewSessionView: View {
 
   #if os(macOS)
   private var reviewActions: ReviewActions {
-    let reviewing = canAccessPhotos && !isScanning && !groups.isEmpty && !showSummary
+    let reviewing = canAccessPhotos && !isScanning && !groups.isEmpty && !showSummary && !deleteInProgress
     return ReviewActions(
       keep: reviewing ? { applyPhotoDecision(.keep) } : nil,
       delete: reviewing ? { applyPhotoDecision(.delete) } : nil,
-      undo: { undo() },
+      undo: deleteInProgress ? nil : { undo() },
       skipGroup: reviewing ? { skipGroup() } : nil,
-      canUndo: !undoStack.isEmpty && !isAnimatingCard
+      canUndo: !undoStack.isEmpty && !isAnimatingCard && !deleteInProgress
     )
   }
 
@@ -1995,7 +1995,7 @@ struct SimilarReviewSessionView: View {
   }
 
   private func undo() {
-    guard let step = undoStack.popLast(), !isAnimatingCard else { return }
+    guard !isAnimatingCard, !deleteInProgress, let step = undoStack.popLast() else { return }
     keptAssets.removeAll { step.addedKeptIDs.contains($0.localIdentifier) }
     deleteAssets.removeAll { step.addedDeleteIDs.contains($0.localIdentifier) }
     appendUnique(step.restoredKept, to: &keptAssets)

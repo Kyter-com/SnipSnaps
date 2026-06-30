@@ -19,11 +19,13 @@ struct FileReviewSessionView: View {
   @State private var showSummary = false
   @State private var deleteInProgress = false
   @State private var resultMessage: String?
+  @State private var resultIsWarning = false
   @State private var deletedCount = 0
   @State private var dragOffset: CGSize = .zero
   @State private var quickLookURL: URL?
   @State private var scanTask: Task<Void, Never>?
   @State private var didTruncate = false
+  @State private var accessErrorCount = 0
   @State private var trashFailures: [String] = []
   // The Remember-Reviewed window in effect when this scan started. Snapshotting it
   // keeps the scan exclusion and mark/unmark consistent even if the user changes
@@ -87,7 +89,9 @@ struct FileReviewSessionView: View {
     }
     .onAppear(perform: load)
     .onDisappear { scanTask?.cancel() }
-    .onChange(of: fileSortOptionRawValue) { _, _ in load() }
+    .onChange(of: fileSortOptionRawValue) { _, _ in
+      if isScanning || (kept.isEmpty && toDelete.isEmpty) { load() }
+    }
     .focusedSceneValue(\.reviewActions, reviewActions)
     .quickLookPreview($quickLookURL)
     .alert("Some files couldn't be moved", isPresented: trashFailureBinding) {
@@ -165,13 +169,13 @@ struct FileReviewSessionView: View {
   // Published to the menu bar (Review ▸ … and Edit ▸ Undo) while this review is
   // on screen. ⌘Z routes here; Keep/Delete disable on the summary screen.
   private var reviewActions: ReviewActions {
-    let reviewing = !isScanning && !items.isEmpty && !showSummary
+    let reviewing = !isScanning && !items.isEmpty && !showSummary && !deleteInProgress
     return ReviewActions(
       keep: reviewing ? { applyDecision(.keep) } : nil,
       delete: reviewing ? { applyDecision(.delete) } : nil,
-      undo: { undo() },
+      undo: deleteInProgress ? nil : { undo() },
       skipGroup: nil,
-      canUndo: lastUndo != nil
+      canUndo: lastUndo != nil && !deleteInProgress
     )
   }
 
@@ -190,17 +194,28 @@ struct FileReviewSessionView: View {
     ContentUnavailableView {
       Label("Nothing to review", systemImage: category.systemImage)
     } description: {
-      Text(didTruncate
-        ? "Scanned the first \(FileLibrary.maxFilesExamined.formatted()) files without finding any \(category.title.lowercased()). These folders are very large — try a more specific folder."
-        : "No \(category.title.lowercased()) found in the folders you granted.")
+      Text(emptyDescription)
     } actions: {
       Button("Back") { dismiss() }
     }
   }
 
-  private var truncationBanner: some View {
+  private var emptyDescription: String {
+    if didTruncate && accessErrorCount > 0 {
+      return "Scanned the first \(FileLibrary.maxFilesExamined.formatted()) files and skipped some inaccessible subfolders without finding any \(category.title.lowercased()). Try a more specific folder or adjust folder permissions."
+    }
+    if didTruncate {
+      return "Scanned the first \(FileLibrary.maxFilesExamined.formatted()) files without finding any \(category.title.lowercased()). These folders are very large — try a more specific folder."
+    }
+    if accessErrorCount > 0 {
+      return "No \(category.title.lowercased()) found in the folders SnipSnaps could access. Some subfolders couldn't be scanned because macOS denied access."
+    }
+    return "No \(category.title.lowercased()) found in the folders you granted."
+  }
+
+  private var scanWarningBanner: some View {
     Label(
-      "Showing matches from the first \(FileLibrary.maxFilesExamined.formatted()) files scanned.",
+      scanWarningText,
       systemImage: "exclamationmark.triangle.fill"
     )
     .font(.caption)
@@ -208,13 +223,23 @@ struct FileReviewSessionView: View {
     .frame(maxWidth: .infinity, alignment: .leading)
   }
 
+  private var scanWarningText: String {
+    if didTruncate && accessErrorCount > 0 {
+      return "Showing matches from the first \(FileLibrary.maxFilesExamined.formatted()) files scanned; some subfolders couldn't be accessed."
+    }
+    if didTruncate {
+      return "Showing matches from the first \(FileLibrary.maxFilesExamined.formatted()) files scanned."
+    }
+    return "Some subfolders couldn't be scanned because macOS denied access."
+  }
+
   private var reviewView: some View {
     VStack(spacing: 16) {
       header
         .padding(.horizontal, 24)
         .padding(.top, 12)
-      if didTruncate {
-        truncationBanner
+      if didTruncate || accessErrorCount > 0 {
+        scanWarningBanner
           .padding(.horizontal, 24)
       }
       if let current {
@@ -348,7 +373,7 @@ struct FileReviewSessionView: View {
       // Keep Undo visually secondary (the HStack makes Keep/Trash prominent); this
       // override mirrors the Photos review, where Undo is a secondary action.
       .secondaryActionButton()
-      .disabled(lastUndo == nil)
+      .disabled(lastUndo == nil || deleteInProgress)
       .help("Undo (⌘Z)")
 
       Button {
@@ -370,16 +395,16 @@ struct FileReviewSessionView: View {
         VStack(spacing: 6) {
           Text("Review complete")
             .font(.title2.weight(.semibold))
-          Text("\(kept.count) kept · \(toDelete.count + deletedCount) to trash")
+          Text(summarySubtitle)
             .font(.subheadline)
             .foregroundStyle(.secondary)
         }
         .padding(.top, 12)
 
         if let resultMessage {
-          Label(resultMessage, systemImage: "checkmark.circle.fill")
+          Label(resultMessage, systemImage: resultIsWarning ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
             .font(.subheadline.weight(.medium))
-            .foregroundStyle(AppColor.success)
+            .foregroundStyle(resultIsWarning ? .orange : AppColor.success)
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(AppColor.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -500,6 +525,16 @@ struct FileReviewSessionView: View {
     return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
   }
 
+  private var summarySubtitle: String {
+    if deletedCount > 0, !toDelete.isEmpty {
+      return "\(kept.count) kept · \(deletedCount) moved · \(toDelete.count) still to trash"
+    }
+    if deletedCount > 0 {
+      return "\(kept.count) kept · \(deletedCount) moved to Trash"
+    }
+    return "\(kept.count) kept · \(toDelete.count) to trash"
+  }
+
   private var totalDeletedBytesText: String {
     guard totalDeletedBytes > 0 else { return "0 KB" }
     return ByteCountFormatter.string(fromByteCount: Int64(totalDeletedBytes), countStyle: .file)
@@ -523,11 +558,15 @@ struct FileReviewSessionView: View {
       await MainActor.run {
         items = result.items
         didTruncate = result.truncated
+        accessErrorCount = result.accessErrorCount
         index = 0
         kept = []
         toDelete = []
         lastUndo = nil
         deletedCount = 0
+        resultMessage = nil
+        resultIsWarning = false
+        trashFailures = []
         showSummary = false
         isScanning = false
       }
@@ -554,7 +593,7 @@ struct FileReviewSessionView: View {
   }
 
   private func undo() {
-    guard let step = lastUndo else { return }
+    guard let step = lastUndo, !deleteInProgress else { return }
     switch step.decision {
     case .keep: kept.removeAll { $0.id == step.item.id }
     case .delete: toDelete.removeAll { $0.id == step.item.id }
@@ -589,15 +628,21 @@ struct FileReviewSessionView: View {
         let freed = ByteCountFormatter.string(fromByteCount: result.freedBytes, countStyle: .file)
         if result.failed.isEmpty {
           resultMessage = "Moved \(result.trashed) to Trash · \(freed) freed"
+          resultIsWarning = false
+          toDelete = []
         } else {
           resultMessage = "Moved \(result.trashed) · \(result.failed.count) couldn't be moved"
+          resultIsWarning = true
+          toDelete = result.failed
+          for item in result.failed {
+            FileReviewHistory.unmarkReviewed(item.url.path, memoryOption: sessionMemoryOption)
+          }
         }
         deletedCount += result.trashed
         totalDeletedCount += result.trashed
         totalDeletedBytes += Int(result.freedBytes)
-        toDelete = []
         lastUndo = nil
-        trashFailures = result.failed
+        trashFailures = result.failed.map(\.name)
       }
     }
   }
@@ -609,6 +654,7 @@ private struct FileThumbnailView: View {
 
   @Environment(\.displayScale) private var displayScale
   @State private var image: NSImage?
+  @State private var requestedURL: URL?
 
   var body: some View {
     GeometryReader { proxy in
@@ -631,9 +677,12 @@ private struct FileThumbnailView: View {
   }
 
   private func load(into size: CGSize) {
+    let requestURL = url
+    image = nil
+    requestedURL = requestURL
     let target = CGSize(width: max(size.width, 80), height: max(size.height, 80))
     let request = QLThumbnailGenerator.Request(
-      fileAt: url,
+      fileAt: requestURL,
       size: target,
       scale: displayScale,
       representationTypes: .all
@@ -641,7 +690,9 @@ private struct FileThumbnailView: View {
     QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { representation, _ in
       guard let nsImage = representation?.nsImage else { return }
       let boxed = UncheckedSendableBox(nsImage)
-      Task { @MainActor in image = boxed.value }
+      Task { @MainActor in
+        if requestedURL == requestURL { image = boxed.value }
+      }
     }
   }
 }

@@ -6,6 +6,8 @@ struct FilesView: View {
   @StateObject private var store = FileFolderStore()
   @State private var counts: [FileReviewCategory: FileCounts] = [:]
   @State private var isCounting = false
+  @State private var didTruncateCounts = false
+  @State private var countAccessErrorCount = 0
   @State private var selectedCategory: FileReviewCategory?
   @State private var folderPendingRemoval: FileFolderStore.Folder?
   @State private var isDropTargeted = false
@@ -220,6 +222,12 @@ struct FilesView: View {
           ProgressView().controlSize(.small)
         }
       }
+      if let countWarningText {
+        Label(countWarningText, systemImage: "exclamationmark.triangle.fill")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
       VStack(spacing: 12) {
         ForEach(FileReviewCategory.allCases) { category in
           Button {
@@ -261,20 +269,44 @@ struct FilesView: View {
     let folders = store.folders.map(\.url)
     guard !folders.isEmpty else {
       counts = [:]
+      didTruncateCounts = false
+      countAccessErrorCount = 0
       isCounting = false
       return
     }
     isCounting = true
+    didTruncateCounts = false
+    countAccessErrorCount = 0
     let reviewed = FileReviewHistory.reviewedPaths(memoryOption: reviewMemoryOption)
     countTask = Task {
-      let tally = await Task.detached(priority: .utility) {
+      let worker = Task.detached(priority: .utility) {
         FileLibrary.counts(folders: folders, reviewedPaths: reviewed)
-      }.value
+      }
+      let tally = await withTaskCancellationHandler(operation: {
+        await worker.value
+      }, onCancel: {
+        worker.cancel()
+      })
       if Task.isCancelled { return }
       await MainActor.run {
-        counts = tally
+        counts = tally.counts
+        didTruncateCounts = tally.truncated
+        countAccessErrorCount = tally.accessErrorCount
         isCounting = false
       }
+    }
+  }
+
+  private var countWarningText: String? {
+    switch (didTruncateCounts, countAccessErrorCount > 0) {
+    case (true, true):
+      return "Counts are partial: scanned the first \(FileLibrary.maxFilesExamined.formatted()) files and skipped some inaccessible subfolders."
+    case (true, false):
+      return "Counts are partial: scanned the first \(FileLibrary.maxFilesExamined.formatted()) files."
+    case (false, true):
+      return "Some subfolders couldn't be scanned because macOS denied access."
+    case (false, false):
+      return nil
     }
   }
 

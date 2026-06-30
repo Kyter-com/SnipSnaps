@@ -23,6 +23,13 @@ enum FileReviewHistory {
     return Set(filteredEntries(memoryOption: memoryOption).keys)
   }
 
+  static func hasReviewedPaths() -> Bool {
+    sessionLock.lock()
+    let hasSessionPaths = !sessionPaths.isEmpty
+    sessionLock.unlock()
+    return hasSessionPaths || !persistentEntries().isEmpty
+  }
+
   static func markReviewed(_ path: String, memoryOption: ReviewMemoryOption) {
     guard memoryOption != .never else { return }
     if memoryOption == .session {
