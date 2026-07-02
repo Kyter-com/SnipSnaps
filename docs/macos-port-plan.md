@@ -3,7 +3,7 @@
 **Status:** in progress — Phases 0–2, 4, 4b + a full **native UI/UX & desktop pass** implemented on branch `macos-port-phase-0-1` (pushed). macOS build green + launches.
 **Target:** native macOS destination on the existing SwiftUI target (`MACOSX_DEPLOYMENT_TARGET` now **15.0** with macOS 26 Liquid Glass availability-gated; iOS stays 18.5)
 **Distribution:** Mac App Store + App Sandbox (decided)
-**Author:** planning doc, 2026-06-22 · last updated 2026-06-24 (UI/UX pass)
+**Author:** planning doc, 2026-06-22 · last updated 2026-07-02 (review cleanup)
 
 ## Native macOS UI/UX & desktop pass (2026-06-24)
 
@@ -27,6 +27,10 @@ All work is on branch `macos-port-phase-0-1`. Commits, newest first:
 
 | Commit | What |
 |---|---|
+| `c63e466` | Review cleanup — align macOS 15 deployment docs, fix shortcut hints, harden Files retry/truncation paths |
+| `f596961` | Copilot review fixes — lower deploy target to 15, availability-gate Liquid Glass, a11y + UX polish |
+| `a933981` | Native UI/UX & desktop pass — sidebar, menus, keyboard shortcuts, Liquid Glass, Finder integration |
+| `fd76267` | Docs — update macOS port plan with progress log at pause point |
 | `9f7c826` | Phase 4b — Files "Remember Reviewed" (`FileReviewHistory`) + duplicate detection (size-bucket + SHA-256) |
 | `b902724` | Files↔Photos cohesion — shared `reviewLimit`, lifetime `totalDeletedCount`/`Bytes`, post-review count refresh |
 | `2a684b7` | Phase 4 — on-disk Files cleanup surface (`SnipSnaps/Files/*`, `Views/Files/*`, macOS-only) |
@@ -36,10 +40,10 @@ All work is on branch `macos-port-phase-0-1`. Commits, newest first:
 | `45264df` | Phase 0–1 — native Mac target, sandbox entitlements, UIKit-only fixes |
 | `1129e0e` | This plan doc |
 
-**Done:** Phase 0–1, Phase 2, Phase 4 (incl. Duplicates), and full Files↔Photos settings/stats cohesion (the original plan folded Phase 3's keyboard shortcuts into the Files review early).
+**Done:** Phase 0–1, Phase 2, Phase 3's native settings/menu/keyboard work, Phase 4 (incl. Duplicates), and full Files↔Photos settings/stats cohesion.
 
 **Deviations from the original plan:**
-- Built order was 0–1 → 2 → **4 → 4b**, skipping Phase 3 (polish) at the user's request to reach the Files feature sooner.
+- Built order was 0–1 → 2 → **4 → 4b**, deferring Phase 3 (polish) until after the Files surface existed so the desktop pass could cover Photos and Files together.
 - Hit and fixed a macOS-only launch crash not anticipated in the plan: the default columnar `Form` style → AppKit "Update Constraints in Window pass" abort (see risk #10). Fix: `.formStyle(.grouped)`.
 - A separate per-SDK entitlements file (`SnipSnaps-macOS.entitlements` via `CODE_SIGN_ENTITLEMENTS[sdk=macosx*]`) is used so iOS keeps its own; the project already had `ENABLE_APP_SANDBOX=YES` / `ENABLE_USER_SELECTED_FILES` build settings (flipped to `readwrite` for Phase 4).
 
@@ -50,10 +54,9 @@ All work is on branch `macos-port-phase-0-1`. Commits, newest first:
 - **Destructive Files paths not driven by Claude** — Trash, duplicate review, and remember-reviewed skip were left for the user to exercise (avoiding deletion of real files); they compile and the app launches.
 
 **Remaining:**
-- Phase 3 — move Settings into a macOS `Settings`/⌘, window; Photos-side review keyboard shortcuts.
 - Near-duplicate *image* matching for Files (reuse the Phase 2 dHash+Vision core fed `CGImageSource` from disk).
 - Runtime-confirm the destructive Files flows + Similar matching on a Mac with a populated Photos library; iOS regression build.
-- A macOS app-icon slot in the asset catalog before shipping.
+- AppKit video/Live Photo playback on macOS; Photos-side Quick Look + VoiceOver swipe actions; String Catalog pluralization.
 
 ---
 
