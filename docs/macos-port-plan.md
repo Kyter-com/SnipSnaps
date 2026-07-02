@@ -56,6 +56,7 @@ All work is on branch `macos-port-phase-0-1`. Commits, newest first:
 **Remaining:**
 - Near-duplicate *image* matching for Files (reuse the Phase 2 dHash+Vision core fed `CGImageSource` from disk).
 - Runtime-confirm the destructive Files flows + Similar matching on a Mac with a populated Photos library; iOS regression build.
+- Mac App Store / ASC setup: first `MAC_OS` build upload and version metadata. Current ASC `MAC_OS` status has no builds yet.
 - AppKit video/Live Photo playback on macOS; Photos-side Quick Look + VoiceOver swipe actions; String Catalog pluralization.
 
 ---
