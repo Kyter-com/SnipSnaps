@@ -329,6 +329,37 @@ enum PhotoReviewHistory {
   }
 }
 
+extension Notification.Name {
+  // Posted on the main actor whenever the photo library — including the
+  // limited-access selection — changes, so count-showing views can refresh
+  // without polling and regardless of how the change was made.
+  static let snipSnapsPhotoLibraryDidChange = Notification.Name("SnipSnapsPhotoLibraryDidChange")
+}
+
+// App-lifetime bridge from PHPhotoLibraryChangeObserver to a main-actor
+// notification. A limited user can add photos from several places (Home, Settings,
+// the review empty state) without backgrounding the app, so scene/status-based
+// refresh alone misses those edits — this catches every selection change. Register
+// is idempotent; there's no need to unregister since the single instance lives for
+// the whole app.
+@MainActor
+final class PhotoLibraryChangeBroadcaster: NSObject, PHPhotoLibraryChangeObserver {
+  static let shared = PhotoLibraryChangeBroadcaster()
+  private var isRegistered = false
+
+  func startIfNeeded() {
+    guard !isRegistered else { return }
+    isRegistered = true
+    PHPhotoLibrary.shared().register(self)
+  }
+
+  nonisolated func photoLibraryDidChange(_ changeInstance: PHChange) {
+    Task { @MainActor in
+      NotificationCenter.default.post(name: .snipSnapsPhotoLibraryDidChange, object: nil)
+    }
+  }
+}
+
 enum PhotoLibrary {
   private static let largePhotoMinimumBytes = 8 * 1024 * 1024
   private static let largePhotoMinimumPixels = 24_000_000
@@ -365,6 +396,35 @@ enum PhotoLibrary {
   static func canAccessPhotos(_ status: PHAuthorizationStatus) -> Bool {
     status == .authorized || status == .limited
   }
+
+  #if os(iOS)
+  // Presents the system limited-library picker so a user in .limited mode can add
+  // more photos to the selection SnipSnaps can see. iOS/UIKit only — on macOS the
+  // picker doesn't exist, so limited access is managed in System Settings instead.
+  // Resolves when the picker is dismissed; the callback reports only newly added
+  // identifiers, so callers should re-read the status and refresh regardless.
+  @MainActor
+  static func presentLimitedLibraryPicker() async {
+    guard authorizationStatus() == .limited, let controller = topmostViewController() else { return }
+    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+      PHPhotoLibrary.shared().presentLimitedLibraryPicker(from: controller) { _ in
+        continuation.resume()
+      }
+    }
+  }
+
+  @MainActor
+  private static func topmostViewController() -> UIViewController? {
+    let scene = UIApplication.shared.connectedScenes
+      .compactMap { $0 as? UIWindowScene }
+      .first { $0.activationState == .foregroundActive }
+    var top = scene?.keyWindow?.rootViewController
+    while let presented = top?.presentedViewController {
+      top = presented
+    }
+    return top
+  }
+  #endif
 
   static func fetchAssets(
     for mode: ReviewMode,

@@ -6,12 +6,15 @@
 //
 
 import Foundation
+import Photos
 import SwiftUI
 
 struct SettingsView: View {
   private let defaultReviewLimit = 20
 
   @Environment(\.openURL) private var openURL
+  @Environment(\.scenePhase) private var scenePhase
+  @State private var authStatus = PhotoLibrary.authorizationStatus()
   @AppStorage("reviewLimit") private var reviewLimit: Int = 20
   @AppStorage("screenshotSortOption") private var screenshotSortOptionRawValue: String = ScreenshotSortOption.recent.rawValue
   @AppStorage("videoSortOption") private var videoSortOptionRawValue: String = VideoSortOption.largest.rawValue
@@ -38,6 +41,17 @@ struct SettingsView: View {
 
   private var settingsForm: some View {
     Form {
+        Section {
+          LabeledContent("Access", value: photoAccessValueText)
+          PhotoAccessButtons(status: authStatus) {
+            authStatus = PhotoLibrary.authorizationStatus()
+          }
+        } header: {
+          Text("Photo Access")
+        } footer: {
+          Text(photoAccessFooterText)
+        }
+
         Section {
           Stepper(value: $reviewLimit, in: 10...100, step: 5) {
             HStack {
@@ -155,6 +169,44 @@ struct SettingsView: View {
       } message: {
         Text("This clears your review size preference, Photos and Files sorting, review memory, and lifetime deleted stats on this device. Your photo library and files will not be changed.")
       }
+      .onAppear { authStatus = PhotoLibrary.authorizationStatus() }
+      .onChange(of: scenePhase) { _, newPhase in
+        if newPhase == .active {
+          authStatus = PhotoLibrary.authorizationStatus()
+        }
+      }
+  }
+
+  private var photoAccessValueText: String {
+    switch authStatus {
+    case .authorized:
+      return "All Photos"
+    case .limited:
+      return "Selected Photos"
+    case .denied:
+      return "Denied"
+    case .restricted:
+      return "Restricted"
+    case .notDetermined:
+      return "Not Set"
+    @unknown default:
+      return "Unknown"
+    }
+  }
+
+  private var photoAccessFooterText: String {
+    switch authStatus {
+    case .authorized:
+      return "SnipSnaps can review your whole photo library."
+    case .limited:
+      return "SnipSnaps only sees the photos you've selected. Add more or allow full access anytime."
+    case .denied:
+      return "Turn on photo access in Settings to review and delete photos."
+    case .restricted:
+      return "Photo access is restricted on this device and can't be changed here."
+    default:
+      return "SnipSnaps needs photo access to review and delete photos."
+    }
   }
 
   private var hasLocalSettingsToReset: Bool {

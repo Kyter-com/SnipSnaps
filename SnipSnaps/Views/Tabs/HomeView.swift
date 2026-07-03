@@ -86,6 +86,7 @@ private enum HomeCountCache {
 }
 
 struct HomeView: View {
+  @Environment(\.scenePhase) private var scenePhase
   @State private var authStatus = PhotoLibrary.authorizationStatus()
   @State private var counts: [ReviewMode: ReviewModeCounts] = [:]
   @State private var selectedMode: ReviewMode?
@@ -144,7 +145,10 @@ struct HomeView: View {
     NavigationStack {
       ScrollView {
         VStack(alignment: .leading, spacing: 16) {
-          if !canAccessPhotos {
+          // Shown for every state except full access — including .limited, so a
+          // limited user always has a way to add photos or grant full access
+          // instead of hitting a silent 0-count wall.
+          if authStatus != .authorized {
             accessCard
           }
 
@@ -199,6 +203,13 @@ struct HomeView: View {
       }
       .onAppear {
         loadInitialCountsIfNeeded()
+        PhotoLibraryChangeBroadcaster.shared.startIfNeeded()
+      }
+      // Any change to the (possibly limited) library — including photos added from
+      // Settings or the review empty state, which don't background the app or change
+      // the status — refreshes the counts so Home never stays stuck at a stale total.
+      .onReceive(NotificationCenter.default.publisher(for: .snipSnapsPhotoLibraryDidChange)) { _ in
+        refreshAfterAccessChange()
       }
       .onChange(of: selectedMode) { oldValue, newValue in
         if newValue == nil, let reviewedMode = oldValue {
@@ -207,6 +218,17 @@ struct HomeView: View {
         }
       }
       .onChange(of: reviewMemoryOptionRawValue) { _, _ in
+        loadCachedCounts()
+        refreshForCurrentMemoryOption()
+      }
+      // Catch access changes made outside the app (e.g. granting full access, or
+      // switching Selected -> All in Settings). Returning to the foreground
+      // re-reads the status and refreshes; onAppear/onChange(selectedMode) miss this.
+      .onChange(of: scenePhase) { _, newPhase in
+        guard newPhase == .active else { return }
+        let latest = PhotoLibrary.authorizationStatus()
+        guard latest != authStatus else { return }
+        authStatus = latest
         loadCachedCounts()
         refreshForCurrentMemoryOption()
       }
@@ -359,21 +381,36 @@ struct HomeView: View {
     VStack(alignment: .leading, spacing: 10) {
       Text(accessStatusText)
         .font(.headline)
-      Text("SnipSnaps needs photo access to review and delete images.")
+      Text(accessBodyText)
         .font(.subheadline)
         .foregroundStyle(.secondary)
-      Button("Enable Photo Access") {
-        Task {
-          authStatus = await PhotoLibrary.requestAuthorization()
-          loadCachedCounts()
-          refreshForCurrentMemoryOption()
-        }
-      }
-      .prominentActionButton()
+      PhotoAccessButtons(status: authStatus, refresh: refreshAfterAccessChange)
     }
     .frame(maxWidth: .infinity, alignment: .leading)
     .padding(16)
     .background(AppColor.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+  }
+
+  private var accessBodyText: String {
+    switch authStatus {
+    case .limited:
+      return "SnipSnaps can only see the photos you've selected. Add more, or allow full access to review your whole library."
+    case .denied:
+      return "SnipSnaps needs photo access to review and delete images. Turn it on in Settings."
+    case .restricted:
+      return "Photo access is restricted on this device and can't be changed here."
+    default:
+      return "SnipSnaps needs photo access to review and delete images."
+    }
+  }
+
+  // After an explicit access/selection change the user expects fresh numbers, so
+  // recount every mode unconditionally — including the expensive ones that the
+  // passive refresh path skips behind a freshness cache.
+  private func refreshAfterAccessChange() {
+    authStatus = PhotoLibrary.authorizationStatus()
+    loadCachedCounts()
+    refresh(modes: allCountModes)
   }
 
   private var accessStatusText: String {

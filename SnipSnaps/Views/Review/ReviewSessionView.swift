@@ -761,13 +761,7 @@ struct ReviewSessionView: View {
     } description: {
       Text("Enable access to review and delete \(assetPluralName).")
     } actions: {
-      Button("Enable Photo Access") {
-        Task {
-          authStatus = await PhotoLibrary.requestAuthorization()
-          loadAssets()
-        }
-      }
-      .prominentActionButton()
+      PhotoAccessButtons(status: authStatus, refresh: reloadAfterAccessChange)
     }
   }
 
@@ -782,15 +776,28 @@ struct ReviewSessionView: View {
     } description: {
       Text(emptyViewDescription)
     } actions: {
+      // A limited user who reviewed all their selected photos dead-ends here;
+      // let them replenish the queue instead of only offering Back.
+      if authStatus == .limited {
+        PhotoAccessButtons(status: authStatus, refresh: reloadAfterAccessChange)
+      }
       Button("Back") { dismiss() }
     }
   }
 
   private var emptyViewDescription: String {
+    if authStatus == .limited {
+      return "SnipSnaps can only see the photos you've selected. Add more, or allow full access, to review your whole library."
+    }
     if PhotoReviewHistory.supportsSkipping(for: mode), reviewMemoryOption != .never {
       return "Everything in this category may already be reviewed for your current memory setting. Change Remember Reviewed in Settings to revisit items."
     }
     return "Try a different review mode, or check your photo library."
+  }
+
+  private func reloadAfterAccessChange() {
+    authStatus = PhotoLibrary.authorizationStatus()
+    loadAssets()
   }
 
   private func loadAssets() {
@@ -1527,14 +1534,13 @@ struct SimilarReviewSessionView: View {
     } description: {
       Text("Enable access to find and review similar photos.")
     } actions: {
-      Button("Enable Photo Access") {
-        Task {
-          authStatus = await PhotoLibrary.requestAuthorization()
-          loadGroups()
-        }
-      }
-      .prominentActionButton()
+      PhotoAccessButtons(status: authStatus, refresh: reloadAfterAccessChange)
     }
+  }
+
+  private func reloadAfterAccessChange() {
+    authStatus = PhotoLibrary.authorizationStatus()
+    loadGroups()
   }
 
   private var scanningView: some View {
@@ -1595,10 +1601,20 @@ struct SimilarReviewSessionView: View {
     ContentUnavailableView {
       Label("No Similar Photos Found", systemImage: "square.stack.3d.up")
     } description: {
-      Text("Try again after taking more photos, or increase the review size in Settings. Screenshots are reviewed separately.")
+      Text(emptyViewDescription)
     } actions: {
+      if authStatus == .limited {
+        PhotoAccessButtons(status: authStatus, refresh: reloadAfterAccessChange)
+      }
       Button("Back") { dismiss() }
     }
+  }
+
+  private var emptyViewDescription: String {
+    if authStatus == .limited {
+      return "SnipSnaps can only compare the photos you've selected. Add more, or allow full access, to find similar shots."
+    }
+    return "Try again after taking more photos, or increase the review size in Settings. Screenshots are reviewed separately."
   }
 
   // MARK: - Summary
