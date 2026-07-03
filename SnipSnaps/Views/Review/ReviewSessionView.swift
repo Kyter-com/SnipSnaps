@@ -1047,6 +1047,7 @@ struct SimilarReviewSessionView: View {
   @State private var cardSize: CGSize = .zero
   @AppStorage("reviewLimit") private var reviewLimit: Int = 20
   @AppStorage("similarSortOption") private var similarSortOptionRawValue: String = SimilarSortOption.recent.rawValue
+  @AppStorage("reviewMemoryOption") private var reviewMemoryOptionRawValue: String = ReviewMemoryOption.thirtyDays.rawValue
   @AppStorage("totalDeletedCount") private var totalDeletedCount: Int = 0
   @AppStorage("totalDeletedBytes") private var totalDeletedBytes: Int = 0
 
@@ -1102,10 +1103,19 @@ struct SimilarReviewSessionView: View {
     SimilarSortOption(rawValue: similarSortOptionRawValue) ?? .recent
   }
 
-  private var scanLimit: Int {
-    min(max(reviewLimit * 30, 200), 900)
+  private var reviewMemoryOption: ReviewMemoryOption {
+    ReviewMemoryOption(rawValue: reviewMemoryOptionRawValue) ?? .thirtyDays
   }
 
+  // How many photos a scan is willing to examine. Independent of the review
+  // size: the scan walks newest-first and stops as soon as it has enough groups
+  // to review (see maxGroups), so it only reaches this ceiling on libraries with
+  // few or no near-duplicates. The cap keeps the pairwise comparison bounded and
+  // matches the review-history identifier ceiling.
+  private var scanLimit: Int { 20_000 }
+
+  // How many groups one review session surfaces. This is the review size — it
+  // governs the batch you review at a time, not how deep the scan looks.
   private var maxGroups: Int {
     max(5, min(reviewLimit, 60))
   }
@@ -1579,13 +1589,11 @@ struct SimilarReviewSessionView: View {
   }
 
   private var scanStatusText: String {
-    let countText: String
-    if scanProgress.totalCount > 0 {
-      countText = "\(scanProgress.completedCount) of \(scanProgress.totalCount)"
-    } else {
-      countText = "up to \(scanLimit)"
+    guard scanProgress.totalCount > 0 else {
+      return "Preparing scan. \(similarSortOption.subtitle)."
     }
 
+    let countText = "\(scanProgress.completedCount) of \(scanProgress.totalCount)"
     if groups.isEmpty {
       return "Comparing \(countText) photos. \(similarSortOption.subtitle)."
     }
@@ -1614,7 +1622,10 @@ struct SimilarReviewSessionView: View {
     if authStatus == .limited {
       return "SnipSnaps can only compare the photos you've selected. Add more, or allow full access, to find similar shots."
     }
-    return "Try again after taking more photos, or increase the review size in Settings. Screenshots are reviewed separately."
+    if reviewMemoryOption != .never {
+      return "No near-duplicates left to review. Groups you've already reviewed are skipped — change Remember Reviewed in Settings to revisit them. Screenshots are reviewed separately."
+    }
+    return "No near-duplicate photos found. Screenshots are reviewed separately."
   }
 
   // MARK: - Summary
@@ -1771,7 +1782,7 @@ struct SimilarReviewSessionView: View {
     scanProgress = SimilarPhotoScanProgress(
       phase: .preparing,
       completedCount: 0,
-      totalCount: scanLimit,
+      totalCount: 0,
       groupsFound: 0
     )
     scanTask = Task {
@@ -1788,11 +1799,15 @@ struct SimilarReviewSessionView: View {
       let scanLimit = scanLimit
       let maxGroups = maxGroups
       let similarSortOption = similarSortOption
+      let reviewMemoryOption = reviewMemoryOption
       let worker = Task.detached(priority: .userInitiated) {
-        await PhotoLibrary.fetchSimilarPhotoGroups(
+        // Decode the (up to 20k) reviewed-identifier store off the main thread.
+        let reviewedIdentifiers = PhotoReviewHistory.similarReviewedIdentifiers(memoryOption: reviewMemoryOption)
+        return await PhotoLibrary.fetchSimilarPhotoGroups(
           scanLimit: scanLimit,
           maxGroups: maxGroups,
           sort: similarSortOption,
+          reviewedIdentifiers: reviewedIdentifiers,
           progressHandler: { progress in
             await MainActor.run {
               guard isScanning else { return }
@@ -1923,6 +1938,10 @@ struct SimilarReviewSessionView: View {
     case .delete:
       appendUnique([asset], to: &deleteAssets)
     }
+    // Remember this photo so the next scan skips it and reaches deeper into the
+    // library. Deleted photos leave the library anyway; recording kept ones is
+    // what stops a kept group from re-forming and reappearing.
+    PhotoReviewHistory.markSimilarReviewed(asset.localIdentifier, memoryOption: reviewMemoryOption)
     #if os(macOS)
     if reduceMotion {
       cardDepartureOffset = .zero
@@ -1955,8 +1974,9 @@ struct SimilarReviewSessionView: View {
   }
 
   // Defers the entire current group: clears any decisions already made for its
-  // photos so nothing is kept or deleted, then moves on. The group reappears on
-  // the next scan (Similar does not track review memory).
+  // photos so nothing is kept or deleted, then moves on. Skipping does not
+  // record review memory, so the group reappears on the next scan — any photos
+  // that were already decided get un-remembered here so they come back too.
   private func skipGroup() {
     guard let group = currentGroup, !isAnimatingCard else { return }
     let identifiers = Set(group.assets.map(\.localIdentifier))
@@ -1965,6 +1985,9 @@ struct SimilarReviewSessionView: View {
     pushUndo(addedKept: [], addedDelete: [], restoredKept: restoredKept, restoredDelete: restoredDelete)
     keptAssets.removeAll { identifiers.contains($0.localIdentifier) }
     deleteAssets.removeAll { identifiers.contains($0.localIdentifier) }
+    for asset in restoredKept + restoredDelete {
+      PhotoReviewHistory.unmarkSimilarReviewed(asset.localIdentifier, memoryOption: reviewMemoryOption)
+    }
     selectionHaptic()
     advanceGroupAnimated()
   }
@@ -2016,6 +2039,14 @@ struct SimilarReviewSessionView: View {
     deleteAssets.removeAll { step.addedDeleteIDs.contains($0.localIdentifier) }
     appendUnique(step.restoredKept, to: &keptAssets)
     appendUnique(step.restoredDelete, to: &deleteAssets)
+    // Keep review memory in step with the decisions being reverted: drop the
+    // ones this step added, and restore the ones a skip had cleared.
+    for identifier in step.addedKeptIDs + step.addedDeleteIDs {
+      PhotoReviewHistory.unmarkSimilarReviewed(identifier, memoryOption: reviewMemoryOption)
+    }
+    for asset in step.restoredKept + step.restoredDelete {
+      PhotoReviewHistory.markSimilarReviewed(asset.localIdentifier, memoryOption: reviewMemoryOption)
+    }
     showSummary = false
     withAnimation(.spring(duration: 0.34, bounce: 0.14)) {
       currentGroupIndex = step.groupIndex

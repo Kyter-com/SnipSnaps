@@ -124,6 +124,15 @@ enum PhotoReviewHistory {
   nonisolated(unsafe) private static var sessionIdentifiers: Set<String> = []
   nonisolated(unsafe) private static var didMigrateLegacyStores = false
 
+  // Similar review memory lives in its own namespace, separate from the shared
+  // cross-mode store. Keeping it separate means (a) keeping one of two
+  // near-duplicates here does not hide that photo from the other cleanup modes,
+  // and (b) a photo reviewed in another mode is not silently dropped from a
+  // Similar scan, which would otherwise leave its twin without a match and hide
+  // the pair entirely.
+  private static let similarKey = "reviewedAssetIdentifiers.similar"
+  nonisolated(unsafe) private static var similarSessionIdentifiers: Set<String> = []
+
   static func supportsSkipping(for mode: ReviewMode) -> Bool {
     switch mode {
     case .today, .random, .screenshots, .oldScreenshots, .videos, .screenRecordings, .largePhotos, .livePhotos, .bursts, .oldFavorites:
@@ -147,7 +156,16 @@ enum PhotoReviewHistory {
   }
 
   static func hasReviewedIdentifiers() -> Bool {
-    !sessionReviewedIdentifiersAreEmpty() || !persistentEntries().isEmpty
+    !sessionReviewedIdentifiersAreEmpty()
+      || !persistentEntries().isEmpty
+      || !similarSessionReviewedIdentifiersAreEmpty()
+      || !decodeEntries(forKey: similarKey).isEmpty
+  }
+
+  private static func similarSessionReviewedIdentifiersAreEmpty() -> Bool {
+    sessionLock.lock()
+    defer { sessionLock.unlock() }
+    return similarSessionIdentifiers.isEmpty
   }
 
   static func markReviewed(_ asset: PHAsset, for mode: ReviewMode, memoryOption: ReviewMemoryOption) {
@@ -176,9 +194,56 @@ enum PhotoReviewHistory {
     storePersistentEntries(entries)
   }
 
+  // Similar mode reviews whole groups rather than single photos, and it does not
+  // share the cross-mode store, so it gets its own mark/unmark/read trio keyed by
+  // asset identifier. Excluding these on the next scan is what lets a Similar
+  // scan reach deeper into the library instead of re-surfacing handled groups.
+  static func similarReviewedIdentifiers(memoryOption: ReviewMemoryOption) -> Set<String> {
+    guard memoryOption != .never else { return [] }
+    if memoryOption == .session {
+      sessionLock.lock()
+      defer { sessionLock.unlock() }
+      return similarSessionIdentifiers
+    }
+    return Set(filteredPersistentEntries(forKey: similarKey, memoryOption: memoryOption).keys)
+  }
+
+  static func markSimilarReviewed(_ identifier: String, memoryOption: ReviewMemoryOption) {
+    guard memoryOption != .never else { return }
+    if memoryOption == .session {
+      sessionLock.lock()
+      defer { sessionLock.unlock() }
+      similarSessionIdentifiers.insert(identifier)
+      while similarSessionIdentifiers.count > maxIdentifiers, let excess = similarSessionIdentifiers.first {
+        similarSessionIdentifiers.remove(excess)
+      }
+      return
+    }
+    var entries = decodeEntries(forKey: similarKey)
+    entries[identifier] = Date().timeIntervalSince1970
+    storePersistentEntries(entries, forKey: similarKey)
+  }
+
+  static func unmarkSimilarReviewed(_ identifier: String, memoryOption: ReviewMemoryOption) {
+    guard memoryOption != .never else { return }
+    if memoryOption == .session {
+      sessionLock.lock()
+      defer { sessionLock.unlock() }
+      similarSessionIdentifiers.remove(identifier)
+      return
+    }
+    var entries = decodeEntries(forKey: similarKey)
+    entries.removeValue(forKey: identifier)
+    storePersistentEntries(entries, forKey: similarKey)
+  }
+
   static func clearAll() {
     clearSessionReviewedIdentifiers()
     UserDefaults.standard.removeObject(forKey: sharedKey)
+    UserDefaults.standard.removeObject(forKey: similarKey)
+    sessionLock.lock()
+    similarSessionIdentifiers.removeAll()
+    sessionLock.unlock()
     for mode in ReviewMode.allCases {
       UserDefaults.standard.removeObject(forKey: key(for: mode))
     }
@@ -191,6 +256,12 @@ enum PhotoReviewHistory {
   static func compactStoredHistory() {
     trimSessionReviewedIdentifiers()
     storePersistentEntries(persistentEntries())
+    storePersistentEntries(decodeEntries(forKey: similarKey), forKey: similarKey)
+    sessionLock.lock()
+    while similarSessionIdentifiers.count > maxIdentifiers, let excess = similarSessionIdentifiers.first {
+      similarSessionIdentifiers.remove(excess)
+    }
+    sessionLock.unlock()
   }
 
   private static func key(for mode: ReviewMode) -> String {
@@ -212,6 +283,19 @@ enum PhotoReviewHistory {
   // everything) and the timed windows (keep entries newer than the cutoff).
   private static func filteredPersistentEntries(memoryOption: ReviewMemoryOption) -> [String: TimeInterval] {
     let entries = persistentEntries()
+    guard let expirationInterval = memoryOption.expirationInterval, expirationInterval > 0 else {
+      return entries
+    }
+
+    let cutoff = Date().timeIntervalSince1970 - expirationInterval
+    return entries.filter { $0.value >= cutoff }
+  }
+
+  // Window filter for a specific store key. Unlike the shared variant it reads
+  // the key directly and does not run the legacy per-mode migration, which only
+  // ever applied to the shared store.
+  private static func filteredPersistentEntries(forKey key: String, memoryOption: ReviewMemoryOption) -> [String: TimeInterval] {
+    let entries = decodeEntries(forKey: key)
     guard let expirationInterval = memoryOption.expirationInterval, expirationInterval > 0 else {
       return entries
     }
@@ -257,7 +341,10 @@ enum PhotoReviewHistory {
 
     let legacyKeys = ReviewMode.allCases.map { key(for: $0) }
       + legacyModeRawValues.map { key(forRawValue: $0) }
-    for legacyKey in legacyKeys where legacyKey != sharedKey {
+    // similarKey is byte-for-byte identical to key(for: .similar), so it appears
+    // in legacyKeys. It must be excluded here or the migration would fold the
+    // live Similar-review store into the shared cross-mode store and delete it.
+    for legacyKey in legacyKeys where legacyKey != sharedKey && legacyKey != similarKey {
       let entries = decodeEntries(forKey: legacyKey)
       guard !entries.isEmpty else { continue }
       didFindLegacy = true
@@ -277,14 +364,18 @@ enum PhotoReviewHistory {
   }
 
   private static func storePersistentEntries(_ entries: [String: TimeInterval]) {
+    storePersistentEntries(entries, forKey: sharedKey)
+  }
+
+  private static func storePersistentEntries(_ entries: [String: TimeInterval], forKey key: String) {
     let compactedEntries = compactedPersistentEntries(entries)
     let limitedEntries = compactedEntries.sorted { $0.value > $1.value }.prefix(maxIdentifiers)
     let dictionary = Dictionary(uniqueKeysWithValues: limitedEntries.map { ($0.key, $0.value) })
     guard !dictionary.isEmpty else {
-      UserDefaults.standard.removeObject(forKey: sharedKey)
+      UserDefaults.standard.removeObject(forKey: key)
       return
     }
-    UserDefaults.standard.set(dictionary, forKey: sharedKey)
+    UserDefaults.standard.set(dictionary, forKey: key)
   }
 
   private static func sessionReviewedIdentifiers() -> Set<String> {
@@ -569,6 +660,7 @@ enum PhotoLibrary {
     scanLimit: Int,
     maxGroups: Int,
     sort: SimilarSortOption = .recent,
+    reviewedIdentifiers: Set<String> = [],
     progressHandler: ((SimilarPhotoScanProgress) async -> Void)? = nil,
     partialGroupsHandler: (([SimilarPhotoGroup]) async -> Void)? = nil
   ) async -> [SimilarPhotoGroup] {
@@ -584,149 +676,157 @@ enum PhotoLibrary {
 
     let result = PHAsset.fetchAssets(with: .image, options: options)
     guard result.count > 1 else { return [] }
-    await progressHandler?(SimilarPhotoScanProgress(
-      phase: .preparing,
-      completedCount: 0,
-      totalCount: result.count,
-      groupsFound: 0
-    ))
 
+    // Collect the fetched assets, dropping anything reviewed in a prior Similar
+    // session so each scan reaches further into the library instead of
+    // re-surfacing groups already handled.
     var assets: [PHAsset] = []
     assets.reserveCapacity(result.count)
     for index in 0..<result.count {
       guard !Task.isCancelled else { return [] }
-      assets.append(result.object(at: index))
+      let asset = result.object(at: index)
+      guard !reviewedIdentifiers.contains(asset.localIdentifier) else { continue }
+      assets.append(asset)
     }
     if sort == .random {
       assets.shuffle()
     }
+    guard assets.count > 1 else { return [] }
+
+    await progressHandler?(SimilarPhotoScanProgress(
+      phase: .preparing,
+      completedCount: 0,
+      totalCount: assets.count,
+      groupsFound: 0
+    ))
+
+    // The size-ranked sorts must see every candidate before they can rank, so
+    // they run the full scan; every other sort stops as soon as the review batch
+    // is full.
+    let canStopEarly = sort != .largest && sort != .mostMatches
 
     var usedIdentifiers = Set<String>()
-    var groups = burstSimilarGroups(from: assets, usedIdentifiers: &usedIdentifiers)
-    if !groups.isEmpty {
-      let sortedBurstGroups = sortedSimilarGroups(groups, sort: sort).prefix(maxGroups).map { $0 }
-      await partialGroupsHandler?(sortedBurstGroups)
-      if groups.count >= maxGroups, sort != .largest, sort != .mostMatches {
-        return sortedBurstGroups
+    let burstGroups = burstSimilarGroups(from: assets, usedIdentifiers: &usedIdentifiers)
+
+    // Online, single-pass clustering. Walk the library in the sorted order,
+    // fingerprinting each photo as it is reached and matching it against the
+    // anchor of every group seen so far (a lone photo is a one-member group, so
+    // pairing up an earlier photo and starting a new group is the same code
+    // path as extending an existing one). Because it is incremental, groups
+    // stream out as they form and the scan can stop the moment the batch is full
+    // — without fingerprinting the rest of the library.
+    var clusters: [SimilarPhotoCluster] = []
+    // Bounded so a large, visually-similar library can't retain tens of
+    // thousands of feature vectors (~100 MB+) for the whole scan and get the
+    // app jetsammed. NSCache also drops entries under memory pressure; an evicted
+    // anchor's print is simply recomputed on next comparison.
+    let featurePrints = NSCache<NSString, VNFeaturePrintObservation>()
+    featurePrints.countLimit = 5_000
+    var groupCount = burstGroups.count
+
+    func currentGroups() -> [SimilarPhotoGroup] {
+      var all = burstGroups
+      for cluster in clusters where cluster.isGroup {
+        all.append(SimilarPhotoGroup(
+          assets: orderSimilarAssetsForReview(cluster.members),
+          confidence: similarGroupConfidence(
+            hashMatches: cluster.members.count,
+            closestHashDistance: cluster.closestHashDistance,
+            closestFeatureDistance: cluster.closestFeatureDistance
+          )
+        ))
+      }
+      return sortedSimilarGroups(all, sort: sort).prefix(maxGroups).map { $0 }
+    }
+
+    if !burstGroups.isEmpty {
+      await partialGroupsHandler?(currentGroups())
+      if canStopEarly, groupCount >= maxGroups {
+        let sortedGroups = currentGroups()
+        await progressHandler?(SimilarPhotoScanProgress(
+          phase: .finishing,
+          completedCount: sortedGroups.count,
+          totalCount: max(sortedGroups.count, 1),
+          groupsFound: sortedGroups.count
+        ))
+        return sortedGroups
       }
     }
 
-    var fingerprints: [SimilarPhotoFingerprint] = []
-    fingerprints.reserveCapacity(assets.count)
     for (index, asset) in assets.enumerated() {
-      guard !Task.isCancelled else { return sortedSimilarGroups(groups, sort: sort).prefix(maxGroups).map { $0 } }
-      if !usedIdentifiers.contains(asset.localIdentifier),
-         let cgImage = thumbnailCGImage(
-          for: asset,
-          targetSize: CGSize(width: 18, height: 16),
-          deliveryMode: .highQualityFormat
-         ),
-         let hash = differenceHash(for: cgImage) {
-        fingerprints.append(SimilarPhotoFingerprint(asset: asset, hash: hash, aspectRatio: aspectRatio(for: asset)))
-      }
-      if index == 0 || index == assets.count - 1 || index.isMultiple(of: 20) {
-        await progressHandler?(SimilarPhotoScanProgress(
-          phase: .fingerprinting,
-          completedCount: index + 1,
-          totalCount: assets.count,
-          groupsFound: groups.count
-        ))
-      }
-    }
+      guard !Task.isCancelled else { return currentGroups() }
+      let reportProgress = index == 0 || index == assets.count - 1 || index.isMultiple(of: 12)
 
-    var featurePrints: [String: VNFeaturePrintObservation] = [:]
-    for (index, fingerprint) in fingerprints.enumerated() {
-      guard !Task.isCancelled else { return sortedSimilarGroups(groups, sort: sort).prefix(maxGroups).map { $0 } }
-      guard !usedIdentifiers.contains(fingerprint.asset.localIdentifier) else {
-        if index == 0 || index == fingerprints.count - 1 || index.isMultiple(of: 5) {
+      guard !usedIdentifiers.contains(asset.localIdentifier) else {
+        if reportProgress {
           await progressHandler?(SimilarPhotoScanProgress(
-            phase: .comparing,
-            completedCount: index + 1,
-            totalCount: max(fingerprints.count, 1),
-            groupsFound: groups.count
+            phase: .comparing, completedCount: index + 1, totalCount: assets.count, groupsFound: groupCount
           ))
         }
         continue
       }
 
-      var matches = [fingerprint.asset]
-      var closestHashDistance = Int.max
-      var closestDistance = Float.greatestFiniteMagnitude
-      for (candidateIndex, candidate) in fingerprints.enumerated() {
-        if candidateIndex.isMultiple(of: 24), Task.isCancelled {
-          return sortedSimilarGroups(groups, sort: sort).prefix(maxGroups).map { $0 }
-        }
-        guard fingerprint.asset.localIdentifier != candidate.asset.localIdentifier,
-              !usedIdentifiers.contains(candidate.asset.localIdentifier) else {
-          continue
-        }
-
-        let hashDistance = hammingDistance(fingerprint.hash, candidate.hash)
-        // Cheap structural pre-filter: same shape and roughly similar layout.
-        guard abs(fingerprint.aspectRatio - candidate.aspectRatio) < 0.12,
-              hashDistance <= 14 else {
-          continue
-        }
-
-        // The Vision feature print is the authoritative, semantic check. Its
-        // distances are small — ~0 identical, <= ~0.35 genuinely similar, >= ~0.5
-        // different scenes — so this is the gate that keeps unrelated photos out.
-        // dHash alone collides on flat/low-detail photos (sky, walls, dark
-        // shots), so we only fall back to a strict hash-only match when the
-        // feature print can't be computed and the frames are near-identical.
-        if let distance = featurePrintDistance(
-          from: fingerprint.asset,
-          to: candidate.asset,
-          cache: &featurePrints
-        ) {
-          closestDistance = min(closestDistance, distance)
-          guard distance <= similarFeatureMatchThreshold else { continue }
-          closestHashDistance = min(closestHashDistance, hashDistance)
-          matches.append(candidate.asset)
-        } else if hashDistance <= 4 {
-          closestHashDistance = min(closestHashDistance, hashDistance)
-          matches.append(candidate.asset)
-        }
-      }
-
-      guard matches.count > 1 else {
-        if index == 0 || index == fingerprints.count - 1 || index.isMultiple(of: 5) {
+      guard let cgImage = thumbnailCGImage(
+        for: asset,
+        targetSize: CGSize(width: 18, height: 16),
+        deliveryMode: .highQualityFormat
+      ), let hash = differenceHash(for: cgImage) else {
+        if reportProgress {
           await progressHandler?(SimilarPhotoScanProgress(
-            phase: .comparing,
-            completedCount: index + 1,
-            totalCount: max(fingerprints.count, 1),
-            groupsFound: groups.count
+            phase: .comparing, completedCount: index + 1, totalCount: assets.count, groupsFound: groupCount
           ))
         }
         continue
       }
-      let orderedMatches = orderSimilarAssetsForReview(matches)
-      for asset in orderedMatches {
+      let fingerprint = SimilarPhotoFingerprint(asset: asset, hash: hash, aspectRatio: aspectRatio(for: asset))
+
+      // Match against the anchor of each group seen so far. First match wins,
+      // which mirrors the previous seed-and-scan behavior where a group was
+      // "every photo similar to its anchor."
+      var matchedClusterIndex: Int?
+      var matchInfo: (hashDistance: Int, featureDistance: Float)?
+      for clusterIndex in clusters.indices {
+        // Check often: each comparison can run a Vision feature-print inference,
+        // so a coarse stride would delay the user's cancel by seconds.
+        if clusterIndex.isMultiple(of: 16), Task.isCancelled {
+          return currentGroups()
+        }
+        if let match = similarMatch(fingerprint, clusters[clusterIndex].anchor, cache: featurePrints) {
+          matchedClusterIndex = clusterIndex
+          matchInfo = match
+          break
+        }
+      }
+
+      if let clusterIndex = matchedClusterIndex, let match = matchInfo {
+        let wasGroup = clusters[clusterIndex].isGroup
+        clusters[clusterIndex].add(asset, hashDistance: match.hashDistance, featureDistance: match.featureDistance)
         usedIdentifiers.insert(asset.localIdentifier)
+        if !wasGroup { groupCount += 1 }
+        // Stream the update for the early-stop sorts only. They hold at most
+        // maxGroups groups, so rebuilding is cheap and keeps the live preview
+        // fresh and complete — important because tapping "Review found so far"
+        // reviews exactly the last streamed set. The size-ranked sorts must scan
+        // the whole cap before their ranking is meaningful, so they don't stream
+        // partial (still-growing) groups; they emit once, complete, at the end.
+        if canStopEarly {
+          await partialGroupsHandler?(currentGroups())
+        }
+      } else {
+        clusters.append(SimilarPhotoCluster(anchor: fingerprint))
       }
-      groups.append(SimilarPhotoGroup(
-        assets: orderedMatches,
-        confidence: similarGroupConfidence(
-          hashMatches: matches.count,
-          closestHashDistance: closestHashDistance,
-          closestFeatureDistance: closestDistance
-        )
-      ))
-      await partialGroupsHandler?(sortedSimilarGroups(groups, sort: sort).prefix(maxGroups).map { $0 })
-      if index == 0 || index == fingerprints.count - 1 || index.isMultiple(of: 5) {
+
+      if reportProgress {
         await progressHandler?(SimilarPhotoScanProgress(
-          phase: .comparing,
-          completedCount: index + 1,
-          totalCount: max(fingerprints.count, 1),
-          groupsFound: groups.count
+          phase: .comparing, completedCount: index + 1, totalCount: assets.count, groupsFound: groupCount
         ))
       }
-      if groups.count >= maxGroups, sort != .largest, sort != .mostMatches {
+      if canStopEarly, groupCount >= maxGroups {
         break
       }
     }
 
-    let sortedGroups = sortedSimilarGroups(groups, sort: sort).prefix(maxGroups).map { $0 }
+    let sortedGroups = currentGroups()
     await progressHandler?(SimilarPhotoScanProgress(
       phase: .finishing,
       completedCount: sortedGroups.count,
@@ -735,6 +835,31 @@ enum PhotoLibrary {
     ))
     await partialGroupsHandler?(sortedGroups)
     return sortedGroups
+  }
+
+  // Tests one photo against a group's anchor using the same two-stage gate the
+  // scan has always used: a cheap structural pre-filter (same shape, roughly
+  // similar dHash) followed by the authoritative Vision feature print. The
+  // feature print's distances are small — ~0 identical, <= ~0.35 genuinely
+  // similar, >= ~0.5 different scenes. dHash alone collides on flat/low-detail
+  // photos (sky, walls, dark shots), so a hash-only match is allowed only when
+  // the feature print can't be computed and the frames are near-identical.
+  private static func similarMatch(
+    _ candidate: SimilarPhotoFingerprint,
+    _ anchor: SimilarPhotoFingerprint,
+    cache: NSCache<NSString, VNFeaturePrintObservation>
+  ) -> (hashDistance: Int, featureDistance: Float)? {
+    let hashDistance = hammingDistance(candidate.hash, anchor.hash)
+    guard abs(candidate.aspectRatio - anchor.aspectRatio) < 0.12, hashDistance <= 14 else {
+      return nil
+    }
+    if let distance = featurePrintDistance(from: anchor.asset, to: candidate.asset, cache: cache) {
+      guard distance <= similarFeatureMatchThreshold else { return nil }
+      return (hashDistance, distance)
+    } else if hashDistance <= 4 {
+      return (hashDistance, .greatestFiniteMagnitude)
+    }
+    return nil
   }
 
   @discardableResult
@@ -1242,6 +1367,32 @@ enum PhotoLibrary {
     let aspectRatio: CGFloat
   }
 
+  // A group being accumulated during the incremental scan. The anchor is the
+  // first (in sort order) photo; every other member matched it. A cluster with a
+  // single member is just a lone photo waiting for a match, and only becomes a
+  // reviewable group once a second member is added.
+  private struct SimilarPhotoCluster {
+    let anchor: SimilarPhotoFingerprint
+    var members: [PHAsset]
+    var closestHashDistance: Int
+    var closestFeatureDistance: Float
+
+    init(anchor: SimilarPhotoFingerprint) {
+      self.anchor = anchor
+      self.members = [anchor.asset]
+      self.closestHashDistance = Int.max
+      self.closestFeatureDistance = .greatestFiniteMagnitude
+    }
+
+    var isGroup: Bool { members.count > 1 }
+
+    mutating func add(_ asset: PHAsset, hashDistance: Int, featureDistance: Float) {
+      members.append(asset)
+      closestHashDistance = min(closestHashDistance, hashDistance)
+      closestFeatureDistance = min(closestFeatureDistance, featureDistance)
+    }
+  }
+
   // Vision feature-print distance below which two photos count as similar. The
   // scale is small: ~0 identical, ~0.35 genuinely similar, ~0.5 unrelated photos
   // of the same general scene. Lower toward 0.3 for stricter matching, raise
@@ -1386,10 +1537,10 @@ enum PhotoLibrary {
   private static func featurePrintDistance(
     from lhs: PHAsset,
     to rhs: PHAsset,
-    cache: inout [String: VNFeaturePrintObservation]
+    cache: NSCache<NSString, VNFeaturePrintObservation>
   ) -> Float? {
-    guard let lhsPrint = featurePrint(for: lhs, cache: &cache),
-          let rhsPrint = featurePrint(for: rhs, cache: &cache) else {
+    guard let lhsPrint = featurePrint(for: lhs, cache: cache),
+          let rhsPrint = featurePrint(for: rhs, cache: cache) else {
       return nil
     }
 
@@ -1404,9 +1555,9 @@ enum PhotoLibrary {
 
   private static func featurePrint(
     for asset: PHAsset,
-    cache: inout [String: VNFeaturePrintObservation]
+    cache: NSCache<NSString, VNFeaturePrintObservation>
   ) -> VNFeaturePrintObservation? {
-    if let cached = cache[asset.localIdentifier] {
+    if let cached = cache.object(forKey: asset.localIdentifier as NSString) {
       return cached
     }
 
@@ -1425,7 +1576,7 @@ enum PhotoLibrary {
       guard let observation = request.results?.first as? VNFeaturePrintObservation else {
         return nil
       }
-      cache[asset.localIdentifier] = observation
+      cache.setObject(observation, forKey: asset.localIdentifier as NSString)
       return observation
     } catch {
       return nil
