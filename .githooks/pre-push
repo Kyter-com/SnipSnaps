@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+#
+# Version-managed pre-push hook. Enabled with:
+#   git config core.hooksPath .githooks
+#
+# Only guards pushes that update `main` — the branch Xcode Cloud builds.
+# Delegates to scripts/check-marketing-version.sh.
+set -euo pipefail
+
+repo_root=$(git rev-parse --show-toplevel)
+guard="$repo_root/scripts/check-marketing-version.sh"
+[[ -x "$guard" ]] || exit 0
+
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  if [[ "$remote_ref" == "refs/heads/main" ]]; then
+    exec "$guard"
+  fi
+done
+exit 0
