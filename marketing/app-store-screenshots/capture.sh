@@ -75,11 +75,17 @@ rm -rf "$XCRESULT"
 
 echo "==> Running UI test"
 cd "$ROOT/../.."
+# xcodebuild spins up simulator clones and retries on transient "Busy" launch
+# failures, so it can print "** TEST FAILED **" for a dead clone yet still pass
+# on a retry — and exit non-zero regardless. Don't let that abort the script
+# before we extract; `extract-shots.py` below is the real success check.
+set +o pipefail
 xcodebuild -project SnipSnaps.xcodeproj -scheme SnipSnaps \
   -destination "id=$DEVICE" \
   -only-testing:SnipSnapsUITests/ScreenshotCaptureTests/testCaptureAllScreens \
   -resultBundlePath "$XCRESULT" \
-  test 2>&1 | grep -E "(TEST|passed|failed)" | tail -5
+  test 2>&1 | grep -E "(Test Case .* (passed|failed)|TEST (SUCCEEDED|FAILED)|error:)" | tail -8 || true
+set -o pipefail
 
 echo "==> Extracting captures into $RAW_DIR"
 mkdir -p "$RAW_DIR"

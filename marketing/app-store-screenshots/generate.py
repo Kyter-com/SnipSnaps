@@ -53,6 +53,13 @@ GLASS_RX_VB = 52
 DI_VB = (140, 24, 250, 55)
 DI_RX_VB = 15.5
 
+# A real 6.9" screenshot is 1320x2868 (aspect 0.4603). The SVG's glass opening is
+# ~3.7% too wide for that, so a straight cover-fit had to crop the status bar and
+# tab bar to fill it. We instead stretch the frame vertically at load so the glass
+# matches this aspect exactly: the capture then maps 1:1 (no crop, no squish) and
+# the clock lands aligned with the Dynamic Island.
+SCREEN_ASPECT = 1320 / 2868
+
 SLIDES = [
     {"title": "Clear photo clutter in minutes.", "screen": "home"},
     {"title": "Review one item at a time.", "screen": "review"},
@@ -144,110 +151,45 @@ def raw_capture(device: str, index: int, screen: str):
     return Image.open(path).convert("RGB") if path.exists() else None
 
 
-# Marketing clock. We retime the captured status bar to Apple's canonical 9:41
-# rather than re-capturing with `simctl status_bar override` — the iOS 26.4
-# Photos-permission flow makes a clean re-capture unreliable (see capture.sh),
-# and the content is already correct, so only the clock needs changing.
-CLOCK_IPHONE = "9:41"
-CLOCK_IPAD = "9:41 AM"
+# The status bar is baked in natively at capture time: capture.sh sets
+# `simctl status_bar override` (9:41, full battery, Wi-Fi, 4 signal bars) before
+# the UI test runs, so the raw captures already carry a clean marketing status
+# bar and no compositing-time retiming/redrawing is needed.
 
 
-def _dark_runs(px, band: int, x_lo: int, x_hi: int, thresh=120, gap=18):
-    """Contiguous x-runs containing dark (glyph) pixels within the top band."""
-    cols = []
-    for x in range(x_lo, x_hi):
-        for y in range(band):
-            r, g, b = px[x, y][:3]
-            if r < thresh and g < thresh and b < thresh:
-                cols.append(x)
-                break
-    runs = []
-    if cols:
-        start = prev = cols[0]
-        for x in cols[1:]:
-            if x - prev <= gap:
-                prev = x
-            else:
-                runs.append((start, prev))
-                start = prev = x
-        runs.append((start, prev))
-    return runs
+_FRAME_CACHE: tuple[Image.Image, float, float] | None = None
 
 
-def _clock_font(draw, target_h: int) -> ImageFont.FreeTypeFont:
-    size = target_h
-    for _ in range(30):
-        fnt = font(size)
-        bb = draw.textbbox((0, 0), "9:41", font=fnt)
-        if bb[3] - bb[1] >= target_h:
-            return fnt
-        size += 1
-    return font(size)
-
-
-def retime_status_bar(shot: Image.Image, device: str) -> Image.Image:
-    """Replace the captured status-bar time with the marketing 9:41, drawn in the
-    system SF font so it matches iOS exactly. iPhone shows just the time; iPad
-    shows time + AM/PM followed by a date, so we retime the time and keep the
-    date."""
-    shot = shot.convert("RGB").copy()
-    d = ImageDraw.Draw(shot)
-    px = shot.load()
-    band = int(shot.height * 0.045)
-    bg = shot.getpixel((int(shot.width * 0.02), band // 2))
-
-    if device.startswith("iphone"):
-        runs = _dark_runs(px, band, int(shot.width * 0.10), int(shot.width * 0.35))
-        label = CLOCK_IPHONE
-    else:
-        # iPad: runs are "3:40", "PM", "Tue", "May", "12". The largest gap splits
-        # the time+AM/PM from the date; retime up to that split.
-        runs = _dark_runs(px, band, int(shot.width * 0.015), int(shot.width * 0.30), gap=14)
-        label = CLOCK_IPAD
-    if not runs:
-        return shot
-
-    x0 = runs[0][0]
-    if device.startswith("iphone"):
-        x1 = runs[0][1]
-    else:
-        split = max(range(len(runs) - 1), key=lambda i: runs[i + 1][0] - runs[i][1]) if len(runs) > 1 else 0
-        x1 = runs[split][1]
-
-    ys = [y for x in range(x0, x1 + 1) for y in range(band)
-          if px[x, y][0] < 120 and px[x, y][1] < 120 and px[x, y][2] < 120]
-    y0, y1 = min(ys), max(ys)
-    d.rectangle((x0 - 16, y0 - 24, x1 + 34, y1 + 24), fill=bg)
-    fnt = _clock_font(d, y1 - y0)
-    top_offset = d.textbbox((0, 0), label, font=fnt)[1]
-    d.text((x0, y0 - top_offset), label, fill=(0, 0, 0), font=fnt)
-    return shot
-
-
-_FRAME_CACHE: Image.Image | None = None
-
-
-def _frame() -> Image.Image:
+def _frame() -> tuple[Image.Image, float, float]:
+    """Frame image with its glass opening stretched to SCREEN_ASPECT, plus the
+    per-axis viewBox->pixel scales (sx, sy). sy > sx by the stretch factor."""
     global _FRAME_CACHE
     if _FRAME_CACHE is None:
-        _FRAME_CACHE = Image.open(FRAME_PNG).convert("RGBA")
+        frame = Image.open(FRAME_PNG).convert("RGBA")
+        sx = frame.width / FRAME_VB_W
+        glass_w = (GLASS_VB[2] - GLASS_VB[0]) * sx
+        glass_h = (GLASS_VB[3] - GLASS_VB[1]) * sx
+        vstretch = (glass_w / SCREEN_ASPECT) / glass_h
+        frame = frame.resize((frame.width, round(frame.height * vstretch)), Image.Resampling.LANCZOS)
+        _FRAME_CACHE = (frame, sx, sx * vstretch)
     return _FRAME_CACHE
 
 
 def iphone_frame(screenshot, target_w: int) -> Image.Image:
     """Composite a screenshot into the real iPhone 16 frame at native resolution,
     redraw the Dynamic Island on top, then scale to `target_w`."""
-    frame = _frame().copy()
-    s = frame.width / FRAME_VB_W
-    gx0, gy0, gx1, gy1 = (round(v * s) for v in GLASS_VB)
+    frame, sx, sy = _frame()
+    frame = frame.copy()
+    gx0, gy0 = round(GLASS_VB[0] * sx), round(GLASS_VB[1] * sy)
+    gx1, gy1 = round(GLASS_VB[2] * sx), round(GLASS_VB[3] * sy)
     glass = (gx1 - gx0, gy1 - gy0)
 
     if screenshot is not None:
         screen = cover(screenshot, glass, anchor=(0.5, 0.5)).convert("RGBA")
-        frame.paste(screen, (gx0, gy0), rounded_mask(glass, round(GLASS_RX_VB * s)))
+        frame.paste(screen, (gx0, gy0), rounded_mask(glass, round(GLASS_RX_VB * sx)))
 
-    di = tuple(round(v * s) for v in DI_VB)
-    ImageDraw.Draw(frame, "RGBA").rounded_rectangle(di, radius=round(DI_RX_VB * s), fill=(6, 6, 8, 255))
+    di = (round(DI_VB[0] * sx), round(DI_VB[1] * sy), round(DI_VB[2] * sx), round(DI_VB[3] * sy))
+    ImageDraw.Draw(frame, "RGBA").rounded_rectangle(di, radius=round(DI_RX_VB * sy), fill=(6, 6, 8, 255))
 
     target_h = round(frame.height * target_w / frame.width)
     return frame.resize((target_w, target_h), Image.Resampling.LANCZOS)
@@ -295,8 +237,6 @@ def compose(device: str, slide, index: int):
     w, h = DEVICES[device]
     img = backdrop(w, h)
     screenshot = raw_capture(device, index, slide["screen"])
-    if screenshot is not None:
-        screenshot = retime_status_bar(screenshot, device)
 
     if device.startswith("iphone"):
         scale = w / 1290

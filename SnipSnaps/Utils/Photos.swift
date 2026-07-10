@@ -656,6 +656,19 @@ enum PhotoLibrary {
     return counts(from: result, excluding: reviewedIdentifiers)
   }
 
+  // Predicate that excludes a media subtype while still keeping assets whose
+  // subtype column is NULL. Photos imported without camera metadata (AirDrop,
+  // synced/imported photos, or `simctl addmedia` in the simulator) can have a
+  // NULL `mediaSubtype` in the Photos store. The intuitive `(mediaSubtype & N)
+  // == 0` filter silently drops every such asset, because `NULL & N == 0`
+  // evaluates to NULL (not true) — which is why the Similar/Large-photo scans
+  // came back empty in the simulator and would skip imported photos for real
+  // users too. The negated form keeps NULL-subtype assets (a missing subtype is
+  // not the requested subtype) while still excluding real screenshots.
+  static func excludingSubtype(_ subtype: PHAssetMediaSubtype) -> NSPredicate {
+    NSPredicate(format: "NOT ((mediaSubtype & %d) == %d)", subtype.rawValue, subtype.rawValue)
+  }
+
   static func fetchSimilarPhotoGroups(
     scanLimit: Int,
     maxGroups: Int,
@@ -668,10 +681,7 @@ enum PhotoLibrary {
     options.sortDescriptors = [
       NSSortDescriptor(key: "creationDate", ascending: sort == .oldest)
     ]
-    options.predicate = NSPredicate(
-      format: "(mediaSubtype & %d) == 0",
-      PHAssetMediaSubtype.photoScreenshot.rawValue
-    )
+    options.predicate = excludingSubtype(.photoScreenshot)
     options.fetchLimit = max(scanLimit, 1)
 
     let result = PHAsset.fetchAssets(with: .image, options: options)
@@ -1057,10 +1067,7 @@ enum PhotoLibrary {
     limit: Int,
     excluding reviewedIdentifiers: Set<String> = []
   ) -> [PHAsset] {
-    options.predicate = NSPredicate(
-      format: "(mediaSubtype & %d) == 0",
-      PHAssetMediaSubtype.photoScreenshot.rawValue
-    )
+    options.predicate = excludingSubtype(.photoScreenshot)
     options.sortDescriptors = [
       NSSortDescriptor(key: "creationDate", ascending: false)
     ]
@@ -1113,10 +1120,7 @@ enum PhotoLibrary {
 
   private static func fetchLargePhotoCounts(excluding reviewedIdentifiers: Set<String>) -> ReviewModeCounts {
     let options = PHFetchOptions()
-    options.predicate = NSPredicate(
-      format: "(mediaSubtype & %d) == 0",
-      PHAssetMediaSubtype.photoScreenshot.rawValue
-    )
+    options.predicate = excludingSubtype(.photoScreenshot)
     let result = PHAsset.fetchAssets(with: .image, options: options)
     guard result.count > 0 else { return ReviewModeCounts(total: 0, notReviewed: 0) }
 

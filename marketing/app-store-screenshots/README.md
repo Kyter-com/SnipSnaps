@@ -38,12 +38,12 @@ python3 marketing/app-store-screenshots/generate.py
 
 1. Refreshes EXIF timestamps on seed photos so they import as "today" (otherwise `Today` / `On This Day` modes show 0).
 2. Shuts the sim down, wipes `Media/DCIM` + `Media/PhotoData` for a clean slate.
-3. Pre-grants Photos full access (TCC.db insert + `simctl privacy grant photos`).
+3. Sets `simctl status_bar override` (9:41, full battery/Wi-Fi/signal) so the captures carry a clean marketing status bar natively, then resets Photos to *not-determined* (`simctl privacy reset all`). The pre-grant is dead on iOS 26.4, so the app is left to prompt and the UI test grants access by walking the system dialog.
 4. Re-adds the 42 seed photos via `simctl addmedia`.
-5. Runs `SnipSnapsUITests/ScreenshotCaptureTests/testCaptureAllScreens` against the device — which launches the real app, taps through every marketing screen, and attaches a named PNG of each one via `XCUIScreen.main.screenshot()`.
+5. Runs `SnipSnapsUITests/ScreenshotCaptureTests/testCaptureAllScreens` against the device — which launches the real app, grants Photos access via the system dialog, taps through every marketing screen, and attaches a named PNG of each one via `XCUIScreen.main.screenshot()`.
 6. Extracts the named attachments from the `.xcresult` bundle into `raw/<device>/01-home.png` … `06-settings.png`.
 
-The UI test also walks the system Photos-permission dialog if the pre-grant ever fails on a fresh device.
+Granting Photos access by walking the system dialog (`Allow Full Access`) is the primary path on iOS 26.4, not a fallback — see the gotchas below.
 
 ## File layout
 
@@ -70,12 +70,19 @@ marketing/app-store-screenshots/
 - **Device frame** — the real iPhone 16 mockup. `frames/iphone-16.svg` is the
   source (a slimmed Figma export with the placeholder wallpaper stripped out);
   it's pre-rasterized to `frames/iphone-16.png` (2000px wide, transparent) so
-  `generate.py` stays PIL-only. Screenshots fill the screen glass, the Dynamic
-  Island is redrawn on top, and a device-shaped drop shadow grounds it.
+  `generate.py` stays PIL-only. The SVG's glass opening is ~0.477 aspect but a
+  real 6.9" capture is 0.460, so `iphone_frame()` stretches the frame vertically
+  (~3.7%, to `SCREEN_ASPECT`) before compositing. The capture then maps 1:1 into
+  the glass — no crop — so content reaches the bezel, the status bar sits
+  centered on the Dynamic Island, and the tab bar survives. The Dynamic Island
+  is redrawn on top and a device-shaped drop shadow grounds it.
 - **iPad** uses a simple drawn frame — no iPad mockup has been supplied.
 - **No app logo/tagline** — the headline leads.
-- **Status-bar clock** is retimed to a marketing `9:41` at composite time
-  (`retime_status_bar`), drawn in the system SF font.
+- **Status bar** is baked in natively at capture time. `capture.sh` runs
+  `simctl status_bar override` (9:41, full battery, Wi-Fi, 4 signal bars) before
+  the UI test, so the raw captures already carry a clean marketing status bar —
+  no compositing-time retiming or redrawing (the old `retime_status_bar` path
+  has been removed).
 
 To re-rasterize the frame after editing the SVG (needs `librsvg`; only for
 regenerating the asset, not for normal runs):
@@ -95,8 +102,10 @@ rsvg-convert -w 2000 -f png frames/iphone-16.svg -o frames/iphone-16.png
 If captures look wrong after a re-run, the cause is almost always one of these:
 
 - **Today / On This Day show 0** — the EXIF dates on `seed-photos/*.jpg` weren't refreshed before `simctl addmedia`. Run `refresh-seed-dates.py` again or just rerun `capture.sh`, which does it for you.
-- **"Photo access denied" on every screen — and shots that bounce into iOS Settings** — on iOS 26.4 the old TCC pre-grant no longer works. `simctl privacy grant photos` lands as `auth_value = 2` (the modern Photos stack reads it as denied) and a direct `auth_value = 4` write to `TCC.db` is ignored because `tccd` keeps serving its cached value. Either way the permission ends up *determined*, which suppresses the system prompt and strands the app on its "Photo access denied" screen — the UI test then taps "Open Settings" and captures the Settings app. `capture.sh` now just resets Photos to *not-determined* and relies on the test's "Allow Full Access" dialog walker, which grants full access through `tccd` correctly.
-- **`No Similar Photos Found`** — `Photos.swift` is using `PHImageRequestOptionsDeliveryMode.fastFormat` for dHash thumbnails. That mode returns inconsistent placeholders at the 18 × 16 target size, breaking hash equality. Switch to `.highQualityFormat` (already done in this repo as of the May 11 capture run).
-- **Screenshot doesn't reach the bezel, or the tab bar is clipped** — the iPhone 16 SVG's screen glass (~0.477 aspect) is slightly wider than the real screen (~0.461). Filling by width clips the tab bar off the bottom; filling by height leaves black side-bands. `iphone_frame()` uses a *centered cover*, so it fills to the bezel while cropping only ~46px symmetrically — the status bar and tab bar both survive.
-- **Status-bar time / weak signal** — shots are retimed to `9:41` in `generate.py` (`retime_status_bar`), drawn in the system SF font, rather than depending on a clean capture. `capture.sh` also sets `simctl status_bar override` (9:41, full battery/signal), so once a capture succeeds it bakes the clean status bar in natively.
+- **"Photo access denied" on every screen — and shots that bounce into iOS Settings** — on iOS 26.4 the TCC pre-grant is dead. `simctl privacy grant photos` does NOT stick (verified: the app still shows the system prompt even on a freshly-`erase`d device), and a direct `auth_value = 4` write to `TCC.db` is ignored because `tccd` serves its cached value. So `capture.sh` resets Photos to *not-determined* (`simctl privacy reset all`) and the UI test grants access by walking the system dialog. **The walker must be robust:** the app auto-requests on launch, so the SpringBoard alert (`Limit Access… / Allow Full Access / Don't Allow`) can appear on its own and races the test's own "Enable Photo Access" tap. The test therefore polls for ~15s, tapping the app's enable button if present and `springboard.buttons["Allow Full Access"]` the moment the alert shows. A too-short, single-shot check loses the race and the app lands denied → the test taps "Open Settings" → you capture the Settings app.
+- **`No Similar Photos Found` in the simulator — capture Similar on a real device.** The similar scan fingerprints each photo (18×16 *synchronous* PhotoKit thumbnail → dHash, plus a Vision feature print) and clusters near-duplicates. In the iOS 26.4 *simulator* it returns zero groups near-instantly (no scanning spinner) — verified with 4 byte-identical copies of one photo, which still didn't group. The fingerprinting path just doesn't work for `simctl addmedia`'d assets in the sim; the same build detects similars fine on a physical phone. So for a populated `03-similar` slide, run `capture.sh <connected-device-udid> …` against a real device, or fall back to the DEBUG `ScreenshotDemoView` Similar state. (Historical note: the scan once used `.fastFormat` thumbnails, which returned inconsistent placeholders at 18×16 and broke hash equality; it's `.highQualityFormat` now, but that doesn't rescue the simulator.) The UI test runs Similar *before* the Today review so real-device runs don't skip already-reviewed groups.
+- **Status bar rides above the Dynamic Island / tab bar clipped** — the iPhone 16 SVG's screen glass (~0.477 aspect) is wider than a real 6.9" capture (~0.460). The old *centered cover* shaved ~52px off the top and bottom to fill it, which pushed the status bar above the Dynamic Island and trimmed the tab bar. `iphone_frame()` now stretches the *frame* vertically (~3.7%, to `SCREEN_ASPECT`) so the capture maps 1:1 — no crop, status bar centered on the Island, tab bar intact. Stretching the frame is imperceptible on the rounded corners; squishing the app content would be visible, so we stretch the frame, not the shot.
+- **Status-bar time / weak signal** — baked in natively by `capture.sh`'s `simctl status_bar override` (9:41, full battery, Wi-Fi, 4 signal bars), which works on iOS 26.4. There is no compositing-time retiming any more. (The captures once *predated* the override being added to `capture.sh` and showed the sim's live clock + placeholder cellular dots; re-capturing fixed it. If you see a live clock or gray dots, the override didn't apply — usually a stale/reused sim; `erase` and re-run.)
 - **Diagonal smear / refraction across the details sheet** — iOS 26 Liquid Glass is refracting the photo behind. Either advance past high-contrast photos before opening details (the test does this with two `Keep photo` taps) or expand the sheet to `.large` so the photo is fully covered.
+- **`capture.sh` prints `** TEST FAILED **` but exits 0 with no new raws** — `xcodebuild` runs the UI test on simulator *clones* and retries a transient `Busy` / `Application failed preflight checks` launch on a fresh clone. It can print `** TEST FAILED **` for the dead clone yet pass on the retry (`Test Case … passed on 'Clone 1 …'`) and still exit non-zero. Under `set -euo pipefail` that non-zero aborted the script *before* the extract step, so `raw/` never updated. `capture.sh` now wraps the `xcodebuild` line in `set +o pipefail … set -o pipefail` so `extract-shots.py` always runs — the extract count is the real success check. If a clone keeps failing, `xcrun simctl erase <device>` clears it.
+- **Navigation labels drift with the app UI — re-verify after UI changes.** Two that bit us: the review **summary** is dismissed by the top-left X labelled `Close without deleting` (the bottom `Done` button only appears when *nothing* is marked; with photos marked it's `Delete N`). And **"Similar"** moved into the "Space Savers" section near the *bottom* of the home list, so the test scrolls (`swipeUp`) to reach its button before tapping, then scrolls back to the top for the "Today" review.

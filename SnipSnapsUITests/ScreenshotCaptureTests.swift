@@ -30,26 +30,74 @@ final class ScreenshotCaptureTests: XCTestCase {
     let homeTitle = app.staticTexts["SnipSnaps"].firstMatch
     _ = homeTitle.waitForExistence(timeout: 12)
 
-    // If Photos permission isn't granted yet, walk through the system dialog.
-    // (Run once per simulator; subsequent runs see the grant.)
+    // Grant Photos access. `simctl privacy grant photos` does NOT stick on
+    // iOS 26.x (tccd keeps serving its own value), so a fresh sim always shows
+    // the system permission dialog. The app surfaces an "Enable Photo Access"
+    // button when not-determined and also auto-requests on appear, so the
+    // SpringBoard alert can show up either on its own or after a tap — and the
+    // timing races. Poll for up to ~15s: tap the in-app button if it's there,
+    // and tap "Allow Full Access" the moment the alert appears.
+    let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
     let enableButton = app.buttons["Enable Photo Access"].firstMatch
-    if enableButton.waitForExistence(timeout: 2) {
-      enableButton.tap()
-      let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-      let allowFull = springboard.buttons["Allow Full Access"].firstMatch
-      if allowFull.waitForExistence(timeout: 5) {
-        allowFull.tap()
-      } else {
-        let allowAny = springboard.buttons.matching(
-          NSPredicate(format: "label BEGINSWITH[c] 'Allow'")
-        ).firstMatch
-        if allowAny.exists { allowAny.tap() }
-      }
-      sleep(2)
+    func allowFullAccess() -> XCUIElement {
+      let exact = springboard.buttons["Allow Full Access"].firstMatch
+      if exact.exists { return exact }
+      return springboard.buttons.matching(
+        NSPredicate(format: "label CONTAINS[c] 'Full Access' OR label BEGINSWITH[c] 'Allow'")
+      ).firstMatch
     }
+    for _ in 0..<15 {
+      let allow = allowFullAccess()
+      if allow.exists { allow.tap(); break }
+      if enableButton.exists { enableButton.tap() }
+      sleep(1)
+    }
+    sleep(2)
 
     sleep(1)
     capture("01-home")
+
+    // ---- Similar (must run BEFORE the Today review) --------------------
+    // "Similar" is in the "Space Savers" section near the bottom of the home
+    // list, so scroll it into view first. The card is one button labelled
+    // "Similar" (older builds exposed it as a static text). This has to happen
+    // before any review below: once photos are reviewed, their near-duplicate
+    // groups are remembered and skipped, leaving "No Similar Photos Found".
+    let similarButton = app.buttons["Similar"].firstMatch
+    let similarText = app.staticTexts["Similar"].firstMatch
+    var scrollTries = 0
+    while !(similarButton.exists || similarText.exists) && scrollTries < 6 {
+      app.swipeUp()
+      scrollTries += 1
+      usleep(500_000)
+    }
+    let similarCard = similarButton.exists ? similarButton : similarText
+    if similarCard.exists {
+      var hitTries = 0
+      while !similarCard.isHittable && hitTries < 4 {
+        app.swipeUp()
+        hitTries += 1
+        usleep(400_000)
+      }
+      similarCard.tap()
+    }
+    let closeSimilar = app.buttons["Close similar review"].firstMatch
+    _ = closeSimilar.waitForExistence(timeout: 12)
+    sleep(4)  // give the hashing/grouping pass a moment to finish
+    capture("03-similar")
+    if closeSimilar.exists {
+      closeSimilar.tap()
+      sleep(1)
+    }
+
+    // Scroll the home list back to the top so "Today" is reachable again.
+    _ = homeTitle.waitForExistence(timeout: 6)
+    var topTries = 0
+    while !app.staticTexts["Today"].firstMatch.isHittable && topTries < 6 {
+      app.swipeDown()
+      topTries += 1
+      usleep(400_000)
+    }
 
     // ---- Today → review ------------------------------------------------
     let todayCard = app.staticTexts["Today"].firstMatch
@@ -119,30 +167,18 @@ final class ScreenshotCaptureTests: XCTestCase {
     sleep(2)
     capture("05-summary")
 
-    // Back to home
-    let summaryDone = app.buttons["Done"].firstMatch
-    if summaryDone.exists {
-      summaryDone.tap()
-      sleep(1)
+    // Back to home. With photos marked, the summary's primary button is
+    // "Delete N" (not "Done"), so dismiss via the top-left X — which is
+    // labelled "Close without deleting" while the summary is showing.
+    let summaryClose = app.buttons["Close without deleting"].firstMatch
+    if summaryClose.exists {
+      summaryClose.tap()
+    } else if app.buttons["Done"].firstMatch.exists {
+      app.buttons["Done"].firstMatch.tap()  // shown only when nothing is marked
+    } else if app.buttons["Close review"].firstMatch.exists {
+      app.buttons["Close review"].firstMatch.tap()
     }
-
-    // ---- Similar -------------------------------------------------------
-    _ = homeTitle.waitForExistence(timeout: 6)
-    let similarCard = app.staticTexts["Similar"].firstMatch
-    if similarCard.waitForExistence(timeout: 4) {
-      similarCard.tap()
-    }
-    // Wait for the similar review nav (its close button has the unique
-    // accessibility label "Close similar review").
-    let closeSimilar = app.buttons["Close similar review"].firstMatch
-    _ = closeSimilar.waitForExistence(timeout: 12)
-    sleep(4)  // give the hashing/grouping pass a moment to finish
-    capture("03-similar")
-
-    if closeSimilar.exists {
-      closeSimilar.tap()
-      sleep(1)
-    }
+    sleep(1)
 
     // ---- Settings ------------------------------------------------------
     let settingsTab = app.tabBars.buttons["Settings"].firstMatch
