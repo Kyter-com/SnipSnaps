@@ -53,6 +53,8 @@ marketing/app-store-screenshots/
 ├── extract-shots.py        # pulls named PNGs out of an xcresult bundle
 ├── refresh-seed-dates.py   # rewrites EXIF dates on seed photos to "now"
 ├── generate.py             # composites raw captures into marketing PNGs
+├── backgrounds/            # aurora-teal.jpg — the composite backdrop
+├── frames/                 # iphone-16.svg source + pre-rasterized iphone-16.png
 ├── seed-photos/            # 42 jpgs (Picsum/Unsplash + JPEG-quality variants)
 ├── raw/<device>/           # per-device 01-home..06-settings.png
 ├── output/<device>/        # composited App Store PNGs
@@ -61,21 +63,31 @@ marketing/app-store-screenshots/
 
 ## Visual style
 
-The marketing layout pulls its palette from `Frame 11.png` in `AppIcon.appiconset`:
+- **Background** — the `backgrounds/aurora-teal.jpg` gradient, reoriented to fill
+  the portrait canvas. The `BG` dict at the top of `generate.py` controls the crop
+  (`rot` / `zoom` / `anchor`) plus a legibility scrim that darkens the top behind
+  the white headline. Current crop is `rot 180°`.
+- **Device frame** — the real iPhone 16 mockup. `frames/iphone-16.svg` is the
+  source (a slimmed Figma export with the placeholder wallpaper stripped out);
+  it's pre-rasterized to `frames/iphone-16.png` (2000px wide, transparent) so
+  `generate.py` stays PIL-only. Screenshots fill the screen glass, the Dynamic
+  Island is redrawn on top, and a device-shaped drop shadow grounds it.
+- **iPad** uses a simple drawn frame — no iPad mockup has been supplied.
+- **No app logo/tagline** — the headline leads.
+- **Status-bar clock** is retimed to a marketing `9:41` at composite time
+  (`retime_status_bar`), drawn in the system SF font.
 
-- Deep midnight gradient background with two diagonal radial glows in the icon's electric blue.
-- Floating ice-blue sparkles echoing the icon's central 4-point glyph.
-- Liquid-glass chrome: translucent rounded pills/chips with a top sheen and hairline highlight border.
-- Brand icon + tagline rendered directly on the navy at top-left.
-- Per-slide kicker uses a glass pill with an accent dot.
-- Device frame is rendered with a colored brand glow plus a separate dark drop shadow for depth.
+To re-rasterize the frame after editing the SVG (needs `librsvg`; only for
+regenerating the asset, not for normal runs):
 
-If the app icon changes, resample its primary colors and update the `DEEP / MID / GLOW / ACCENT / ICE` constants at the top of `generate.py`.
+```bash
+rsvg-convert -w 2000 -f png frames/iphone-16.svg -o frames/iphone-16.png
+```
 
 ## Adding more screens
 
 1. Add a `case` to the demo seed flow inside `ScreenshotCaptureTests.swift` — navigate to the new screen via accessibility queries, then call `capture("07-newscreen")`.
-2. Append an entry to `SLIDES` in `generate.py` with `kicker`, `title`, `subtitle`, `screen` (where `screen` matches the capture filename suffix).
+2. Append an entry to `SLIDES` in `generate.py` with `title` and `screen` (where `screen` matches the capture filename suffix).
 3. Re-run `capture.sh` for each device.
 
 ## Gotchas worth remembering
@@ -83,7 +95,8 @@ If the app icon changes, resample its primary colors and update the `DEEP / MID 
 If captures look wrong after a re-run, the cause is almost always one of these:
 
 - **Today / On This Day show 0** — the EXIF dates on `seed-photos/*.jpg` weren't refreshed before `simctl addmedia`. Run `refresh-seed-dates.py` again or just rerun `capture.sh`, which does it for you.
-- **"Photo access denied" on the home screen** — the TCC.db has a stale row with `auth_value = 2`. iOS 26 needs `auth_value = 4` for full Photos access. `capture.sh` resets and rewrites this on each run.
+- **"Photo access denied" on every screen — and shots that bounce into iOS Settings** — on iOS 26.4 the old TCC pre-grant no longer works. `simctl privacy grant photos` lands as `auth_value = 2` (the modern Photos stack reads it as denied) and a direct `auth_value = 4` write to `TCC.db` is ignored because `tccd` keeps serving its cached value. Either way the permission ends up *determined*, which suppresses the system prompt and strands the app on its "Photo access denied" screen — the UI test then taps "Open Settings" and captures the Settings app. `capture.sh` now just resets Photos to *not-determined* and relies on the test's "Allow Full Access" dialog walker, which grants full access through `tccd` correctly.
 - **`No Similar Photos Found`** — `Photos.swift` is using `PHImageRequestOptionsDeliveryMode.fastFormat` for dHash thumbnails. That mode returns inconsistent placeholders at the 18 × 16 target size, breaking hash equality. Switch to `.highQualityFormat` (already done in this repo as of the May 11 capture run).
-- **Cream / yellow band at the top of the device frame** — `fit_image()` in `generate.py` was hardcoding `(246, 244, 239)` as the letterbox fill. It now samples the top-left pixel of the raw screenshot so the band blends into the real iOS status-bar background.
+- **Screenshot doesn't reach the bezel, or the tab bar is clipped** — the iPhone 16 SVG's screen glass (~0.477 aspect) is slightly wider than the real screen (~0.461). Filling by width clips the tab bar off the bottom; filling by height leaves black side-bands. `iphone_frame()` uses a *centered cover*, so it fills to the bezel while cropping only ~46px symmetrically — the status bar and tab bar both survive.
+- **Status-bar time / weak signal** — shots are retimed to `9:41` in `generate.py` (`retime_status_bar`), drawn in the system SF font, rather than depending on a clean capture. `capture.sh` also sets `simctl status_bar override` (9:41, full battery/signal), so once a capture succeeds it bakes the clean status bar in natively.
 - **Diagonal smear / refraction across the details sheet** — iOS 26 Liquid Glass is refracting the photo behind. Either advance past high-contrast photos before opening details (the test does this with two `Keep photo` taps) or expand the sheet to `.large` so the photo is fully covered.
