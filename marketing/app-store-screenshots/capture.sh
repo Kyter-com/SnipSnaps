@@ -32,6 +32,9 @@ SIM_DATA="$HOME/Library/Developer/CoreSimulator/Devices/$DEVICE/data"
 echo "==> Refreshing EXIF dates so seed photos count as Today/On This Day"
 python3 "$ROOT/refresh-seed-dates.py" "$SEED_DIR"
 
+echo "==> Stamping GPS on seed photos so the details Location map renders"
+python3 "$ROOT/seed-locations.py" "$SEED_DIR"
+
 echo "==> Resetting sim photo library: $DEVICE"
 xcrun simctl shutdown "$DEVICE" 2>/dev/null || true
 sleep 1

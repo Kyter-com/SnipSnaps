@@ -2334,6 +2334,11 @@ private struct PhotoMetadataSheet: View {
     }
     #if os(iOS)
     .presentationDetents([.medium, .large])
+    // On iPad this sheet is otherwise a small fixed-size form-sheet card that
+    // clips its content (the location map ends up below the fold). A page-size
+    // sheet is tall enough to show the whole list. No effect on iPhone (compact
+    // width), where the detents above govern instead.
+    .presentationSizing(.page)
     #endif
   }
 }

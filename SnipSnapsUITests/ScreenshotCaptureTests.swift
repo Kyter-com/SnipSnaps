@@ -1,5 +1,6 @@
 #if os(iOS)
 import XCTest
+import UIKit
 
 /// Drives the real SnipSnaps app through each marketing screen and attaches
 /// a screenshot of every state to the test result so the host can extract them
@@ -133,7 +134,25 @@ final class ScreenshotCaptureTests: XCTestCase {
     if storageButton.waitForExistence(timeout: 3) {
       storageButton.tap()
     }
-    sleep(2)
+
+    // Get the details sheet showing the full metadata list + the Location map.
+    // On iPhone the sheet opens at .medium, so drag its nav-bar chrome up to the
+    // .large detent (a plain swipeUp() would scroll the Form instead of raising
+    // the sheet). On iPad the app presents it as a page-size sheet that already
+    // shows the whole list, so no gesture is needed.
+    if UIDevice.current.userInterfaceIdiom != .pad {
+      let detailsNav = app.navigationBars["Photo Details"].firstMatch
+      let dragStart = detailsNav.waitForExistence(timeout: 3)
+        ? detailsNav.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        : app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+      let dragEnd = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.05))
+      dragStart.press(forDuration: 0.15, thenDragTo: dragEnd)
+    }
+
+    // Let the MapKit tiles in the Location section fetch over the network — they
+    // render as a blank grid until they arrive, so a short wait would capture an
+    // empty map.
+    sleep(8)
     capture("04-details")
 
     // Dismiss details (sheet has a "Done" button at top-trailing)
