@@ -55,7 +55,7 @@ marketing/app-store-screenshots/
 ├── seed-locations.py       # stamps EXIF GPS on select seeds (details Location map)
 ├── generate.py             # composites raw captures into marketing PNGs
 ├── backgrounds/            # aurora-teal.jpg — the composite backdrop
-├── frames/                 # iphone-16.svg source + pre-rasterized iphone-16.png
+├── frames/                 # <device>.svg sources + pre-rasterized <device>.png (iphone-16, ipad-13)
 ├── seed-photos/            # 42 jpgs (Picsum/Unsplash + JPEG-quality variants)
 ├── raw/<device>/           # per-device 01-home..06-settings.png
 ├── output/<device>/        # composited App Store PNGs
@@ -77,7 +77,15 @@ marketing/app-store-screenshots/
   the glass — no crop — so content reaches the bezel, the status bar sits
   centered on the Dynamic Island, and the tab bar survives. The Dynamic Island
   is redrawn on top and a device-shaped drop shadow grounds it.
-- **iPad** uses a simple drawn frame — no iPad mockup has been supplied.
+- **iPad frame** — the real iPad Pro 13" mockup. `frames/ipad-13.svg` is the
+  source (a slimmed Figma export with the placeholder screen photo stripped out);
+  it's pre-rasterized to `frames/ipad-13.png` (2400px wide, transparent). Unlike
+  the iPhone, no vertical stretch and no notch redraw are needed: the SVG's glass
+  opening is a clean 4:3 (0.7502) that already matches a real 2064×2752 capture
+  (0.7500), and the iPad has no Dynamic Island — so `ipad_frame()` just cover-fits
+  the capture into the glass (rounded to the screen's corner radius) and grounds
+  it with the same device-shaped drop shadow. Geometry lives in the `IPAD_*`
+  constants near the top of `generate.py`.
 - **No app logo/tagline** — the headline leads.
 - **Status bar** is baked in natively at capture time. `capture.sh` runs
   `simctl status_bar override` (9:41, full battery, Wi-Fi, 4 signal bars) before
@@ -85,11 +93,12 @@ marketing/app-store-screenshots/
   no compositing-time retiming or redrawing (the old `retime_status_bar` path
   has been removed).
 
-To re-rasterize the frame after editing the SVG (needs `librsvg`; only for
+To re-rasterize a frame after editing its SVG (needs `librsvg`; only for
 regenerating the asset, not for normal runs):
 
 ```bash
 rsvg-convert -w 2000 -f png frames/iphone-16.svg -o frames/iphone-16.png
+rsvg-convert -w 2400 -f png frames/ipad-13.svg   -o frames/ipad-13.png
 ```
 
 ## Adding more screens
@@ -110,4 +119,4 @@ If captures look wrong after a re-run, the cause is almost always one of these:
 - **Status-bar time / weak signal** — baked in natively by `capture.sh`'s `simctl status_bar override` (9:41, full battery, Wi-Fi, 4 signal bars), which works on iOS 26.4. There is no compositing-time retiming any more. (The captures once *predated* the override being added to `capture.sh` and showed the sim's live clock + placeholder cellular dots; re-capturing fixed it. If you see a live clock or gray dots, the override didn't apply — usually a stale/reused sim; `erase` and re-run.)
 - **Diagonal smear / refraction across the details sheet** — iOS 26 Liquid Glass is refracting the photo behind. Either advance past high-contrast photos before opening details (the test does this with two `Keep photo` taps) or expand the sheet to `.large` so the photo is fully covered.
 - **`capture.sh` prints `** TEST FAILED **` but exits 0 with no new raws** — `xcodebuild` runs the UI test on simulator *clones* and retries a transient `Busy` / `Application failed preflight checks` launch on a fresh clone. It can print `** TEST FAILED **` for the dead clone yet pass on the retry (`Test Case … passed on 'Clone 1 …'`) and still exit non-zero. Under `set -euo pipefail` that non-zero aborted the script *before* the extract step, so `raw/` never updated. `capture.sh` now wraps the `xcodebuild` line in `set +o pipefail … set -o pipefail` so `extract-shots.py` always runs — the extract count is the real success check. If a clone keeps failing, `xcrun simctl erase <device>` clears it.
-- **Navigation labels drift with the app UI — re-verify after UI changes.** Two that bit us: the review **summary** is dismissed by the top-left X labelled `Close without deleting` (the bottom `Done` button only appears when *nothing* is marked; with photos marked it's `Delete N`). And **"Similar"** moved into the "Space Savers" section near the *bottom* of the home list, so the test scrolls (`swipeUp`) to reach its button before tapping, then scrolls back to the top for the "Today" review.
+- **Navigation labels drift with the app UI — re-verify after UI changes.** Two that bit us: the review **summary** is dismissed by the top-left X labelled `Close without deleting` (the bottom `Done` button only appears when *nothing* is marked; with photos marked it's `Delete N`). And **"Similar"** moved into the "Space Savers" section near the *bottom* of the home list, so the test scrolls (`swipeUp`) to reach its button before tapping, then scrolls back to the top for the "Today" review. And the **Settings** tab isn't reachable the same way on both idioms: iPhone has a bottom tab bar (`app.tabBars.buttons["Settings"]`), but on iPad the same SwiftUI `TabView` renders as a floating tab bar at the *top* that XCUITest does **not** expose under `tabBars`, so the test falls back to `app.buttons["Settings"]` and waits for the Settings nav bar before capturing (otherwise it silently captures the Home list — which is exactly the bug that shipped the wrong `06-settings` iPad shot).

@@ -200,10 +200,21 @@ final class ScreenshotCaptureTests: XCTestCase {
     sleep(1)
 
     // ---- Settings ------------------------------------------------------
+    // iPhone shows the tabs in a bottom tab bar; on iPad the same TabView
+    // renders as a floating tab bar at the top that isn't exposed under
+    // `tabBars`, so fall back to a plain button query for the "Settings" tab.
     let settingsTab = app.tabBars.buttons["Settings"].firstMatch
     if settingsTab.waitForExistence(timeout: 4) {
       settingsTab.tap()
+    } else {
+      let settingsButton = app.buttons["Settings"].firstMatch
+      if settingsButton.waitForExistence(timeout: 4) {
+        settingsButton.tap()
+      }
     }
+    // Settle only once the Settings screen's title is actually on screen, so we
+    // never capture the Home list if the tap missed.
+    _ = app.navigationBars["Settings"].firstMatch.waitForExistence(timeout: 4)
     sleep(1)
     capture("06-settings")
   }

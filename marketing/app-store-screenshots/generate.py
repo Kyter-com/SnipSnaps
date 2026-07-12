@@ -10,6 +10,7 @@ HERE = Path(__file__).resolve().parent
 OUT = HERE / "output"
 RAW = HERE / "raw"
 FRAME_PNG = HERE / "frames" / "iphone-16.png"
+FRAME_PNG_IPAD = HERE / "frames" / "ipad-13.png"
 BACKGROUND = HERE / "backgrounds" / "aurora-teal.jpg"
 
 # Text/chrome colors. The aurora backdrop carries the palette now; we only need
@@ -59,6 +60,15 @@ DI_RX_VB = 15.5
 # matches this aspect exactly: the capture then maps 1:1 (no crop, no squish) and
 # the clock lands aligned with the Dynamic Island.
 SCREEN_ASPECT = 1320 / 2868
+
+# iPad Pro 13" frame geometry, in the SVG's 707-wide viewBox units
+# (frames/ipad-13.svg). glass = live screen rect, taken from the SVG's screen
+# mask. There's no Dynamic Island, and the glass aspect (639.835/852.898 = 0.7502)
+# already matches a real 2064x2752 capture (0.7500), so — unlike the iPhone — no
+# vertical stretch is needed; the capture maps ~1:1 into the glass.
+IPAD_FRAME_VB_W = 707.0
+IPAD_GLASS_VB = (33.5825, 33.5509, 673.417, 886.449)
+IPAD_GLASS_RX_VB = 12.37
 
 SLIDES = [
     {"title": "Clear photo clutter in minutes.", "screen": "home"},
@@ -195,22 +205,28 @@ def iphone_frame(screenshot, target_w: int) -> Image.Image:
     return frame.resize((target_w, target_h), Image.Resampling.LANCZOS)
 
 
-def tablet_frame(screenshot, size) -> Image.Image:
-    """Simple dark iPad frame (no photoreal mockup supplied for iPad)."""
-    w, h = size
-    img = Image.new("RGBA", size, (0, 0, 0, 0))
-    d = ImageDraw.Draw(img, "RGBA")
-    outer_r, inner_r, inset = 74, 58, 26
-    d.rounded_rectangle((0, 0, w, h), radius=outer_r, fill=(12, 13, 17))
-    d.rounded_rectangle((2, 2, w - 2, h - 2), radius=outer_r - 2, outline=(255, 255, 255, 40), width=3)
-    screen_box = (inset, inset, w - inset, h - inset)
+_IPAD_FRAME_CACHE: Image.Image | None = None
+
+
+def ipad_frame(screenshot, target_w: int) -> Image.Image:
+    """Composite a screenshot into the real iPad Pro 13" frame at native
+    resolution, then scale to `target_w`. No vertical stretch and no Dynamic
+    Island (see the IPAD_* geometry note) — the capture maps ~1:1 into the glass."""
+    global _IPAD_FRAME_CACHE
+    if _IPAD_FRAME_CACHE is None:
+        _IPAD_FRAME_CACHE = Image.open(FRAME_PNG_IPAD).convert("RGBA")
+    frame = _IPAD_FRAME_CACHE.copy()
+    s = frame.width / IPAD_FRAME_VB_W
+    gx0, gy0 = round(IPAD_GLASS_VB[0] * s), round(IPAD_GLASS_VB[1] * s)
+    gx1, gy1 = round(IPAD_GLASS_VB[2] * s), round(IPAD_GLASS_VB[3] * s)
+    glass = (gx1 - gx0, gy1 - gy0)
+
     if screenshot is not None:
-        screen = (screen_box[2] - screen_box[0], screen_box[3] - screen_box[1])
-        img.paste(cover(screenshot, screen).convert("RGBA"), (screen_box[0], screen_box[1]),
-                  rounded_mask(screen, inner_r))
-    else:
-        d.rounded_rectangle(screen_box, radius=inner_r, fill=(246, 244, 239))
-    return img
+        screen = cover(screenshot, glass, anchor=(0.5, 0.5)).convert("RGBA")
+        frame.paste(screen, (gx0, gy0), rounded_mask(glass, round(IPAD_GLASS_RX_VB * s)))
+
+    target_h = round(frame.height * target_w / frame.width)
+    return frame.resize((target_w, target_h), Image.Resampling.LANCZOS)
 
 
 def device_shadow(frame: Image.Image, blur: int, dy: int):
@@ -251,10 +267,9 @@ def compose(device: str, slide, index: int):
         img.alpha_composite(frame, (fx, fy))
     else:
         draw_headline(img, slide["title"], 170, 250, w - 340, 1.5)
-        frame_w, frame_h = 1420, 1893
-        frame = tablet_frame(screenshot, (frame_w, frame_h))
-        fx = (w - frame_w) // 2
-        fy = 720
+        frame = ipad_frame(screenshot, 1500)
+        fx = (w - frame.width) // 2
+        fy = 700
         shadow, spad = device_shadow(frame, blur=90, dy=46)
         img.alpha_composite(shadow, (fx - spad, fy - spad))
         img.alpha_composite(frame, (fx, fy))
