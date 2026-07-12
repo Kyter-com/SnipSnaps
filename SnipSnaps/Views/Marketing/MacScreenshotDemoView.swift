@@ -49,9 +49,11 @@ struct MacScreenshotDemoView: View {
     // doesn't inherit the machine's Dark Mode. Set SNIPSNAPS_SCREENSHOT_APPEARANCE
     // to `dark` to shoot Dark-Mode shots; defaults to Light.
     .preferredColorScheme(forcedColorScheme)
-    // Pin the window to a fixed 16:10-ish size so every capture is identical and
-    // composites cleanly onto the 2880×1800 canvas.
-    .frame(width: 1200, height: 760)
+    // Pin the window to a fixed size so every capture is identical and composites
+    // cleanly onto the 2880×1800 canvas. Height fits the home hero's two sections
+    // (8 category rows) with a clean bottom margin; the photo-review and files
+    // screens center/top their content, so the extra height reads as breathing room.
+    .frame(width: 1200, height: 840)
     // Make the window key/active so the capture shows colored traffic lights and
     // a crisp title bar instead of the dimmed inactive-window chrome.
     .onAppear { NSApp.activate(ignoringOtherApps: true) }
@@ -85,7 +87,7 @@ private struct DemoHomeSection: Identifiable {
 private struct DemoPhotosHomeScreen: View {
   private let sections: [DemoHomeSection] = [
     DemoHomeSection(title: "Quick Clean", modes: [
-      DemoHomeMode(mode: .today, count: "24"),
+      DemoHomeMode(mode: .today, count: "20"),
       DemoHomeMode(mode: .screenshots, count: "143"),
       DemoHomeMode(mode: .oldScreenshots, count: "61"),
       DemoHomeMode(mode: .random, count: "500+"),
@@ -96,12 +98,9 @@ private struct DemoPhotosHomeScreen: View {
       DemoHomeMode(mode: .largePhotos, count: "42"),
       DemoHomeMode(mode: .similar, count: "Scan"),
     ]),
-    DemoHomeSection(title: "Library Finds", modes: [
-      DemoHomeMode(mode: .onThisDay, count: "88"),
-      DemoHomeMode(mode: .livePhotos, count: "33"),
-      DemoHomeMode(mode: .bursts, count: "12"),
-      DemoHomeMode(mode: .oldFavorites, count: "15"),
-    ]),
+    // The hero shows the two primary sections (8 categories). The window is a
+    // fixed height shared by all Mac shots, so a third section overflowed and
+    // clipped the last row; the full category list still scrolls in the app.
   ]
 
   var body: some View {
