@@ -96,6 +96,7 @@ struct SettingsView: View {
               trailingSystemImage: "chevron.right"
             )
           }
+          .settingsRowButtonStyle()
           .disabled(!hasLocalSettingsToReset)
         } footer: {
           Text("Resets review size, Photos and Files sorting, review memory, and lifetime deleted stats on this device. This does not delete photos or files.")
@@ -121,6 +122,7 @@ struct SettingsView: View {
                 .foregroundStyle(.tertiary)
             }
           }
+          .settingsRowButtonStyle()
           settingsLink(
             title: "Support",
             systemImage: "questionmark.circle.fill",
@@ -137,6 +139,7 @@ struct SettingsView: View {
               trailingSystemImage: "chevron.right"
             )
           }
+          .settingsRowButtonStyle()
         }
 
         Section("Legal") {
@@ -252,6 +255,7 @@ struct SettingsView: View {
         trailingSystemImage: "arrow.up.forward"
       )
     }
+    .settingsRowButtonStyle()
   }
 
   private func settingsRow(
@@ -270,11 +274,23 @@ struct SettingsView: View {
       Text(title)
         .foregroundStyle(titleTint)
       Spacer()
-      Image(systemName: trailingSystemImage)
-        .font(.footnote)
-        .fontWeight(trailingSystemImage == "chevron.right" ? .semibold : .regular)
-        .foregroundStyle(.tertiary)
+      if let trailing = resolvedTrailingSymbol(trailingSystemImage) {
+        Image(systemName: trailing)
+          .font(.footnote)
+          .fontWeight(trailing == "chevron.right" ? .semibold : .regular)
+          .foregroundStyle(.tertiary)
+      }
     }
+  }
+
+  // chevron.right is an iOS push-navigation cue; on macOS these rows open alerts
+  // or external URLs, so the disclosure chevron is meaningless — drop it there.
+  private func resolvedTrailingSymbol(_ symbol: String) -> String? {
+    #if os(macOS)
+    return symbol == "chevron.right" ? nil : symbol
+    #else
+    return symbol
+    #endif
   }
 
   private func resetLocalSettings() {
@@ -302,5 +318,20 @@ struct SettingsView: View {
     if let url = URL(string: "mailto:\(email)?subject=\(encodedSubject)") {
       openURL(url)
     }
+  }
+}
+
+private extension View {
+  // On macOS a Form Button with a custom row label picks up default button
+  // chrome (a tinted fill), so action rows look perpetually highlighted and
+  // inconsistent with the plain LabeledContent/Picker rows. .plain restores a
+  // flat, full-width row; a no-op on iOS, where the row style already reads right.
+  @ViewBuilder
+  func settingsRowButtonStyle() -> some View {
+    #if os(macOS)
+    buttonStyle(.plain).contentShape(Rectangle())
+    #else
+    self
+    #endif
   }
 }

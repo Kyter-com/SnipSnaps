@@ -190,6 +190,9 @@ struct FilesView: View {
               folderPendingRemoval = folder
             } label: {
               Image(systemName: "minus.circle.fill")
+                // Borderless icon buttons on macOS don't reliably pick up the
+                // destructive role's red, so set it explicitly (adapts Light/Dark).
+                .foregroundStyle(AppColor.delete)
             }
             .buttonStyle(.borderless)
             .frame(width: 28, height: 28)

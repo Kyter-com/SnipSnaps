@@ -17,7 +17,6 @@ enum AppColor {
   static let subtext = Color.secondary
   static let shadow = Color.black.opacity(0.05)
   static let delete = Color(.systemRed)
-  static let keep = Color(.systemPink)
   static let success = Color(.systemGreen)
   static let deleteBackground = Color(.systemRed).opacity(0.16)
   static let keepBackground = Color(.systemGreen).opacity(0.16)
@@ -38,16 +37,36 @@ enum AppColor {
   static let fill = Color(.tertiarySystemFill)
   static let separator = Color(.separator)
   #elseif canImport(AppKit)
-  // macOS card hierarchy: the window/scroll surface must read as RECESSED and the
-  // cards as RAISED, or both collapse to the same light gray and every card
-  // becomes invisible in Light mode. underPageBackgroundColor is the recessed
-  // backdrop; controlBackgroundColor / textBackgroundColor are the raised (near
-  // white) card surfaces.
-  static let background = Color(nsColor: .underPageBackgroundColor)
-  static let card = Color(nsColor: .controlBackgroundColor)
-  static let chip = Color(nsColor: .unemphasizedSelectedContentBackgroundColor)
-  static let elevatedCard = Color(nsColor: .textBackgroundColor)
+  // Explicit macOS grouped palette mirroring iOS's systemGroupedBackground family,
+  // so Light and Dark read the same on Mac as on iPhone/iPad. AppKit's stock
+  // semantic colors don't fit an iOS-style grouped-card layout: underPageBackground
+  // is a muddy mid-gray (~#969696) in Light, and control/textBackground fall BELOW
+  // the page in Dark (30 on a 40 field), so cards look recessed instead of raised.
+  // These explicit values keep the invariant elevatedCard >= card > background in
+  // BOTH appearances — a recessed near-white/charcoal page with lighter, raised cards.
+  static let background = Color(nsColor: .snapGroupedBackground)
+  static let card = Color(nsColor: .snapCard)
+  static let chip = Color(nsColor: .snapChip)
+  static let elevatedCard = Color(nsColor: .snapElevatedCard)
   static let fill = Color(nsColor: .quaternaryLabelColor)
   static let separator = Color(nsColor: .separatorColor)
   #endif
 }
+
+#if canImport(AppKit)
+private extension NSColor {
+  // Resolves `light`/`dark` per-appearance, matching any Dark Aqua variant
+  // (incl. vibrant / high-contrast). Values are iOS grouped-family sRGB triples.
+  static func snapDynamic(light: (Int, Int, Int), dark: (Int, Int, Int)) -> NSColor {
+    NSColor(name: nil) { appearance in
+      let (r, g, b) = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
+      return NSColor(srgbRed: CGFloat(r) / 255, green: CGFloat(g) / 255, blue: CGFloat(b) / 255, alpha: 1)
+    }
+  }
+
+  static let snapGroupedBackground = snapDynamic(light: (242, 242, 247), dark: (28, 28, 30))  // iOS systemGroupedBackground
+  static let snapCard = snapDynamic(light: (255, 255, 255), dark: (44, 44, 46))               // iOS secondarySystemGroupedBackground
+  static let snapChip = snapDynamic(light: (229, 229, 234), dark: (58, 58, 60))               // iOS tertiary grouped
+  static let snapElevatedCard = snapDynamic(light: (255, 255, 255), dark: (50, 50, 52))       // one step above card
+}
+#endif

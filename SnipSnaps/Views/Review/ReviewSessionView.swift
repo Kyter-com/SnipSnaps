@@ -1387,10 +1387,11 @@ struct SimilarReviewSessionView: View {
               }
               .overlay {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                  .strokeBorder(isActive ? AppColor.primary : Color.black.opacity(0.08), lineWidth: isActive ? 2.5 : 0.5)
+                  .strokeBorder(isActive ? AppColor.primary : AppColor.separator, lineWidth: isActive ? 2.5 : 0.5)
               }
           }
           .buttonStyle(.plain)
+          .interactiveCardHover()
           .id(asset.localIdentifier)
         }
       }
@@ -2209,6 +2210,13 @@ private struct FullScreenPhotoView: View {
       .keyboardShortcut(.cancelAction)
       #endif
     }
+    #if os(macOS)
+    // Presented as a .sheet on macOS; the GeometryReader root has no intrinsic
+    // size, so without an explicit frame the sheet collapses to a tiny window and
+    // the "compare similar shots closely" viewer is unusable. Give it a generous,
+    // resizable size that suits a large display.
+    .frame(minWidth: 720, idealWidth: 1040, minHeight: 520, idealHeight: 760)
+    #endif
     #if os(iOS)
     .statusBarHidden(true)
     #endif
@@ -2339,6 +2347,10 @@ private struct PhotoMetadataSheet: View {
     // sheet is tall enough to show the whole list. No effect on iPhone (compact
     // width), where the detents above govern instead.
     .presentationSizing(.page)
+    #else
+    // The macOS sheet auto-sizes to the Form, which can open cramped (the location
+    // map falls below the fold). Pin a comfortable, resizable size.
+    .frame(minWidth: 420, idealWidth: 460, minHeight: 520, idealHeight: 620)
     #endif
   }
 }
@@ -2405,7 +2417,9 @@ private struct PhotoCardView: View {
           .foregroundStyle(.white)
           .padding(.horizontal, 12)
           .padding(.vertical, 8)
-          .background(.ultraThinMaterial, in: Capsule(style: .continuous))
+          // Fixed dark scrim (not a material) so the white label stays legible
+          // over bright photos in both Light and Dark.
+          .background(.black.opacity(0.55), in: Capsule(style: .continuous))
           .padding(18)
       }
 
@@ -2415,7 +2429,7 @@ private struct PhotoCardView: View {
           .foregroundStyle(.white)
           .padding(.horizontal, 12)
           .padding(.vertical, 8)
-          .background(.ultraThinMaterial, in: Capsule(style: .continuous))
+          .background(.black.opacity(0.55), in: Capsule(style: .continuous))
           .padding(18)
       }
     }
@@ -2884,6 +2898,7 @@ private struct ReviewActionButton: View {
     }
     .buttonStyle(.plain)
     .contentShape(Circle())
+    .interactiveCardHover()
     .shadow(color: AppColor.shadow.opacity(1.1), radius: 10, x: 0, y: 6)
     .accessibilityLabel(accessibilityLabel)
   }
