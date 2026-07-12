@@ -71,25 +71,45 @@ IPAD_GLASS_VB = (33.5825, 33.5509, 673.417, 886.449)
 IPAD_GLASS_RX_VB = 12.37
 
 SLIDES = [
-    {"title": "Clear photo clutter in minutes.", "screen": "home"},
-    {"title": "Review one item at a time.", "screen": "review"},
-    {"title": "Find duplicate-looking shots.", "screen": "similar"},
-    {"title": "Know what you are looking at.", "screen": "details"},
-    {"title": "Review everything before it goes.", "screen": "summary"},
-    {"title": "Tune each cleanup session.", "screen": "settings"},
+    {"title": "Clear photo clutter by category.", "screen": "home"},
+    {"title": "Keep or delete, one at a time.", "screen": "review"},
+    {"title": "Compare similar shots.", "screen": "similar"},
+    {"title": "See a photo's date, size, and location.", "screen": "details"},
+    {"title": "Check what's marked before you delete.", "screen": "summary"},
+    {"title": "Set your review size and what's remembered.", "screen": "settings"},
 ]
 
+# Headline weight. San Francisco (SFNS.ttf) is a variable font; we select a
+# named weight off its wght axis so the marketing headline carries the same
+# confident weight as the app's own bold titles ("SnipSnaps", "Settings")
+# instead of the thin Regular that got lost against the aurora backdrop.
+# Options: "Regular" / "Medium" / "Semibold" / "Bold" / "Heavy". "Semibold" is
+# the quieter alternative; "Heavy" reads as an ad and is too much for a utility.
+HEADLINE_WEIGHT = "Bold"
 
-def font(size: int) -> ImageFont.FreeTypeFont:
+# wght-axis coordinate per named weight (SF's Weight axis runs 1-1000, Regular=400).
+_WEIGHTS = {"Regular": 400, "Medium": 500, "Semibold": 600, "Bold": 700, "Heavy": 860}
+
+
+def font(size: int, weight: str = "Regular") -> ImageFont.FreeTypeFont:
     for candidate in (
         "/System/Library/Fonts/SFNS.ttf",
         "/System/Library/Fonts/HelveticaNeue.ttc",
         "/System/Library/Fonts/Avenir Next.ttc",
     ):
         try:
-            return ImageFont.truetype(candidate, size=size)
+            fnt = ImageFont.truetype(candidate, size=size)
         except OSError:
-            pass
+            continue
+        # SFNS is variable: pin axes (Width=100, Optical Size=96 for display-tuned
+        # letterforms, GRAD=400) and set the requested weight. Non-variable
+        # fallbacks silently skip this and render at their default weight.
+        if candidate.endswith("SFNS.ttf") and weight in _WEIGHTS:
+            try:
+                fnt.set_variation_by_axes([100, 96, 400, _WEIGHTS[weight]])
+            except (OSError, ValueError):
+                pass
+        return fnt
     return ImageFont.load_default()
 
 
@@ -240,8 +260,8 @@ def device_shadow(frame: Image.Image, blur: int, dy: int):
 
 
 def draw_headline(base: Image.Image, title: str, x: int, y: int, max_width: int, scale: float):
-    title_font = font(int(96 * scale))
-    line_height = int(112 * scale)
+    title_font = font(int(100 * scale), HEADLINE_WEIGHT)
+    line_height = int(116 * scale)
     d = ImageDraw.Draw(base, "RGBA")
     for i, line in enumerate(wrapped_lines(d, title, max_width, title_font)[:2]):
         ly = y + i * line_height
