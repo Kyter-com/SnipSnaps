@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -21,6 +21,8 @@ DIM = (206, 220, 226)
 DEVICES = {
     "iphone-6.9": (1290, 2796),
     "ipad-13": (2064, 2752),
+    # Mac App Store: 16:10 retina. 2880×1800 is the largest accepted size.
+    "mac": (2880, 1800),
 }
 
 # Aurora backdrop transform. The source (backgrounds/aurora-teal.jpg) is a
@@ -44,6 +46,20 @@ _ROT = {
     "90cw": Image.ROTATE_270,
     "90ccw": Image.ROTATE_90,
     "180": Image.ROTATE_180,
+}
+
+# Mac backdrop. Same aurora source, but the canvas is landscape (2880×1800) and
+# the source is already landscape (1920×1080), so no rotation — just cover-fit.
+# A stronger top scrim protects the centered white headline; a gentle floor
+# grounds the window.
+BG_MAC = {
+    "rot": "0",
+    "zoom": 1.0,
+    "anchor": (0.5, 0.5),
+    "flip": False,
+    "scrim_top": 150,
+    "scrim_bottom": 55,
+    "scrim_color": (4, 12, 18),
 }
 
 # iPhone 16 frame geometry, in the SVG's 391-wide viewBox units. Scaled to the
@@ -77,6 +93,16 @@ SLIDES = [
     {"title": "See a photo's date, size, and location.", "screen": "details"},
     {"title": "Check what's marked before you delete.", "screen": "summary"},
     {"title": "Set your review size and what's remembered.", "screen": "settings"},
+]
+
+# Mac App Store slides. Fewer, landscape, and the window is framed instead of a
+# device — see compose_mac. `screen` matches the raw/mac/NN-<screen>.png suffix
+# and the SNIPSNAPS_SCREENSHOT_SCREEN value the capture script launches with.
+SLIDES_MAC = [
+    {"title": "Clear photo clutter by category.", "screen": "home"},
+    {"title": "Keep or delete, one at a time.", "screen": "review"},
+    {"title": "Compare similar shots.", "screen": "similar"},
+    {"title": "Clean up Downloads, Desktop, and Documents.", "screen": "files"},
 ]
 
 # Headline weight. San Francisco (SFNS.ttf) is a variable font; we select a
@@ -150,11 +176,11 @@ def rounded_mask(size, radius: int) -> Image.Image:
     return mask
 
 
-def scrim(size) -> Image.Image:
+def scrim(size, cfg=BG) -> Image.Image:
     """Vertical dark gradient: strong at top (protects the headline), soft floor."""
     w, h = size
-    top, bottom = BG["scrim_top"], BG["scrim_bottom"]
-    color = BG["scrim_color"]
+    top, bottom = cfg["scrim_top"], cfg["scrim_bottom"]
+    color = cfg["scrim_color"]
     strip = Image.new("RGBA", (1, h))
     px = strip.load()
     for y in range(h):
@@ -164,16 +190,16 @@ def scrim(size) -> Image.Image:
     return strip.resize((w, h))
 
 
-def backdrop(w: int, h: int) -> Image.Image:
+def backdrop(w: int, h: int, cfg=BG) -> Image.Image:
     """Aurora background: reorient/crop the source image and lay down the scrim."""
     img = Image.open(BACKGROUND).convert("RGB")
-    transpose = _ROT[BG["rot"]]
+    transpose = _ROT[cfg["rot"]]
     if transpose is not None:
         img = img.transpose(transpose)
-    if BG["flip"]:
+    if cfg["flip"]:
         img = img.transpose(Image.FLIP_LEFT_RIGHT)
-    base = cover(img, (w, h), zoom=BG["zoom"], anchor=BG["anchor"]).convert("RGBA")
-    return Image.alpha_composite(base, scrim((w, h)))
+    base = cover(img, (w, h), zoom=cfg["zoom"], anchor=cfg["anchor"]).convert("RGBA")
+    return Image.alpha_composite(base, scrim((w, h), cfg))
 
 
 def raw_capture(device: str, index: int, screen: str):
@@ -269,6 +295,113 @@ def draw_headline(base: Image.Image, title: str, x: int, y: int, max_width: int,
         d.text((x, ly), line, fill=WHITE, font=title_font)
 
 
+def _has_transparent_corners(img: Image.Image) -> bool:
+    """True if the capture already carries its own rounded-corner alpha (a real
+    `screencapture` window grab) so we don't re-round it."""
+    if img.mode != "RGBA":
+        return False
+    w, h = img.size
+    alpha = img.split()[-1]
+    corners = [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)]
+    return any(alpha.getpixel(c) < 200 for c in corners)
+
+
+def mac_window(screenshot: Image.Image, target_w: int) -> Image.Image:
+    """Frame a captured Mac window for the marketing shot: scale to `target_w`,
+    round the corners (unless the capture already has them), and add a hairline
+    rim so the window reads against the backdrop. No device mockup — just the
+    real window, per the Jesse Squires 'window on a desktop' treatment."""
+    ratio = target_w / screenshot.width
+    target_h = round(screenshot.height * ratio)
+    win = screenshot.resize((target_w, target_h), Image.Resampling.LANCZOS).convert("RGBA")
+
+    if not _has_transparent_corners(win):
+        # Opaque/square capture (a fallback full-window grab) — round it ourselves.
+        win.putalpha(rounded_mask((target_w, target_h), round(target_w * 0.018)))
+
+    # Hairline rim: a ~2px bright ring derived from the window's OWN alpha edge
+    # (alpha minus a 2px erosion of it), so it hugs the real rounded corners
+    # exactly and can never paint outside them — regardless of the window's
+    # actual corner radius. A fixed-radius rounded_rectangle stroke would sit
+    # inside the corner curve and leave faint specks in the transparent corners.
+    alpha = win.split()[-1]
+    ring = ImageChops.subtract(alpha, alpha.filter(ImageFilter.MinFilter(5)))
+    rim = Image.new("RGBA", win.size, (255, 255, 255, 0))
+    rim.putalpha(ring.point(lambda a: 46 if a > 127 else 0))
+    win.alpha_composite(rim)
+    return win
+
+
+def draw_headline_centered(base: Image.Image, title: str, zone_top: int, zone_h: int, max_width: int, font_size: int):
+    """Centered white headline (up to 2 lines), block vertically centered within a
+    fixed [zone_top, zone_top+zone_h] band so a one-line and a two-line headline
+    both sit centered — and the window below lands at the same y on every slide.
+
+    Legibility comes from a *soft blurred* shadow (a diffuse halo), not a hard
+    offset black copy — the offset copy reads as a crude second set of letters
+    behind the white."""
+    title_font = font(font_size, HEADLINE_WEIGHT)
+    line_height = int(font_size * 1.16)
+    d = ImageDraw.Draw(base, "RGBA")
+    lines = wrapped_lines(d, title, max_width, title_font)[:2]
+    cx = base.width // 2
+    start_y = zone_top + max(0, (zone_h - len(lines) * line_height) // 2)
+
+    placed = []
+    for i, line in enumerate(lines):
+        bbox = d.textbbox((0, 0), line, font=title_font)
+        x = cx - (bbox[2] - bbox[0]) // 2
+        placed.append((line, x, start_y + i * line_height))
+
+    # Soft shadow: render the lines onto a transparent layer, blur, composite at
+    # low opacity — a diffuse glow that lifts the text off the backdrop.
+    shadow = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    sd = ImageDraw.Draw(shadow)
+    for line, x, ly in placed:
+        sd.text((x, ly + max(2, font_size // 44)), line, fill=(0, 0, 0, 140), font=title_font)
+    base.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(max(4, font_size // 14))))
+
+    for line, x, ly in placed:
+        d.text((x, ly), line, fill=WHITE, font=title_font)
+
+
+def compose_mac(device: str, slide, index: int):
+    """Compose one Mac App Store slide: aurora backdrop, centered headline, and
+    the real app window floating below with a soft device-shaped shadow. The
+    window is scaled to fit the space under a fixed headline band so it's the
+    same size and position on every slide and never runs off the canvas."""
+    w, h = DEVICES[device]
+    scale = w / 2880
+    img = backdrop(w, h, BG_MAC)
+
+    zone_top, zone_h = int(90 * scale), int(300 * scale)
+    draw_headline_centered(
+        img, slide["title"], zone_top, zone_h, max_width=int(2400 * scale), font_size=int(126 * scale)
+    )
+
+    path = RAW / device / f"{index:02d}-{slide['screen']}.png"
+    if path.exists():
+        raw = Image.open(path).convert("RGBA")
+        avail_top = zone_top + zone_h + int(70 * scale)
+        avail_bottom = h - int(90 * scale)
+        avail_h = avail_bottom - avail_top
+
+        raw_aspect = raw.height / raw.width
+        window_w = min(int(2200 * scale), int(avail_h / raw_aspect))
+        frame = mac_window(raw, window_w)
+
+        fx = (w - frame.width) // 2
+        fy = avail_top + max(0, (avail_h - frame.height) // 2)
+
+        shadow, spad = device_shadow(frame, blur=int(85 * scale), dy=int(42 * scale))
+        img.alpha_composite(shadow, (fx - spad, fy - spad))
+        img.alpha_composite(frame, (fx, fy))
+
+    out_dir = OUT / device
+    out_dir.mkdir(parents=True, exist_ok=True)
+    img.convert("RGB").save(out_dir / f"{index:02d}-{slide['screen']}.png", optimize=True)
+
+
 def compose(device: str, slide, index: int):
     w, h = DEVICES[device]
     img = backdrop(w, h)
@@ -300,10 +433,17 @@ def compose(device: str, slide, index: int):
 
 
 def main():
+    count = 0
     for device in DEVICES:
-        for i, slide in enumerate(SLIDES, 1):
-            compose(device, slide, i)
-    print(f"Generated {len(SLIDES) * len(DEVICES)} screenshots in {OUT}")
+        if device == "mac":
+            for i, slide in enumerate(SLIDES_MAC, 1):
+                compose_mac(device, slide, i)
+                count += 1
+        else:
+            for i, slide in enumerate(SLIDES, 1):
+                compose(device, slide, i)
+                count += 1
+    print(f"Generated {count} screenshots in {OUT}")
 
 
 if __name__ == "__main__":

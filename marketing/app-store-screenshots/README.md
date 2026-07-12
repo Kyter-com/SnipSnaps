@@ -6,6 +6,7 @@ Lightweight generator + automation for App Store-ready iPhone and iPad marketing
 
 - `output/iphone-6.9/*.png` — 1290 × 2796 (App Store iPhone 6.9")
 - `output/ipad-13/*.png` — 2064 × 2752 (App Store iPad 13")
+- `output/mac/*.png` — 2880 × 1800 (Mac App Store, 16:10 retina)
 
 ## One-shot regenerate
 
@@ -45,21 +46,64 @@ python3 marketing/app-store-screenshots/generate.py
 
 Granting Photos access by walking the system dialog (`Allow Full Access`) is the primary path on iOS 26.4, not a fallback — see the gotchas below.
 
+## macOS (real window captures, no laptop mockup)
+
+```bash
+marketing/app-store-screenshots/capture-mac.sh
+python3 marketing/app-store-screenshots/generate.py   # composites all devices, incl. mac
+```
+
+The Mac shots are a real app window floating on the aurora backdrop (rounded
+corners + hairline + soft shadow), not a MacBook mockup — the "window on a
+desktop" treatment from Jesse Squires' [Automate Perfect Mac
+Screenshots](https://www.jessesquires.com/blog/2025/03/24/automate-perfect-mac-screenshots/).
+
+Unlike iOS, the Mac can't seed a Photos library or grant sandbox folders
+headlessly, so we don't drive the live app. Instead each screen is a curated,
+static demo rendered **inside the real Mac shell** (sidebar + title bar + traffic
+lights are the genuine window chrome; only the detail-pane content is mocked).
+The demo lives in `SnipSnaps/Views/Marketing/MacScreenshotDemoView.swift`
+(`#if os(macOS) && DEBUG`) and is selected by the same `SNIPSNAPS_SCREENSHOT_SCREEN`
+env var as iOS — values `home`, `review`, `similar`, `files`. `capture-mac.sh`:
+
+1. Builds the app (Debug, signing off) and compiles `windowid.swift` (a tiny
+   CoreGraphics helper that finds the window number by owner name).
+2. For each screen: launches a fresh instance with the env var set, waits for the
+   window, and grabs **just that window** with `screencapture -o -l <id>` (the
+   `-o` drops the OS shadow; the window's own rounded-corner alpha comes through).
+3. `generate.py`'s `compose_mac()` then frames it on the backdrop.
+
+**No XCUITest, no window-driving, no signing** — the env var fully determines the
+window content, so there's nothing to click. Requirements:
+
+- Run from a logged-in GUI session (the app must open a window).
+- Grant your terminal **Screen Recording** permission once (System Settings ▸
+  Privacy & Security ▸ Screen Recording) or every capture comes out as the
+  desktop instead of the window. `capture-mac.sh` warns if a capture is empty.
+- A Retina display for @2x captures (raws land ~2400 × 1624).
+
+**Appearance:** the demo forces `.preferredColorScheme(.light)` to match the
+iPhone/iPad shots regardless of the machine's Dark Mode. Flip that one line to
+`.dark` to shoot dark shots. The demo photos are three downscaled seeds bundled
+as `DemoReview` / `DemoSimilarA` / `DemoSimilarB` asset sets.
+
 ## File layout
 
 ```
 marketing/app-store-screenshots/
-├── capture.sh              # orchestrates one device end-to-end
+├── capture.sh              # orchestrates one iOS device end-to-end (XCUITest)
+├── capture-mac.sh          # captures the macOS window shots (screencapture)
+├── windowid.swift          # CoreGraphics helper: window number by owner name
 ├── extract-shots.py        # pulls named PNGs out of an xcresult bundle
 ├── refresh-seed-dates.py   # rewrites EXIF dates on seed photos to "now"
 ├── seed-locations.py       # stamps EXIF GPS on select seeds (details Location map)
-├── generate.py             # composites raw captures into marketing PNGs
+├── generate.py             # composites raw captures into marketing PNGs (all devices)
 ├── backgrounds/            # aurora-teal.jpg — the composite backdrop
 ├── frames/                 # <device>.svg sources + pre-rasterized <device>.png (iphone-16, ipad-13)
 ├── seed-photos/            # 42 jpgs (Picsum/Unsplash + JPEG-quality variants)
-├── raw/<device>/           # per-device 01-home..06-settings.png
+├── raw/<device>/           # per-device captures (iphone/ipad: 01-home..06-settings; mac: 01-home..04-files)
 ├── output/<device>/        # composited App Store PNGs
-└── .capture-runs/          # xcresult bundles from the last test runs (gitignored)
+└── .capture-runs/          # xcresult bundles + mac build/helper (gitignored)
 ```
 
 ## Visual style
@@ -86,6 +130,13 @@ marketing/app-store-screenshots/
   the capture into the glass (rounded to the screen's corner radius) and grounds
   it with the same device-shaped drop shadow. Geometry lives in the `IPAD_*`
   constants near the top of `generate.py`.
+- **Mac window** — no device mockup. `compose_mac()` (in `generate.py`) takes the
+  raw `screencapture` window grab, keeps its own rounded-corner alpha (or rounds
+  a square capture itself), adds a bright hairline rim and the same device-shaped
+  drop shadow, and floats it on the aurora backdrop under a centered headline.
+  The window is scaled to fit a fixed band below the headline so all four Mac
+  slides are framed identically and never run off the 2880×1800 canvas. Backdrop
+  knobs live in `BG_MAC`; slides/headlines in `SLIDES_MAC`.
 - **No app logo/tagline** — the headline leads.
 - **Status bar** is baked in natively at capture time. `capture.sh` runs
   `simctl status_bar override` (9:41, full battery, Wi-Fi, 4 signal bars) before
@@ -103,9 +154,15 @@ rsvg-convert -w 2400 -f png frames/ipad-13.svg   -o frames/ipad-13.png
 
 ## Adding more screens
 
+**iOS/iPad:**
 1. Add a `case` to the demo seed flow inside `ScreenshotCaptureTests.swift` — navigate to the new screen via accessibility queries, then call `capture("07-newscreen")`.
 2. Append an entry to `SLIDES` in `generate.py` with `title` and `screen` (where `screen` matches the capture filename suffix).
 3. Re-run `capture.sh` for each device.
+
+**macOS:**
+1. Add a `case` to `MacScreenshotDemoView`'s `detail` switch and build the demo screen.
+2. Add the screen name to the `SCREENS` array in `capture-mac.sh` and an entry to `SLIDES_MAC` in `generate.py` (order sets the `NN-` prefix).
+3. Re-run `capture-mac.sh`, then `generate.py`.
 
 ## Gotchas worth remembering
 

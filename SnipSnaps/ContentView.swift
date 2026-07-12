@@ -11,7 +11,11 @@ struct ContentView: View {
   var body: some View {
     #if DEBUG
     if let screenshotScreen = ProcessInfo.processInfo.environment["SNIPSNAPS_SCREENSHOT_SCREEN"] {
+      #if os(macOS)
+      MacScreenshotDemoView(screen: screenshotScreen)
+      #else
       ScreenshotDemoView(screen: screenshotScreen)
+      #endif
     } else {
       shell
     }

@@ -12,7 +12,7 @@ struct ScreenshotDemoView: View {
           ScreenshotReviewDemo()
         }
       case "similar":
-        demoShell(title: "Similar", subtitle: "2 kept · 3 marked · 1 year ago") {
+        demoShell(title: "Similar", subtitle: "Group 1 of 8") {
           ScreenshotSimilarDemo()
         }
       case "details":
@@ -191,11 +191,22 @@ private struct ScreenshotReviewDemo: View {
   }
 }
 
+// Mirrors the shipping per-photo swipe flow (filmstrip of the near-duplicate
+// group, one card, X / Skip / Undo / ✓ bar) — the retired two-up "Keep / Keep +
+// Mark Extras" comparison no longer exists in the app.
+private enum SimilarThumbState {
+  case active, kept, plain
+}
+
 private struct ScreenshotSimilarDemo: View {
+  private let thumbs: [(seed: Int, state: SimilarThumbState)] = [
+    (8, .active), (9, .kept), (10, .plain), (11, .plain),
+  ]
+
   var body: some View {
     VStack(spacing: 16) {
       HStack(spacing: 12) {
-        Text("1 of 8")
+        Text("Group 1 of 8")
           .font(.footnote.weight(.medium))
           .foregroundStyle(.secondary)
         ProgressView(value: 0.125)
@@ -203,41 +214,56 @@ private struct ScreenshotSimilarDemo: View {
       }
       .padding(.horizontal, 20)
 
-      HStack(spacing: 12) {
-        ForEach(0..<2) { index in
-          ScreenshotPhoto(seed: index + 8, label: "Keep")
+      HStack(spacing: 10) {
+        ForEach(thumbs, id: \.seed) { thumb in
+          ScreenshotPhoto(seed: thumb.seed, label: "")
+            .frame(width: 62, height: 62)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(alignment: .topTrailing) {
+              if thumb.state == .kept {
+                Image(systemName: "checkmark.circle.fill")
+                  .symbolRenderingMode(.palette)
+                  .foregroundStyle(.white, AppColor.success)
+                  .padding(3)
+              }
+            }
             .overlay {
-              RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .strokeBorder(index == 0 ? AppColor.primary : AppColor.success, lineWidth: 4)
+              RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(
+                  thumb.state == .active ? AppColor.primary : AppColor.separator,
+                  lineWidth: thumb.state == .active ? 2.5 : 0.5
+                )
             }
         }
+        Spacer(minLength: 0)
       }
       .padding(.horizontal, 20)
 
-      Spacer()
+      ScreenshotPhoto(seed: 8, label: "May 8, 2025 · 4.8 MB")
+        .padding(.horizontal, 20)
 
-      Button {
-      } label: {
-        HStack(spacing: 8) {
-          Image(systemName: "checklist")
-            .frame(width: 18)
-          Text("Mark Extras")
-            .lineLimit(1)
-            .minimumScaleFactor(0.9)
-            .frame(width: 112, alignment: .leading)
-          Text("3")
-            .font(.caption.weight(.bold))
-            .monospacedDigit()
-            .foregroundStyle(AppColor.primary)
-            .frame(width: 24, height: 24)
-            .background(.white.opacity(0.9), in: Capsule(style: .continuous))
-        }
-          .font(.headline)
-          .frame(maxWidth: .infinity, minHeight: 24)
+      Spacer(minLength: 0)
+
+      HStack(spacing: 14) {
+        Circle()
+          .fill(AppColor.deleteBackground)
+          .frame(width: 66, height: 66)
+          .overlay(Image(systemName: "xmark").font(.title2.weight(.bold)).foregroundStyle(AppColor.delete))
+        Spacer()
+        Button("Skip group") {}
+          .font(.footnote.weight(.semibold))
+          .buttonStyle(.bordered)
+          .controlSize(.small)
+        Button("Undo") {}
+          .font(.footnote.weight(.semibold))
+          .buttonStyle(.bordered)
+          .controlSize(.small)
+        Spacer()
+        Circle()
+          .fill(AppColor.keepBackground)
+          .frame(width: 66, height: 66)
+          .overlay(Image(systemName: "checkmark").font(.title2.weight(.bold)).foregroundStyle(AppColor.success))
       }
-      .buttonStyle(.borderedProminent)
-      .tint(AppColor.primary)
-      .controlSize(.large)
       .padding(.horizontal, 20)
       .padding(.bottom, 12)
     }
