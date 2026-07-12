@@ -27,6 +27,9 @@ struct FileReviewSessionView: View {
   @State private var didTruncate = false
   @State private var accessErrorCount = 0
   @State private var trashFailures: [String] = []
+  // Real in-Trash locations of everything this session moved, so "Show in Trash"
+  // can select them in the actual Trash (the sandbox hides the ~/.Trash path).
+  @State private var trashedURLs: [URL] = []
   // The Remember-Reviewed window in effect when this scan started. Snapshotting it
   // keeps the scan exclusion and mark/unmark consistent even if the user changes
   // the setting mid-session (the .session and persistent stores are different).
@@ -412,7 +415,7 @@ struct FileReviewSessionView: View {
 
         if deletedCount > 0 {
           Button {
-            FinderActions.openTrash()
+            FinderActions.revealInTrash(trashedURLs)
           } label: {
             Label("Show in Trash", systemImage: "trash")
               .frame(maxWidth: .infinity)
@@ -641,6 +644,7 @@ struct FileReviewSessionView: View {
         deletedCount += result.trashed
         totalDeletedCount += result.trashed
         totalDeletedBytes += Int(result.freedBytes)
+        trashedURLs.append(contentsOf: result.trashedURLs)
         lastUndo = nil
         trashFailures = result.failed.map(\.name)
       }

@@ -132,6 +132,12 @@ enum PhotoReviewHistory {
   // the pair entirely.
   private static let similarKey = "reviewedAssetIdentifiers.similar"
   nonisolated(unsafe) private static var similarSessionIdentifiers: Set<String> = []
+  // Serial queue for the Similar persistent store so per-swipe writes leave the
+  // main actor (mirroring the off-main read path) while staying strictly ordered
+  // — a mark followed by an undo's unmark must not reorder.
+  private static let similarPersistQueue = DispatchQueue(
+    label: "com.kyter.SnipSnaps.PhotoReviewHistory.similarPersist"
+  )
 
   static func supportsSkipping(for mode: ReviewMode) -> Bool {
     switch mode {
@@ -219,9 +225,13 @@ enum PhotoReviewHistory {
       }
       return
     }
-    var entries = decodeEntries(forKey: similarKey)
-    entries[identifier] = Date().timeIntervalSince1970
-    storePersistentEntries(entries, forKey: similarKey)
+    // Off the main actor: this fires on every keep/delete swipe and the read
+    // path is already detached, so the write shouldn't block the swipe either.
+    similarPersistQueue.async {
+      var entries = decodeEntries(forKey: similarKey)
+      entries[identifier] = Date().timeIntervalSince1970
+      storePersistentEntries(entries, forKey: similarKey)
+    }
   }
 
   static func unmarkSimilarReviewed(_ identifier: String, memoryOption: ReviewMemoryOption) {
@@ -232,9 +242,11 @@ enum PhotoReviewHistory {
       similarSessionIdentifiers.remove(identifier)
       return
     }
-    var entries = decodeEntries(forKey: similarKey)
-    entries.removeValue(forKey: identifier)
-    storePersistentEntries(entries, forKey: similarKey)
+    similarPersistQueue.async {
+      var entries = decodeEntries(forKey: similarKey)
+      entries.removeValue(forKey: identifier)
+      storePersistentEntries(entries, forKey: similarKey)
+    }
   }
 
   static func clearAll() {
@@ -369,11 +381,18 @@ enum PhotoReviewHistory {
 
   private static func storePersistentEntries(_ entries: [String: TimeInterval], forKey key: String) {
     let compactedEntries = compactedPersistentEntries(entries)
-    let limitedEntries = compactedEntries.sorted { $0.value > $1.value }.prefix(maxIdentifiers)
-    let dictionary = Dictionary(uniqueKeysWithValues: limitedEntries.map { ($0.key, $0.value) })
-    guard !dictionary.isEmpty else {
+    guard !compactedEntries.isEmpty else {
       UserDefaults.standard.removeObject(forKey: key)
       return
+    }
+    // Only pay for the O(n log n) sort + trim when actually over the cap; the
+    // common per-swipe write stays well under maxIdentifiers and skips it.
+    let dictionary: [String: TimeInterval]
+    if compactedEntries.count > maxIdentifiers {
+      let limitedEntries = compactedEntries.sorted { $0.value > $1.value }.prefix(maxIdentifiers)
+      dictionary = Dictionary(uniqueKeysWithValues: limitedEntries.map { ($0.key, $0.value) })
+    } else {
+      dictionary = compactedEntries
     }
     UserDefaults.standard.set(dictionary, forKey: key)
   }
@@ -437,6 +456,7 @@ extension Notification.Name {
 final class PhotoLibraryChangeBroadcaster: NSObject, PHPhotoLibraryChangeObserver {
   static let shared = PhotoLibraryChangeBroadcaster()
   private var isRegistered = false
+  private var debounceTask: Task<Void, Never>?
 
   func startIfNeeded() {
     guard !isRegistered else { return }
@@ -446,6 +466,19 @@ final class PhotoLibraryChangeBroadcaster: NSObject, PHPhotoLibraryChangeObserve
 
   nonisolated func photoLibraryDidChange(_ changeInstance: PHChange) {
     Task { @MainActor in
+      self.scheduleBroadcast()
+    }
+  }
+
+  // A single edit, an iCloud sync, or a run of in-app delete confirmations can
+  // each deliver many rapid change callbacks. Coalesce them so observers recount
+  // once per burst rather than once per change — each recount can otherwise kick
+  // off a full-library scan.
+  private func scheduleBroadcast() {
+    debounceTask?.cancel()
+    debounceTask = Task { @MainActor in
+      try? await Task.sleep(for: .milliseconds(400))
+      guard !Task.isCancelled else { return }
       NotificationCenter.default.post(name: .snipSnapsPhotoLibraryDidChange, object: nil)
     }
   }
@@ -682,7 +715,14 @@ enum PhotoLibrary {
       NSSortDescriptor(key: "creationDate", ascending: sort == .oldest)
     ]
     options.predicate = excludingSubtype(.photoScreenshot)
-    options.fetchLimit = max(scanLimit, 1)
+    // Mirror the other reviewed-excluding fetch paths (fetchAssets, etc.): only
+    // cap the DB fetch when nothing is excluded. Once a reviewed set exists,
+    // fetch unbounded (PHFetchResult stays lazy) and collect the newest
+    // scanLimit UNREVIEWED assets below — so each scan slides deeper into the
+    // library instead of shrinking a fixed newest-scanLimit window, which
+    // stranded duplicates past that window on libraries larger than scanLimit.
+    let scanCap = max(scanLimit, 1)
+    options.fetchLimit = reviewedIdentifiers.isEmpty ? scanCap : 0
 
     let result = PHAsset.fetchAssets(with: .image, options: options)
     guard result.count > 1 else { return [] }
@@ -691,12 +731,16 @@ enum PhotoLibrary {
     // session so each scan reaches further into the library instead of
     // re-surfacing groups already handled.
     var assets: [PHAsset] = []
-    assets.reserveCapacity(result.count)
+    assets.reserveCapacity(min(result.count, scanCap))
     for index in 0..<result.count {
       guard !Task.isCancelled else { return [] }
       let asset = result.object(at: index)
       guard !reviewedIdentifiers.contains(asset.localIdentifier) else { continue }
       assets.append(asset)
+      // Hard cap so the unbounded fetch (used when excluding reviewed) still
+      // collects at most scanLimit assets — preserving the single-scan memory
+      // and fingerprinting bound the rest of this function relies on.
+      if assets.count >= scanCap { break }
     }
     if sort == .random {
       assets.shuffle()

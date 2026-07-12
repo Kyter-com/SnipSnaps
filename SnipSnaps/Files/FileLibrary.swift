@@ -201,6 +201,9 @@ enum FileLibrary {
     let trashed: Int
     let freedBytes: Int64
     let failed: [FileItem]
+    // The files' real locations inside ~/.Trash, as reported by trashItem — used
+    // to reveal them in Finder, since the sandbox hides the real Trash path.
+    let trashedURLs: [URL]
   }
 
   static func moveToTrash(_ items: [FileItem]) -> TrashResult {
@@ -208,17 +211,19 @@ enum FileLibrary {
     var trashed = 0
     var freed: Int64 = 0
     var failed: [FileItem] = []
+    var trashedURLs: [URL] = []
     for item in items {
       var resultingURL: NSURL?
       do {
         try fm.trashItem(at: item.url, resultingItemURL: &resultingURL)
         trashed += 1
         freed += item.size
+        if let resultingURL { trashedURLs.append(resultingURL as URL) }
       } catch {
         failed.append(item)
       }
     }
-    return TrashResult(trashed: trashed, freedBytes: freed, failed: failed)
+    return TrashResult(trashed: trashed, freedBytes: freed, failed: failed, trashedURLs: trashedURLs)
   }
 
   // MARK: - Private

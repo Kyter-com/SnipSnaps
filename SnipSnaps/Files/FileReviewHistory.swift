@@ -12,6 +12,11 @@ enum FileReviewHistory {
   private static let maxPersistentAge: TimeInterval = 5 * 365 * 24 * 60 * 60
   private static let sessionLock = NSLock()
   nonisolated(unsafe) private static var sessionPaths: Set<String> = []
+  // Serial queue so per-decision persistent writes leave the main actor while
+  // staying ordered (a mark and a later unmark must not reorder).
+  private static let persistQueue = DispatchQueue(
+    label: "com.kyter.SnipSnaps.FileReviewHistory.persist"
+  )
 
   static func reviewedPaths(memoryOption: ReviewMemoryOption) -> Set<String> {
     guard memoryOption != .never else { return [] }
@@ -41,9 +46,13 @@ enum FileReviewHistory {
       sessionLock.unlock()
       return
     }
-    var entries = persistentEntries()
-    entries[path] = Date().timeIntervalSince1970
-    store(entries)
+    // Off the main actor: this fires on every keep/trash decision, and the
+    // read/scan path is already async, so the write shouldn't block the review.
+    persistQueue.async {
+      var entries = persistentEntries()
+      entries[path] = Date().timeIntervalSince1970
+      store(entries)
+    }
   }
 
   static func unmarkReviewed(_ path: String, memoryOption: ReviewMemoryOption) {
@@ -54,9 +63,11 @@ enum FileReviewHistory {
       sessionLock.unlock()
       return
     }
-    var entries = persistentEntries()
-    entries.removeValue(forKey: path)
-    store(entries)
+    persistQueue.async {
+      var entries = persistentEntries()
+      entries.removeValue(forKey: path)
+      store(entries)
+    }
   }
 
   static func clearAll() {
@@ -67,7 +78,9 @@ enum FileReviewHistory {
   }
 
   static func compact() {
-    store(persistentEntries())
+    persistQueue.async {
+      store(persistentEntries())
+    }
   }
 
   // MARK: - Private
@@ -89,15 +102,21 @@ enum FileReviewHistory {
 
   private static func store(_ entries: [String: TimeInterval]) {
     let cutoff = Date().timeIntervalSince1970 - maxPersistentAge
-    let limited = entries
-      .filter { $0.value >= cutoff }
-      .sorted { $0.value > $1.value }
-      .prefix(maxEntries)
-    guard !limited.isEmpty else {
+    let filtered = entries.filter { $0.value >= cutoff }
+    guard !filtered.isEmpty else {
       UserDefaults.standard.removeObject(forKey: storeKey)
       return
     }
-    UserDefaults.standard.set(Dictionary(uniqueKeysWithValues: limited.map { ($0.key, $0.value) }), forKey: storeKey)
+    // Only pay for the O(n log n) sort + trim when actually over the cap; the
+    // common per-decision write stays well under maxEntries and skips it.
+    let limited: [String: TimeInterval]
+    if filtered.count > maxEntries {
+      limited = Dictionary(uniqueKeysWithValues:
+        filtered.sorted { $0.value > $1.value }.prefix(maxEntries).map { ($0.key, $0.value) })
+    } else {
+      limited = filtered
+    }
+    UserDefaults.standard.set(limited, forKey: storeKey)
   }
 }
 #endif

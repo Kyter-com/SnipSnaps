@@ -848,7 +848,10 @@ struct ReviewSessionView: View {
   }
 
   private func applyDecision(_ decision: PhotoDecision, startingOffset: CGSize = .zero) {
-    guard let asset = currentAsset, !isAnimatingCard else { return }
+    // The bare-key shortcut buttons stay mounted behind the metadata sheet;
+    // ignore decisions while it's presented so a keypress can't act on the
+    // hidden card underneath.
+    guard let asset = currentAsset, !isAnimatingCard, !showMetadataSheet else { return }
     isAnimatingCard = true
     lastReviewUndo = PhotoReviewUndo(asset: asset, decision: decision, index: currentIndex)
     triggerDecisionHaptic(decision)
@@ -1924,7 +1927,11 @@ struct SimilarReviewSessionView: View {
   }
 
   private func applyPhotoDecision(_ decision: PhotoDecision, startingOffset: CGSize = .zero) {
-    guard let asset = currentPhoto, !isAnimatingCard else { return }
+    // Ignore decisions while the zoom/metadata sheet covers the card — the bare-key
+    // shortcut buttons stay mounted behind it, so a keypress must not act on the
+    // hidden photo underneath.
+    guard let asset = currentPhoto, !isAnimatingCard,
+          zoomTarget == nil, metadataTarget == nil else { return }
     isAnimatingCard = true
     pushUndo(
       addedKept: decision == .keep ? [asset] : [],
@@ -1979,7 +1986,8 @@ struct SimilarReviewSessionView: View {
   // record review memory, so the group reappears on the next scan — any photos
   // that were already decided get un-remembered here so they come back too.
   private func skipGroup() {
-    guard let group = currentGroup, !isAnimatingCard else { return }
+    guard let group = currentGroup, !isAnimatingCard,
+          zoomTarget == nil, metadataTarget == nil else { return }
     let identifiers = Set(group.assets.map(\.localIdentifier))
     let restoredKept = keptAssets.filter { identifiers.contains($0.localIdentifier) }
     let restoredDelete = deleteAssets.filter { identifiers.contains($0.localIdentifier) }
@@ -2012,7 +2020,16 @@ struct SimilarReviewSessionView: View {
   // on Skip group cannot advance two groups at once.
   private func advanceGroupAnimated() {
     isAnimatingCard = true
-    withAnimation(.spring(duration: 0.34, bounce: 0.14)) {
+    #if os(macOS)
+    // Match the Keep/Delete paths: honor Reduce Motion with a plain cross-fade
+    // instead of the bouncy spring.
+    let animation: Animation = reduceMotion
+      ? .easeInOut(duration: 0.15)
+      : .spring(duration: 0.34, bounce: 0.14)
+    #else
+    let animation: Animation = .spring(duration: 0.34, bounce: 0.14)
+    #endif
+    withAnimation(animation) {
       advanceGroup()
     }
     Task { @MainActor in
@@ -2049,7 +2066,14 @@ struct SimilarReviewSessionView: View {
       PhotoReviewHistory.markSimilarReviewed(asset.localIdentifier, memoryOption: reviewMemoryOption)
     }
     showSummary = false
-    withAnimation(.spring(duration: 0.34, bounce: 0.14)) {
+    #if os(macOS)
+    let undoAnimation: Animation = reduceMotion
+      ? .easeInOut(duration: 0.15)
+      : .spring(duration: 0.34, bounce: 0.14)
+    #else
+    let undoAnimation: Animation = .spring(duration: 0.34, bounce: 0.14)
+    #endif
+    withAnimation(undoAnimation) {
       currentGroupIndex = step.groupIndex
       photoCursor = step.photoCursor
     }

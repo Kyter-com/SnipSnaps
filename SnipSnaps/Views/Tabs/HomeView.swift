@@ -404,13 +404,22 @@ struct HomeView: View {
     }
   }
 
-  // After an explicit access/selection change the user expects fresh numbers, so
-  // recount every mode unconditionally — including the expensive ones that the
-  // passive refresh path skips behind a freshness cache.
+  // Fired for every library change: photos added via limited access, deletes
+  // during a review, iCloud sync ticks. When the access LEVEL actually changes
+  // the visible library can be entirely different, so recount everything. For a
+  // plain content change, refresh the cheap counts now but let the expensive
+  // full-library byte-scan modes ride the 12h freshness cache instead of
+  // re-scanning the whole library on every change.
   private func refreshAfterAccessChange() {
-    authStatus = PhotoLibrary.authorizationStatus()
+    let previousStatus = authStatus
+    let newStatus = PhotoLibrary.authorizationStatus()
+    authStatus = newStatus
     loadCachedCounts()
-    refresh(modes: allCountModes)
+    if newStatus != previousStatus {
+      refresh(modes: allCountModes)
+    } else {
+      refreshForCurrentMemoryOption()
+    }
   }
 
   private var accessStatusText: String {
