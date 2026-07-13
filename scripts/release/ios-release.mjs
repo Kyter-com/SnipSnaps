@@ -103,6 +103,34 @@ function flagValue(flag, fallback = undefined) {
   return index === -1 ? fallback : args[index + 1];
 }
 
+const VALID_PLATFORMS = ["IOS", "MAC_OS"];
+
+// Resolve the ASC platform(s) a command should act on. Precedence:
+// --platform flag > SNIPSNAPS_PLATFORM env > config.platform (default IOS).
+// "all" expands to every platform on the universal-purchase record.
+function resolvePlatforms() {
+  const raw = flagValue("--platform", process.env.SNIPSNAPS_PLATFORM || config.platform);
+  const value = String(raw).trim().toUpperCase();
+  if (value === "ALL") return [...(config.platforms || VALID_PLATFORMS)];
+  const normalized = value === "MACOS" || value === "MAC" ? "MAC_OS" : value === "IOS" || value === "IPHONEOS" ? "IOS" : value;
+  if (!VALID_PLATFORMS.includes(normalized)) {
+    throw new Error(`Unknown --platform "${raw}". Use IOS, MAC_OS, or all.`);
+  }
+  return [normalized];
+}
+
+function resolvePlatform() {
+  const platforms = resolvePlatforms();
+  if (platforms.length > 1) {
+    throw new Error('This command needs a single --platform (IOS or MAC_OS), not "all".');
+  }
+  return platforms[0];
+}
+
+function platformLabel(platform) {
+  return platform === "MAC_OS" ? "macOS" : "iOS";
+}
+
 function readJson(relativePath) {
   return JSON.parse(readFileSync(path.join(rootDir, relativePath), "utf8"));
 }
@@ -283,55 +311,72 @@ function status() {
   console.log(`Xcode marketing version: ${xcode.marketingVersion}`);
   console.log(`Xcode build number: ${xcode.buildNumber}`);
   console.log(`Bundle ID: ${config.bundleId}`);
-  console.log("");
 
-  const asc = run(
-    ascBin,
-    ["status", "--app", config.bundleId, "--platform", config.platform, "--include", "app,builds,testflight,appstore,submission", "--output", "table"],
-    { allowFailure: true, env: ascEnv() }
-  );
+  for (const platform of resolvePlatforms()) {
+    console.log("");
+    console.log(`== ${platformLabel(platform)} (${platform}) ==`);
 
-  if (asc.status === 0) {
-    console.log(asc.stdout.trim());
-    return;
+    const asc = run(
+      ascBin,
+      ["status", "--app", config.bundleId, "--platform", platform, "--include", "app,builds,testflight,appstore,submission", "--output", "table"],
+      { allowFailure: true, env: ascEnv() }
+    );
+
+    if (asc.status === 0) {
+      console.log(asc.stdout.trim());
+      continue;
+    }
+
+    console.log(`ASC status unavailable for ${platform}.`);
+    console.log("Run through an authenticated 1Password/ASC environment, for example:");
+    console.log("ASC_OP_ITEM=<item> npm run release:status -- --platform all");
   }
-
-  console.log("ASC status unavailable.");
-  console.log("Run through an authenticated 1Password/ASC environment, for example:");
-  console.log("op run --env-file <private-asc-env> -- npm run release:status");
 }
 
 function nextBuild() {
   const xcode = readXcodeSettings();
   const version = flagValue("--version", xcode.marketingVersion);
   const app = resolveAppRef();
-  const result = run(ascBin, [
-    "builds",
-    "next-build-number",
-    "--app",
-    app,
-    "--version",
-    version,
-    "--platform",
-    config.platform,
-    "--output",
-    "json",
-    "--pretty",
-  ], { env: ascEnv() });
+  const platforms = resolvePlatforms();
 
-  const payload = parseJson(result.stdout);
-  const buildNumber = findValue(payload, ["nextBuildNumber", "buildNumber", "next"]);
+  const perPlatform = platforms.map((platform) => {
+    const result = run(ascBin, [
+      "builds",
+      "next-build-number",
+      "--app",
+      app,
+      "--version",
+      version,
+      "--platform",
+      platform,
+      "--output",
+      "json",
+      "--pretty",
+    ], { env: ascEnv() });
 
-  if (!buildNumber) {
-    console.log(result.stdout.trim());
-    throw new Error("Could not find the next build number in asc output.");
+    const payload = parseJson(result.stdout);
+    const buildNumber = findValue(payload, ["nextBuildNumber", "buildNumber", "next"]);
+
+    if (!buildNumber) {
+      console.log(result.stdout.trim());
+      throw new Error(`Could not find the next build number in asc output for ${platform}.`);
+    }
+
+    console.log(`Next ${config.appName} ${version} build number (${platformLabel(platform)}): ${buildNumber}`);
+    return Number(buildNumber);
+  });
+
+  // The universal-purchase target has ONE CURRENT_PROJECT_VERSION, but ASC keeps
+  // an independent build-number sequence per platform. Applying the max keeps a
+  // single shared build number valid for every targeted platform (lockstep).
+  const applied = Math.max(...perPlatform);
+  if (platforms.length > 1) {
+    console.log(`Lockstep build number valid across ${platforms.map(platformLabel).join(" + ")}: ${applied}`);
   }
 
-  console.log(`Next ${config.appName} ${version} build number: ${buildNumber}`);
-
   if (hasFlag("--apply")) {
-    replaceXcodeSetting("CURRENT_PROJECT_VERSION", String(buildNumber));
-    console.log(`Synced ${config.xcodeProject} CURRENT_PROJECT_VERSION to ${buildNumber}.`);
+    replaceXcodeSetting("CURRENT_PROJECT_VERSION", String(applied));
+    console.log(`Synced ${config.xcodeProject} CURRENT_PROJECT_VERSION to ${applied}.`);
   }
 }
 
@@ -341,6 +386,7 @@ function applyNotes() {
   const xcode = readXcodeSettings();
   const notes = notesFromFileOrChangesets();
   const app = confirmed ? resolveAppRef() : config.bundleId;
+  const platforms = resolvePlatforms();
 
   if (!notes) throw new Error("No notes were found to apply.");
 
@@ -353,75 +399,59 @@ function applyNotes() {
     console.log("Dry run. Re-run with --confirm to update App Store Connect.");
     console.log(`Version: ${xcode.marketingVersion}`);
     console.log(`Build: ${xcode.buildNumber}`);
+    console.log(`Platforms: ${platforms.join(", ")}`);
     console.log(`Targets: ${planned.join(", ")}`);
     console.log("");
     console.log(notes);
     return;
   }
 
-  if (planned.includes("appstore")) {
-    run(ascBin, [
-      "apps",
-      "info",
-      "edit",
-      "--app",
-      app,
-      "--version",
-      xcode.marketingVersion,
-      "--platform",
-      config.platform,
-      "--locale",
-      config.locale,
-      "--whats-new",
-      notes,
-    ], { env: ascEnv() });
-    console.log("Updated App Store What's New notes.");
-  }
-
-  if (planned.includes("testflight")) {
-    const update = run(
-      ascBin,
-      [
-        "builds",
-        "test-notes",
-        "update",
-        "--app",
-        app,
-        "--build-number",
-        xcode.buildNumber,
-        "--version",
-        xcode.marketingVersion,
-        "--platform",
-        config.platform,
-        "--locale",
-        config.locale,
-        "--whats-new",
-        notes,
-      ],
-      { allowFailure: true, env: ascEnv() }
-    );
-
-    if (update.status !== 0) {
+  for (const platform of platforms) {
+    if (planned.includes("appstore")) {
       run(ascBin, [
-        "builds",
-        "test-notes",
-        "create",
+        "apps",
+        "info",
+        "edit",
         "--app",
         app,
-        "--build-number",
-        xcode.buildNumber,
         "--version",
         xcode.marketingVersion,
         "--platform",
-        config.platform,
+        platform,
         "--locale",
         config.locale,
         "--whats-new",
         notes,
       ], { env: ascEnv() });
+      console.log(`Updated App Store What's New notes (${platformLabel(platform)}).`);
     }
 
-    console.log("Updated TestFlight What to Test notes.");
+    if (planned.includes("testflight")) {
+      const testNotesArgs = (verb) => [
+        "builds",
+        "test-notes",
+        verb,
+        "--app",
+        app,
+        "--build-number",
+        xcode.buildNumber,
+        "--version",
+        xcode.marketingVersion,
+        "--platform",
+        platform,
+        "--locale",
+        config.locale,
+        "--whats-new",
+        notes,
+      ];
+
+      const update = run(ascBin, testNotesArgs("update"), { allowFailure: true, env: ascEnv() });
+      if (update.status !== 0) {
+        run(ascBin, testNotesArgs("create"), { env: ascEnv() });
+      }
+
+      console.log(`Updated TestFlight What to Test notes (${platformLabel(platform)}).`);
+    }
   }
 }
 
@@ -440,16 +470,28 @@ function notesFromFileOrChangesets() {
 
 function backfill() {
   const app = resolveAppRef();
-  const versionsPayload = ascJson(["versions", "list", "--app", app, "--platform", config.platform, "--paginate", "--output", "json", "--pretty"]);
-  const buildsPayload = ascJson(["builds", "list", "--app", app, "--platform", config.platform, "--processing-state", "all", "--paginate", "--output", "json", "--pretty"]);
-  const versions = asArray(versionsPayload).map(normalizeVersion).filter((version) => version.version);
-  const builds = asArray(buildsPayload).map(normalizeBuild).filter((build) => build.buildNumber || build.version);
+  const platforms = resolvePlatforms();
   const snapshots = gitVersionSnapshots();
+
+  const versions = [];
+  const builds = [];
+  for (const platform of platforms) {
+    const versionsPayload = ascJson(["versions", "list", "--app", app, "--platform", platform, "--paginate", "--output", "json", "--pretty"]);
+    const buildsPayload = ascJson(["builds", "list", "--app", app, "--platform", platform, "--processing-state", "all", "--paginate", "--output", "json", "--pretty"]);
+    for (const version of asArray(versionsPayload).map(normalizeVersion).filter((item) => item.version)) {
+      versions.push({ ...version, platform });
+    }
+    for (const build of asArray(buildsPayload).map(normalizeBuild).filter((item) => item.buildNumber || item.version)) {
+      builds.push({ ...build, platform });
+    }
+  }
 
   const versionNotes = new Map();
   for (const version of versions) {
-    const notes = fetchWhatsNew(version.version);
-    if (notes) versionNotes.set(version.version, notes);
+    const key = `${version.platform}::${version.version}`;
+    if (versionNotes.has(key)) continue;
+    const notes = fetchWhatsNew(version.version, version.platform);
+    if (notes) versionNotes.set(key, notes);
   }
 
   const lines = [];
@@ -461,24 +503,24 @@ function backfill() {
   lines.push("");
   lines.push("## App Store Versions");
   lines.push("");
-  lines.push("| Version | State | Created | Released | Matched Git Commit | What's New |");
-  lines.push("| --- | --- | --- | --- | --- | --- |");
+  lines.push("| Platform | Version | State | Created | Released | Matched Git Commit | What's New |");
+  lines.push("| --- | --- | --- | --- | --- | --- | --- |");
 
   for (const version of sortVersions(versions)) {
     const matched = findSnapshot(snapshots, version.version);
-    lines.push(`| ${version.version} | ${version.state || ""} | ${version.createdDate || ""} | ${version.releaseDate || ""} | ${formatSnapshot(matched)} | ${singleLine(versionNotes.get(version.version))} |`);
+    lines.push(`| ${platformLabel(version.platform)} | ${version.version} | ${version.state || ""} | ${version.createdDate || ""} | ${version.releaseDate || ""} | ${formatSnapshot(matched)} | ${singleLine(versionNotes.get(`${version.platform}::${version.version}`))} |`);
   }
 
   lines.push("");
   lines.push("## Builds");
   lines.push("");
-  lines.push("| Version | Build | Uploaded | Processing State | Expired | Matched Git Commit |");
-  lines.push("| --- | --- | --- | --- | --- | --- |");
+  lines.push("| Platform | Version | Build | Uploaded | Processing State | Expired | Matched Git Commit |");
+  lines.push("| --- | --- | --- | --- | --- | --- | --- |");
 
   const sortedBuilds = sortBuilds(builds);
   for (const build of sortedBuilds) {
     const matched = findSnapshot(snapshots, build.version, build.buildNumber);
-    lines.push(`| ${build.version || ""} | ${build.buildNumber || ""} | ${build.uploadedDate || ""} | ${build.processingState || ""} | ${build.expired ?? ""} | ${formatSnapshot(matched)} |`);
+    lines.push(`| ${platformLabel(build.platform)} | ${build.version || ""} | ${build.buildNumber || ""} | ${build.uploadedDate || ""} | ${build.processingState || ""} | ${build.expired ?? ""} | ${formatSnapshot(matched)} |`);
   }
 
   lines.push("");
@@ -490,7 +532,7 @@ function backfill() {
     if (!matched) continue;
 
     lines.push("");
-    lines.push(`### ${build.version || matched.marketingVersion} (${build.buildNumber || matched.buildNumber})`);
+    lines.push(`### ${platformLabel(build.platform)} ${build.version || matched.marketingVersion} (${build.buildNumber || matched.buildNumber})`);
     lines.push("");
     lines.push(`Matched ${matched.shortSha} from ${matched.date}: ${matched.subject}`);
     lines.push("");
@@ -616,11 +658,11 @@ function findValue(value, keys) {
   return undefined;
 }
 
-function fetchWhatsNew(version) {
+function fetchWhatsNew(version, platform = config.platform) {
   const app = resolveAppRef();
   const result = run(
     ascBin,
-    ["apps", "info", "view", "--app", app, "--version", version, "--platform", config.platform, "--locale", config.locale, "--output", "json", "--pretty"],
+    ["apps", "info", "view", "--app", app, "--version", version, "--platform", platform, "--locale", config.locale, "--output", "json", "--pretty"],
     { allowFailure: true, env: ascEnv() }
   );
 
@@ -752,6 +794,14 @@ Commands:
   apply-notes [--confirm]       Apply generated notes to ASC metadata/TestFlight.
   backfill                      Pull ASC versions/builds and correlate them with git commits.
   tag [--confirm]               Create a git release tag using ${config.gitTagPrefix}<version>+<build>.
+
+Options:
+  --platform IOS|MAC_OS|all     Which ASC platform to target on the universal-purchase
+                                record. Default: ${config.platform}. Applies to status, next-build,
+                                apply-notes, and backfill. "all" acts on every platform;
+                                next-build --platform all --apply writes the max build
+                                number so one shared CURRENT_PROJECT_VERSION stays valid.
+                                (Also settable via SNIPSNAPS_PLATFORM.)
 `);
 }
 

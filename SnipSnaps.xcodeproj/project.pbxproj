@@ -304,7 +304,7 @@
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = SnipSnaps/Info.plist;
-				"INFOPLIST_KEY_LSApplicationCategoryType[sdk=macosx*]" = "public.app-category.utilities";
+				"INFOPLIST_KEY_LSApplicationCategoryType[sdk=macosx*]" = "public.app-category.photography";
 				"INFOPLIST_KEY_NSHumanReadableCopyright[sdk=macosx*]" = "Copyright © 2026 Kyter, LLC. All rights reserved.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -348,7 +348,7 @@
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = SnipSnaps/Info.plist;
-				"INFOPLIST_KEY_LSApplicationCategoryType[sdk=macosx*]" = "public.app-category.utilities";
+				"INFOPLIST_KEY_LSApplicationCategoryType[sdk=macosx*]" = "public.app-category.photography";
 				"INFOPLIST_KEY_NSHumanReadableCopyright[sdk=macosx*]" = "Copyright © 2026 Kyter, LLC. All rights reserved.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
