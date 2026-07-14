@@ -66,6 +66,22 @@ Improved similar-photo review progress so large libraries feel more predictable.
 
 SnipSnaps commit messages can stay concise and imperative. Changeset bodies should be user-facing and App Store-ready.
 
+## How release notes flow (changeset → App Store)
+
+Release-note text has one source of truth (Changesets) and is transformed into App Store "What's New" automatically:
+
+1. **Write** — each user-facing change adds a changeset (`npm run changeset`) whose body is App Store-ready prose. Leading `-`/`*`/`•` bullets are optional; the tooling normalizes them. **Prefer one change per changeset** (or one bullet per line): a single changeset whose body has multiple blank-line-separated paragraphs collapses in `CHANGELOG.md` into one bullet with indented sub-paragraphs, which reads as a single item.
+2. **Snapshot** — `npm run version` runs `notes --write-default` (writing `docs/next-release-notes.md`) *before* `changeset version` consumes the changesets into `CHANGELOG.md`. This preserves the exact notes after the changesets are gone.
+3. **Format** — `formatNotes()` dedupes and prepends `• ` to every line, so App Store notes always come out as `•`-prefixed bullets. **You never add the dot by hand.**
+4. **Apply** — `npm run release:apply-notes -- --platform all --confirm` pushes notes to ASC (App Store "What's New" + TestFlight "What to Test"). It uses pending changesets if any, otherwise falls back to `docs/next-release-notes.md`.
+5. **Verify** — `npm run release:notes:verify -- --platform all` compares the local notes against what is actually live in ASC for the current `MARKETING_VERSION`, per platform. Exit code is non-zero on drift, so it can gate a release.
+
+**Ordering matters.** `docs/next-release-notes.md` is a generated file that lingers in git showing the *last* release's notes. Always run `npm run version` for the new release **before** `apply-notes`, so the file is regenerated. `apply-notes` dry-runs by default (omit `--confirm`) and prints the target version + exact notes — read that before confirming, and run `release:notes:verify` afterward.
+
+**First release on a platform.** Apple does not allow "What's New" on the *first* App Store version for a platform (e.g. the first macOS build). The API returns `whatsNew cannot be edited at this time` and the App Store shows the **description** instead. `apply-notes` now skips this case with a message instead of failing (so `--platform all` survives a platform launch), and `verify-notes` reports it as `⚠` (expected), not drift.
+
+**Use the tooling, not raw `asc`.** Apply notes via `npm run release:apply-notes` so both platforms and both targets (App Store + TestFlight) stay consistent, rather than editing localizations by hand.
+
 ## Release Prep
 
 1. Review pending notes:

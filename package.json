@@ -16,6 +16,8 @@
     "release:apply-notes": "node scripts/release/ios-release.mjs apply-notes",
     "release:apply-notes:all": "node scripts/release/ios-release.mjs apply-notes --platform all",
     "release:apply-notes:mac": "node scripts/release/ios-release.mjs apply-notes --platform MAC_OS",
+    "release:notes:verify": "node scripts/release/ios-release.mjs verify-notes",
+    "release:notes:verify:all": "node scripts/release/ios-release.mjs verify-notes --platform all",
     "release:backfill": "node scripts/release/ios-release.mjs backfill",
     "release:backfill:all": "node scripts/release/ios-release.mjs backfill --platform all",
     "release:tag": "node scripts/release/ios-release.mjs tag"

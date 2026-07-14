@@ -408,7 +408,7 @@ function applyNotes() {
 
   for (const platform of platforms) {
     if (planned.includes("appstore")) {
-      run(ascBin, [
+      const edit = run(ascBin, [
         "apps",
         "info",
         "edit",
@@ -422,8 +422,22 @@ function applyNotes() {
         config.locale,
         "--whats-new",
         notes,
-      ], { env: ascEnv() });
-      console.log(`Updated App Store What's New notes (${platformLabel(platform)}).`);
+      ], { allowFailure: true, env: ascEnv() });
+
+      if (edit.status === 0) {
+        console.log(`Updated App Store What's New notes (${platformLabel(platform)}).`);
+      } else {
+        const detail = (edit.stderr || edit.stdout || "").trim();
+        // Apple refuses "What's New" on the FIRST App Store version for a platform
+        // ("whatsNew cannot be edited at this time"): a brand-new app on that platform
+        // shows its description instead. Skip that case rather than failing the run
+        // (important so `--platform all` survives a platform launch, e.g. first macOS).
+        if (/cannot be edited|state of another resource/i.test(detail)) {
+          console.log(`Skipped App Store What's New for ${platformLabel(platform)}: not editable for ${xcode.marketingVersion} (first release on this platform — the description is shown instead).`);
+        } else {
+          throw new Error(`asc apps info edit failed (${platformLabel(platform)}): ${detail}`);
+        }
+      }
     }
 
     if (planned.includes("testflight")) {
@@ -446,11 +460,19 @@ function applyNotes() {
       ];
 
       const update = run(ascBin, testNotesArgs("update"), { allowFailure: true, env: ascEnv() });
-      if (update.status !== 0) {
-        run(ascBin, testNotesArgs("create"), { env: ascEnv() });
+      if (update.status === 0) {
+        console.log(`Updated TestFlight What to Test notes (${platformLabel(platform)}).`);
+      } else {
+        const create = run(ascBin, testNotesArgs("create"), { allowFailure: true, env: ascEnv() });
+        if (create.status === 0) {
+          console.log(`Updated TestFlight What to Test notes (${platformLabel(platform)}).`);
+        } else {
+          // Non-fatal: the local build number can drift from ASC (Xcode Cloud
+          // auto-increments), so this build may not exist. Don't fail the run.
+          const detail = (create.stderr || create.stdout || update.stderr || "").trim();
+          console.warn(`Skipped TestFlight What to Test for ${platformLabel(platform)} build ${xcode.buildNumber}: ${detail}`);
+        }
       }
-
-      console.log(`Updated TestFlight What to Test notes (${platformLabel(platform)}).`);
     }
   }
 }
@@ -466,6 +488,49 @@ function notesFromFileOrChangesets() {
   if (existsSync(savedNotesPath)) return readFileSync(savedNotesPath, "utf8").trim();
 
   return "";
+}
+
+// Compare the notes we WOULD apply (pending changesets, else next-release-notes.md)
+// against what is actually live in ASC for the current MARKETING_VERSION, per
+// platform. Read-only. Exits non-zero if any platform's live notes drift from the
+// local source, so this can gate a release ("right notes on the right release").
+function verifyNotes() {
+  const xcode = readXcodeSettings();
+  const platforms = resolvePlatforms();
+  const normalize = (value) => (value || "").replace(/\r/g, "").replace(/[ \t]+$/gm, "").trim();
+  const local = normalize(notesFromFileOrChangesets());
+
+  console.log(`Verifying release notes for ${config.appName} ${xcode.marketingVersion} (${config.locale}).`);
+  console.log(`Local source: ${local ? `${local.split("\n").length} line(s)` : "EMPTY"}.`);
+  console.log("");
+
+  let drift = false;
+  for (const platform of platforms) {
+    const label = platformLabel(platform);
+    const live = normalize(fetchWhatsNew(xcode.marketingVersion, platform));
+
+    if (!live && !local) {
+      console.log(`— ${label}: no What's New locally or in ASC.`);
+    } else if (live && live === local) {
+      console.log(`✓ ${label}: ASC What's New matches local notes.`);
+    } else if (!live && local) {
+      console.log(`⚠ ${label}: ASC has no What's New for ${xcode.marketingVersion}, but local notes exist.`);
+      console.log(`   Either apply-notes has not run, or this is the platform's first version (What's New is not editable — the description is shown).`);
+    } else {
+      drift = true;
+      console.log(`✗ ${label}: ASC What's New DIFFERS from local notes.`);
+      console.log(`   --- live in ASC (${live.length} chars) ---`);
+      for (const line of live.split("\n")) console.log(`   | ${line}`);
+      console.log(`   --- local source (${local.length} chars) ---`);
+      for (const line of local.split("\n")) console.log(`   | ${line}`);
+    }
+  }
+
+  if (drift) {
+    console.log("");
+    console.error("Release notes drift detected. Re-run `npm run release:apply-notes -- --confirm` with the correct notes, or fix the source.");
+    process.exitCode = 1;
+  }
 }
 
 function backfill() {
@@ -792,6 +857,7 @@ Commands:
   next-build [--apply]          Ask ASC for the next build number and optionally update Xcode.
   sync-xcode-version            Sync Xcode MARKETING_VERSION from package.json.
   apply-notes [--confirm]       Apply generated notes to ASC metadata/TestFlight.
+  verify-notes                  Compare local notes against ASC What's New for the current version.
   backfill                      Pull ASC versions/builds and correlate them with git commits.
   tag [--confirm]               Create a git release tag using ${config.gitTagPrefix}<version>+<build>.
 
@@ -821,6 +887,9 @@ try {
       break;
     case "apply-notes":
       applyNotes();
+      break;
+    case "verify-notes":
+      verifyNotes();
       break;
     case "backfill":
       backfill();
