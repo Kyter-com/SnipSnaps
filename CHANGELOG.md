@@ -1,5 +1,11 @@
 # @kyter/snipsnaps-ios
 
+## 1.1.1
+
+### Patch Changes
+
+- Refreshed the app icon.
+
 ## 1.1.0
 
 ### Minor Changes
