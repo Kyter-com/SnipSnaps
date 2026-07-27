@@ -28,12 +28,13 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 SEED_DIR="$ROOT/seed-photos"
 BUNDLE="com.kyter.SnipSnaps"
 SIM_DATA="$HOME/Library/Developer/CoreSimulator/Devices/$DEVICE/data"
+PYTHON_BIN="${SNIPSNAPS_SCREENSHOT_PYTHON:-python3}"
 
 echo "==> Refreshing EXIF dates so seed photos count as Today/On This Day"
-python3 "$ROOT/refresh-seed-dates.py" "$SEED_DIR"
+"$PYTHON_BIN" "$ROOT/refresh-seed-dates.py" "$SEED_DIR"
 
 echo "==> Stamping GPS on seed photos so the details Location map renders"
-python3 "$ROOT/seed-locations.py" "$SEED_DIR"
+"$PYTHON_BIN" "$ROOT/seed-locations.py" "$SEED_DIR"
 
 echo "==> Resetting sim photo library: $DEVICE"
 xcrun simctl shutdown "$DEVICE" 2>/dev/null || true
@@ -92,6 +93,6 @@ set -o pipefail
 
 echo "==> Extracting captures into $RAW_DIR"
 mkdir -p "$RAW_DIR"
-python3 "$ROOT/extract-shots.py" "$XCRESULT" "$RAW_DIR"
+"$PYTHON_BIN" "$ROOT/extract-shots.py" "$XCRESULT" "$RAW_DIR"
 
 echo "==> Done for $DEVICE"

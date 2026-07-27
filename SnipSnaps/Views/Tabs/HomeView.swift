@@ -87,11 +87,14 @@ private enum HomeCountCache {
 
 struct HomeView: View {
   @Environment(\.scenePhase) private var scenePhase
+  @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   @State private var authStatus = PhotoLibrary.authorizationStatus()
   @State private var counts: [ReviewMode: ReviewModeCounts] = [:]
   @State private var selectedMode: ReviewMode?
   @State private var isRefreshingCounts = false
   @State private var countRefreshID = UUID()
+  @State private var countRefreshTask: Task<Void, Never>?
   @State private var hasLoadedInitialCounts = false
   @State private var reviewedIdentifierCountsAtReviewStart: [ReviewMode: Int] = [:]
   @AppStorage("reviewLimit") private var reviewLimit: Int = 20
@@ -141,6 +144,33 @@ struct HomeView: View {
     ReviewMemoryOption(rawValue: reviewMemoryOptionRawValue) ?? .thirtyDays
   }
 
+  private var usesTwoColumnLayout: Bool {
+    guard dynamicTypeSize < .accessibility1 else { return false }
+    #if os(macOS)
+    return true
+    #else
+    return horizontalSizeClass == .regular
+    #endif
+  }
+
+  private var modeColumns: [GridItem] {
+    #if os(macOS)
+    if usesTwoColumnLayout {
+      return [
+        GridItem(
+          .adaptive(minimum: 340, maximum: 520),
+          spacing: 12,
+          alignment: .top
+        )
+      ]
+    }
+    #endif
+    return Array(
+      repeating: GridItem(.flexible(minimum: 0), spacing: 12, alignment: .top),
+      count: usesTwoColumnLayout ? 2 : 1
+    )
+  }
+
   var body: some View {
     NavigationStack {
       ScrollView {
@@ -161,7 +191,7 @@ struct HomeView: View {
                   .textCase(.uppercase)
                   .padding(.horizontal, 4)
 
-                VStack(spacing: 12) {
+                LazyVGrid(columns: modeColumns, alignment: .leading, spacing: 12) {
                   ForEach(section.modes) { mode in
                     reviewModeCard(for: mode)
                   }
@@ -173,6 +203,8 @@ struct HomeView: View {
         .padding(.horizontal, 20)
         .padding(.top, 8)
         .padding(.bottom, 32)
+        .frame(maxWidth: 1080, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .top)
       }
       .background(AppColor.background)
       #if os(macOS)
@@ -204,6 +236,9 @@ struct HomeView: View {
       .onAppear {
         loadInitialCountsIfNeeded()
         PhotoLibraryChangeBroadcaster.shared.startIfNeeded()
+      }
+      .onDisappear {
+        countRefreshTask?.cancel()
       }
       // Any change to the (possibly limited) library — including photos added from
       // Settings or the review empty state, which don't background the app or change
@@ -255,7 +290,8 @@ struct HomeView: View {
           counts: counts[mode],
           isDisabled: !canAccessPhotos,
           reviewMemory: reviewMemoryOption,
-          reservesAccessorySpace: mode.usesScreenshotSort || mode.usesVideoSort || mode == .similar
+          reservesAccessorySpace: mode.usesScreenshotSort || mode.usesVideoSort || mode == .similar,
+          usesWideGridCard: usesTwoColumnLayout
         )
       }
       .buttonStyle(.plain)
@@ -440,6 +476,7 @@ struct HomeView: View {
   }
 
   private func refresh(modes modesToRefresh: [ReviewMode]? = nil) {
+    countRefreshTask?.cancel()
     authStatus = PhotoLibrary.authorizationStatus()
     let refreshID = UUID()
     countRefreshID = refreshID
@@ -456,11 +493,13 @@ struct HomeView: View {
     isRefreshingCounts = true
     let reviewMemoryOption = reviewMemoryOption
     let reviewMemoryOptionRawValue = reviewMemoryOptionRawValue
-    Task.detached(priority: .userInitiated) {
+    countRefreshTask = Task.detached(priority: .userInitiated) {
       var next: [ReviewMode: ReviewModeCounts] = [:]
       for mode in modesToRefresh {
+        guard !Task.isCancelled else { return }
         next[mode] = PhotoLibrary.fetchCounts(for: mode, reviewMemory: reviewMemoryOption)
       }
+      guard !Task.isCancelled else { return }
       let refreshedCounts = next
       await MainActor.run {
         guard countRefreshID == refreshID else { return }
@@ -522,6 +561,7 @@ struct HomeView: View {
     modes modesToRefresh: [ReviewMode],
     deferredModes: [ReviewMode]
   ) {
+    countRefreshTask?.cancel()
     authStatus = PhotoLibrary.authorizationStatus()
     let refreshID = UUID()
     countRefreshID = refreshID
@@ -538,9 +578,10 @@ struct HomeView: View {
     isRefreshingCounts = !modesToRefresh.isEmpty
     let reviewMemoryOption = reviewMemoryOption
     let reviewMemoryOptionRawValue = reviewMemoryOptionRawValue
-    Task.detached(priority: .userInitiated) {
+    countRefreshTask = Task.detached(priority: .userInitiated) {
       if !modesToRefresh.isEmpty {
         let refreshedCounts = Self.fetchCounts(for: modesToRefresh, reviewMemoryOption: reviewMemoryOption)
+        guard !Task.isCancelled else { return }
         await MainActor.run {
           guard countRefreshID == refreshID else { return }
           HomeCountCache.store(refreshedCounts, memoryOptionRawValue: reviewMemoryOptionRawValue)
@@ -566,6 +607,7 @@ struct HomeView: View {
   ) -> [ReviewMode: ReviewModeCounts] {
     var next: [ReviewMode: ReviewModeCounts] = [:]
     for mode in modes {
+      guard !Task.isCancelled else { return next }
       next[mode] = PhotoLibrary.fetchCounts(for: mode, reviewMemory: reviewMemoryOption)
     }
     return next
@@ -611,6 +653,7 @@ private struct ActionCard: View {
   let isDisabled: Bool
   let reviewMemory: ReviewMemoryOption
   var reservesAccessorySpace = false
+  var usesWideGridCard = false
 
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -623,7 +666,7 @@ private struct ActionCard: View {
       // title/subtitle have room and don't collide with it.
       if dynamicTypeSize < .accessibility1 {
         Text(displayCount)
-          .font(.system(size: 96, weight: .heavy, design: .rounded))
+          .font(.system(size: usesWideGridCard ? 72 : 96, weight: .heavy, design: .rounded))
           #if os(macOS)
           .monospacedDigit()
           #endif
@@ -658,7 +701,7 @@ private struct ActionCard: View {
       }
       .padding(.horizontal, 16)
     }
-    .frame(minHeight: reservesAccessorySpace ? 112 : 96)
+    .frame(minHeight: usesWideGridCard ? 112 : (reservesAccessorySpace ? 112 : 96))
     .opacity(isDisabled ? 0.5 : 1.0)
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(mode.title)

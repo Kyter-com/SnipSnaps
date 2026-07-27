@@ -165,7 +165,7 @@ enum PhotoReviewHistory {
     !sessionReviewedIdentifiersAreEmpty()
       || !persistentEntries().isEmpty
       || !similarSessionReviewedIdentifiersAreEmpty()
-      || !decodeEntries(forKey: similarKey).isEmpty
+      || similarPersistQueue.sync { !decodeEntries(forKey: similarKey).isEmpty }
   }
 
   private static func similarSessionReviewedIdentifiersAreEmpty() -> Bool {
@@ -211,7 +211,11 @@ enum PhotoReviewHistory {
       defer { sessionLock.unlock() }
       return similarSessionIdentifiers
     }
-    return Set(filteredPersistentEntries(forKey: similarKey, memoryOption: memoryOption).keys)
+    // Barrier behind any prior per-swipe mark/unmark so a new scan cannot race
+    // ahead of the async persistent write and resurface the group just reviewed.
+    return similarPersistQueue.sync {
+      Set(filteredPersistentEntries(forKey: similarKey, memoryOption: memoryOption).keys)
+    }
   }
 
   static func markSimilarReviewed(_ identifier: String, memoryOption: ReviewMemoryOption) {
@@ -252,7 +256,11 @@ enum PhotoReviewHistory {
   static func clearAll() {
     clearSessionReviewedIdentifiers()
     UserDefaults.standard.removeObject(forKey: sharedKey)
-    UserDefaults.standard.removeObject(forKey: similarKey)
+    // Order reset after every queued Similar mark/unmark so a stale async mark
+    // cannot complete later and recreate history the user explicitly cleared.
+    similarPersistQueue.sync {
+      UserDefaults.standard.removeObject(forKey: similarKey)
+    }
     sessionLock.lock()
     similarSessionIdentifiers.removeAll()
     sessionLock.unlock()
@@ -268,7 +276,9 @@ enum PhotoReviewHistory {
   static func compactStoredHistory() {
     trimSessionReviewedIdentifiers()
     storePersistentEntries(persistentEntries())
-    storePersistentEntries(decodeEntries(forKey: similarKey), forKey: similarKey)
+    similarPersistQueue.sync {
+      storePersistentEntries(decodeEntries(forKey: similarKey), forKey: similarKey)
+    }
     sessionLock.lock()
     while similarSessionIdentifiers.count > maxIdentifiers, let excess = similarSessionIdentifiers.first {
       similarSessionIdentifiers.remove(excess)

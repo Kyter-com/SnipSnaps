@@ -7,6 +7,8 @@ import QuickLookThumbnailing
 struct FileReviewSessionView: View {
   let category: FileReviewCategory
   let folders: [URL]
+  let excludedFolderPaths: Set<String>
+  let excludeFolder: (URL) -> Bool
 
   @Environment(\.dismiss) private var dismiss
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -27,6 +29,11 @@ struct FileReviewSessionView: View {
   @State private var didTruncate = false
   @State private var accessErrorCount = 0
   @State private var trashFailures: [String] = []
+  @State private var folderPendingTrash: URL?
+  @State private var folderActionInProgress = false
+  @State private var folderNoticeText: String?
+  @State private var folderActionErrorTitle = "Folder Couldn't Be Moved"
+  @State private var folderTrashErrorMessage: String?
   // Real in-Trash locations of everything this session moved, so "Show in Trash"
   // can select them in the actual Trash (the sandbox hides the ~/.Trash path).
   @State private var trashedURLs: [URL] = []
@@ -65,10 +72,10 @@ struct FileReviewSessionView: View {
       AppColor.background.ignoresSafeArea()
       if isScanning {
         scanningView
-      } else if items.isEmpty {
-        emptyView
       } else if showSummary {
         summaryView
+      } else if items.isEmpty {
+        emptyView
       } else {
         reviewView
       }
@@ -82,6 +89,12 @@ struct FileReviewSessionView: View {
     }
     .navigationTitle(category.title)
     .toolbar {
+      ToolbarItem(placement: .secondaryAction) {
+        if let current, !actionableFolders(for: current).isEmpty {
+          folderActionsMenu(for: current)
+            .disabled(folderActionInProgress || deleteInProgress)
+        }
+      }
       ToolbarItem(placement: .primaryAction) {
         // Re-sorting re-scans from scratch, which would discard in-progress
         // decisions (and leave them marked reviewed). Lock it once the user has
@@ -101,6 +114,23 @@ struct FileReviewSessionView: View {
       Button("OK", role: .cancel) {}
     } message: {
       Text(trashFailureMessage)
+    }
+    .confirmationDialog(
+      folderTrashConfirmationTitle,
+      isPresented: folderTrashConfirmationBinding,
+      presenting: folderPendingTrash
+    ) { folder in
+      Button("Move Folder to Trash", role: .destructive) {
+        performFolderTrash(folder)
+      }
+      Button("Cancel", role: .cancel) {}
+    } message: { folder in
+      Text("Everything inside “\(folder.lastPathComponent)” will move to the Trash, where it can still be restored.")
+    }
+    .alert(folderActionErrorTitle, isPresented: folderTrashErrorBinding) {
+      Button("OK", role: .cancel) {}
+    } message: {
+      Text(folderTrashErrorMessage ?? "The folder is still in place.")
     }
   }
 
@@ -167,12 +197,16 @@ struct FileReviewSessionView: View {
       .disabled(item.id != current?.id)
     Button("Move to Trash", role: .destructive) { if item.id == current?.id { applyDecision(.delete) } }
       .disabled(item.id != current?.id)
+    if !actionableFolders(for: item).isEmpty {
+      Divider()
+      folderActionMenus(for: item)
+    }
   }
 
   // Published to the menu bar (Review ▸ … and Edit ▸ Undo) while this review is
   // on screen. ⌘Z routes here; Keep/Delete disable on the summary screen.
   private var reviewActions: ReviewActions {
-    let reviewing = !isScanning && !items.isEmpty && !showSummary && !deleteInProgress
+    let reviewing = !isScanning && !items.isEmpty && !showSummary && !deleteInProgress && !folderActionInProgress
     return ReviewActions(
       keep: reviewing ? { applyDecision(.keep) } : nil,
       delete: reviewing ? { applyDecision(.delete) } : nil,
@@ -243,6 +277,13 @@ struct FileReviewSessionView: View {
         .padding(.top, 12)
       if didTruncate || accessErrorCount > 0 {
         scanWarningBanner
+          .padding(.horizontal, 24)
+      }
+      if let folderNoticeText {
+        Label(folderNoticeText, systemImage: "folder.badge.checkmark")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .frame(maxWidth: .infinity, alignment: .leading)
           .padding(.horizontal, 24)
       }
       if let current {
@@ -330,6 +371,11 @@ struct FileReviewSessionView: View {
       Button("Move to Trash") { applyDecision(.delete) }
       Button("Quick Look") { quickLookURL = item.url }
       Button("Reveal in Finder") { FinderActions.revealInFinder(item.url) }
+      if let nearestFolder = actionableFolders(for: item).first {
+        Button("Exclude \(nearestFolder.lastPathComponent) from reviews") {
+          excludeAndAdvancePastFolder(nearestFolder)
+        }
+      }
     }
     .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: index)
     .id(item.id)
@@ -549,6 +595,7 @@ struct FileReviewSessionView: View {
     scanTask?.cancel()
     isScanning = true
     let folders = folders
+    let excludedFolderPaths = excludedFolderPaths
     let category = category
     let limit = max(5, min(reviewLimit, 200))
     sessionMemoryOption = reviewMemoryOption
@@ -556,7 +603,14 @@ struct FileReviewSessionView: View {
     let reviewed = FileReviewHistory.reviewedPaths(memoryOption: memory)
     let sort = fileSortOption
     scanTask = Task.detached(priority: .userInitiated) {
-      let result = FileLibrary.scan(folders: folders, category: category, limit: limit, excluding: reviewed, sort: sort)
+      let result = FileLibrary.scan(
+        folders: folders,
+        category: category,
+        limit: limit,
+        excluding: reviewed,
+        excludedFolderPaths: excludedFolderPaths,
+        sort: sort
+      )
       if Task.isCancelled { return }
       await MainActor.run {
         items = result.items
@@ -570,6 +624,9 @@ struct FileReviewSessionView: View {
         resultMessage = nil
         resultIsWarning = false
         trashFailures = []
+        folderNoticeText = nil
+        folderActionErrorTitle = "Folder Couldn't Be Moved"
+        folderTrashErrorMessage = nil
         showSummary = false
         isScanning = false
       }
@@ -649,6 +706,157 @@ struct FileReviewSessionView: View {
         trashFailures = result.failed.map(\.name)
       }
     }
+  }
+
+  // MARK: - Folder-level actions
+
+  private func folderActionsMenu(for item: FileItem) -> some View {
+    Menu {
+      folderActionMenus(for: item)
+    } label: {
+      Label("Folder", systemImage: "folder")
+    }
+    .help("Keep or trash an enclosing folder as one unit")
+  }
+
+  @ViewBuilder
+  private func folderActionMenus(for item: FileItem) -> some View {
+    let candidates = actionableFolders(for: item)
+    Menu("Exclude from Reviews", systemImage: "folder.badge.minus") {
+      ForEach(candidates, id: \.path) { folder in
+        Button(folder.lastPathComponent) {
+          excludeAndAdvancePastFolder(folder)
+        }
+      }
+    }
+    Menu("Move Folder to Trash", systemImage: "trash") {
+      ForEach(candidates, id: \.path) { folder in
+        Button(folder.lastPathComponent, role: .destructive) {
+          folderPendingTrash = folder
+        }
+      }
+    }
+  }
+
+  private var folderTrashConfirmationTitle: String {
+    guard let folderPendingTrash else { return "Move Folder to Trash?" }
+    return "Move “\(folderPendingTrash.lastPathComponent)” to Trash?"
+  }
+
+  private var folderTrashConfirmationBinding: Binding<Bool> {
+    Binding(
+      get: { folderPendingTrash != nil },
+      set: { if !$0 { folderPendingTrash = nil } }
+    )
+  }
+
+  private var folderTrashErrorBinding: Binding<Bool> {
+    Binding(
+      get: { folderTrashErrorMessage != nil },
+      set: { if !$0 { folderTrashErrorMessage = nil } }
+    )
+  }
+
+  // Returns every enclosing subfolder up to, but never including, the most
+  // specific top-level folder the user granted. That prevents a file action from
+  // accidentally trashing a whole reviewed root such as Desktop or Downloads.
+  private func actionableFolders(for item: FileItem) -> [URL] {
+    let itemURL = item.url.standardizedFileURL
+    let matchingRoot = folders
+      .map(\.standardizedFileURL)
+      .filter { isInside(itemURL, folder: $0) }
+      .max { $0.path.count < $1.path.count }
+    guard let root = matchingRoot else { return [] }
+
+    var candidates: [URL] = []
+    var cursor = itemURL.deletingLastPathComponent()
+    while cursor.path != root.path, isInside(cursor, folder: root) {
+      candidates.append(cursor)
+      let parent = cursor.deletingLastPathComponent()
+      guard parent.path != cursor.path else { break }
+      cursor = parent
+    }
+    return candidates
+  }
+
+  private func excludeAndAdvancePastFolder(_ folder: URL) {
+    guard excludeFolder(folder) else {
+      folderActionErrorTitle = "Folder Couldn't Be Excluded"
+      folderTrashErrorMessage = "Choose a subfolder inside one of your top-level review folders."
+      return
+    }
+
+    let knownItems = Array(Set(items + kept + toDelete))
+    let removedBeforeCurrent = items.prefix(index).filter {
+      isInside($0.url, folder: folder)
+    }.count
+    for item in knownItems where isInside(item.url, folder: folder) {
+      FileReviewHistory.unmarkReviewed(item.url.path, memoryOption: sessionMemoryOption)
+    }
+    items.removeAll { isInside($0.url, folder: folder) }
+    kept.removeAll { isInside($0.url, folder: folder) }
+    toDelete.removeAll { isInside($0.url, folder: folder) }
+    index = max(index - removedBeforeCurrent, 0)
+    dragOffset = .zero
+    lastUndo = nil
+    folderNoticeText = "“\(folder.lastPathComponent)” is now excluded from every Files scan."
+    if items.isEmpty || index >= items.count {
+      resultMessage = "Excluded “\(folder.lastPathComponent)” from future reviews"
+      resultIsWarning = false
+      showSummary = true
+    }
+  }
+
+  private func performFolderTrash(_ folder: URL) {
+    guard !folderActionInProgress else { return }
+    folderPendingTrash = nil
+    folderActionInProgress = true
+    let knownItems = Array(Set(items + kept + toDelete))
+
+    Task {
+      let result = await Task.detached(priority: .userInitiated) {
+        FileLibrary.moveFolderToTrash(folder)
+      }.value
+
+      await MainActor.run {
+        folderActionInProgress = false
+        guard result.succeeded, let trashedURL = result.trashedURL else {
+          folderActionErrorTitle = "Folder Couldn't Be Moved"
+          folderTrashErrorMessage = result.errorMessage ?? "The folder is still in place."
+          return
+        }
+
+        let removedBeforeCurrent = items.prefix(index).filter {
+          isInside($0.url, folder: folder)
+        }.count
+        for item in knownItems where isInside(item.url, folder: folder) {
+          FileReviewHistory.unmarkReviewed(item.url.path, memoryOption: sessionMemoryOption)
+        }
+        items.removeAll { isInside($0.url, folder: folder) }
+        kept.removeAll { isInside($0.url, folder: folder) }
+        toDelete.removeAll { isInside($0.url, folder: folder) }
+        index = max(index - removedBeforeCurrent, 0)
+        dragOffset = .zero
+        lastUndo = nil
+        deletedCount += 1
+        totalDeletedCount += 1
+        totalDeletedBytes += Int(result.freedBytes)
+        trashedURLs.append(trashedURL)
+        folderNoticeText = "Moved “\(folder.lastPathComponent)” to Trash."
+        if items.isEmpty || index >= items.count {
+          resultMessage = "Moved “\(folder.lastPathComponent)” to Trash"
+          resultIsWarning = false
+          showSummary = true
+        }
+      }
+    }
+  }
+
+  private func isInside(_ candidate: URL, folder: URL) -> Bool {
+    let candidatePath = candidate.standardizedFileURL.path
+    let folderPath = folder.standardizedFileURL.path
+    return candidatePath == folderPath
+      || candidatePath.hasPrefix(folderPath == "/" ? "/" : folderPath + "/")
   }
 }
 

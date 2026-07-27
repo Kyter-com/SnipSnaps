@@ -75,6 +75,7 @@ struct MacScreenshotDemoView: View {
 private struct DemoHomeMode: Identifiable {
   let mode: ReviewMode
   let count: String
+  let total: String?
   var id: String { mode.id }
 }
 
@@ -87,16 +88,16 @@ private struct DemoHomeSection: Identifiable {
 private struct DemoPhotosHomeScreen: View {
   private let sections: [DemoHomeSection] = [
     DemoHomeSection(title: "Quick Clean", modes: [
-      DemoHomeMode(mode: .today, count: "20"),
-      DemoHomeMode(mode: .screenshots, count: "143"),
-      DemoHomeMode(mode: .oldScreenshots, count: "61"),
-      DemoHomeMode(mode: .random, count: "500+"),
+      DemoHomeMode(mode: .today, count: "20", total: "24"),
+      DemoHomeMode(mode: .screenshots, count: "143", total: "167"),
+      DemoHomeMode(mode: .oldScreenshots, count: "61", total: "75"),
+      DemoHomeMode(mode: .random, count: "500", total: "624"),
     ]),
     DemoHomeSection(title: "Space Savers", modes: [
-      DemoHomeMode(mode: .videos, count: "18"),
-      DemoHomeMode(mode: .screenRecordings, count: "7"),
-      DemoHomeMode(mode: .largePhotos, count: "42"),
-      DemoHomeMode(mode: .similar, count: "Scan"),
+      DemoHomeMode(mode: .videos, count: "18", total: "21"),
+      DemoHomeMode(mode: .screenRecordings, count: "7", total: "8"),
+      DemoHomeMode(mode: .largePhotos, count: "42", total: "48"),
+      DemoHomeMode(mode: .similar, count: "Scan", total: nil),
     ]),
     // The hero shows the two primary sections (8 categories). The window is a
     // fixed height shared by all Mac shots, so a third section overflowed and
@@ -113,13 +114,19 @@ private struct DemoPhotosHomeScreen: View {
               .foregroundStyle(.secondary)
               .textCase(.uppercase)
               .padding(.horizontal, 4)
-            VStack(spacing: 12) {
+            LazyVGrid(
+              columns: [
+                GridItem(.flexible(minimum: 0), spacing: 12, alignment: .top),
+                GridItem(.flexible(minimum: 0), spacing: 12, alignment: .top),
+              ],
+              alignment: .leading,
+              spacing: 12
+            ) {
               ForEach(section.modes) { item in
-                DemoCard(
-                  systemImage: item.mode.systemImage,
-                  title: item.mode.title,
-                  subtitle: item.mode.subtitle,
-                  trailing: item.count
+                DemoHomeCard(
+                  mode: item.mode,
+                  count: item.count,
+                  total: item.total
                 )
               }
             }
@@ -341,6 +348,10 @@ private struct DemoFilesScreen: View {
     Folder(name: "Documents", path: "/Users/johnappleseed/Documents"),
   ]
 
+  private let excludedFolders: [Folder] = [
+    Folder(name: "Finished Website", path: "/Users/johnappleseed/Desktop/Finished Website"),
+  ]
+
   // Every card is memory-on and matches the real FilesView: the prominent number
   // is the *not-reviewed* count (displayCount = notReviewed when memory is on),
   // and the summary is the "N not reviewed · M total" form with no thousands
@@ -358,7 +369,7 @@ private struct DemoFilesScreen: View {
     ScrollView {
       VStack(alignment: .leading, spacing: 20) {
         VStack(alignment: .leading, spacing: 10) {
-          Text("FOLDERS")
+          Text("REVIEWED FOLDERS")
             .font(.footnote.weight(.semibold))
             .foregroundStyle(.secondary)
           VStack(spacing: 8) {
@@ -390,10 +401,57 @@ private struct DemoFilesScreen: View {
         }
 
         VStack(alignment: .leading, spacing: 10) {
+          HStack {
+            Text("EXCLUDED FOLDERS")
+              .font(.footnote.weight(.semibold))
+              .foregroundStyle(.secondary)
+            Spacer()
+            Label("Exclude Subfolder", systemImage: "plus")
+              .font(.callout)
+              .foregroundStyle(AppColor.primary)
+          }
+
+          VStack(spacing: 8) {
+            ForEach(excludedFolders) { folder in
+              HStack(spacing: 12) {
+                Image(systemName: "folder.fill.badge.minus")
+                  .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                  Text(folder.name).font(.headline)
+                  Text(folder.path)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                }
+                Spacer()
+                Image(systemName: "arrow.up.forward.app")
+                  .foregroundStyle(.secondary)
+                Image(systemName: "arrow.uturn.backward.circle.fill")
+                  .foregroundStyle(AppColor.primary)
+              }
+              .padding(12)
+              .background(AppColor.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+          }
+
+          Text("Excluded folders stay on your Mac and are skipped by every Files count, review, and duplicate scan.")
+            .font(.footnote)
+            .foregroundStyle(.tertiary)
+        }
+
+        VStack(alignment: .leading, spacing: 10) {
           Text("REVIEW")
             .font(.footnote.weight(.semibold))
             .foregroundStyle(.secondary)
-          VStack(spacing: 12) {
+          LazyVGrid(
+            columns: [
+              GridItem(.flexible(minimum: 0), spacing: 12, alignment: .top),
+              GridItem(.flexible(minimum: 0), spacing: 12, alignment: .top),
+            ],
+            alignment: .leading,
+            spacing: 12
+          ) {
             ForEach(categories) { item in
               DemoCard(
                 systemImage: item.category.systemImage,
@@ -416,10 +474,79 @@ private struct DemoFilesScreen: View {
         // chrome — matching FilesView's Add Folder control.
         Button {
         } label: {
-          Label("Add Folder", systemImage: "plus")
+          Label("Manage Folders", systemImage: "plus")
         }
       }
     }
+  }
+}
+
+private struct DemoHomeCard: View {
+  let mode: ReviewMode
+  let count: String
+  let total: String?
+
+  private var reservesAccessorySpace: Bool {
+    mode.usesScreenshotSort || mode.usesVideoSort || mode == .similar
+  }
+
+  var body: some View {
+    ZStack(alignment: .bottomLeading) {
+      ZStack {
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
+          .fill(AppColor.card)
+
+        Text(count)
+          .font(.system(size: 72, weight: .heavy, design: .rounded))
+          .monospacedDigit()
+          .foregroundStyle(.quaternary)
+          .lineLimit(1)
+          .minimumScaleFactor(0.5)
+          .frame(maxWidth: .infinity, alignment: .trailing)
+          .padding(.trailing, 16)
+          .clipped()
+
+        HStack {
+          VStack(alignment: .leading, spacing: 4) {
+            Label(mode.title, systemImage: mode.systemImage)
+              .font(.headline)
+              .foregroundStyle(AppColor.text)
+            Text(mode.subtitle)
+              .font(.subheadline)
+              .foregroundStyle(.secondary)
+            if let total {
+              Text("\(count) not reviewed · \(total) total")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.tertiary)
+                .monospacedDigit()
+            }
+          }
+          .padding(.bottom, reservesAccessorySpace ? 30 : 0)
+          Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+      }
+
+      if reservesAccessorySpace {
+        Label(accessoryTitle, systemImage: accessorySystemImage)
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(.secondary)
+          .padding(.horizontal, 10)
+          .padding(.vertical, 6)
+          .background(AppColor.chip, in: Capsule(style: .continuous))
+          .padding(.leading, 16)
+          .padding(.bottom, 12)
+      }
+    }
+    .frame(minHeight: 112)
+  }
+
+  private var accessoryTitle: String {
+    mode.usesVideoSort ? "Largest" : "Recent"
+  }
+
+  private var accessorySystemImage: String {
+    mode.usesVideoSort ? "internaldrive" : "clock.arrow.circlepath"
   }
 }
 

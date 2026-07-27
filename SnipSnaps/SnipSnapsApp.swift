@@ -21,6 +21,9 @@ struct SnipSnapsApp: App {
   var body: some Scene {
     WindowGroup {
       ContentView()
+        .task {
+          await ReviewReminderScheduler.restoreIfEnabled()
+        }
         .onChange(of: scenePhase) { _, newPhase in
           switch newPhase {
           case .active:

@@ -48,9 +48,22 @@ enum FileLibrary {
     }
   }
 
-  static func scan(folders: [URL], category: FileReviewCategory, limit: Int, excluding reviewed: Set<String> = [], sort: FileSortOption = .largest) -> ScanResult {
+  static func scan(
+    folders: [URL],
+    category: FileReviewCategory,
+    limit: Int,
+    excluding reviewed: Set<String> = [],
+    excludedFolderPaths: Set<String> = [],
+    sort: FileSortOption = .largest
+  ) -> ScanResult {
     if category == .duplicates {
-      return duplicateRedundantCopies(folders: folders, excluding: reviewed, limit: limit, sort: sort)
+      return duplicateRedundantCopies(
+        folders: folders,
+        excluding: reviewed,
+        excludedFolderPaths: excludedFolderPaths,
+        limit: limit,
+        sort: sort
+      )
     }
 
     let oldCutoff = Calendar.current.date(byAdding: .day, value: -oldFileAgeDays, to: Date()) ?? .distantPast
@@ -61,6 +74,7 @@ enum FileLibrary {
     var accessErrorCount = 0
 
     folderLoop: for folder in folders {
+      guard !isExcluded(folder, excludedFolderPaths: excludedFolderPaths) else { continue }
       guard let (enumerator, errors) = enumerator(for: folder) else {
         accessErrorCount += 1
         continue
@@ -68,6 +82,10 @@ enum FileLibrary {
       defer { accessErrorCount += errors.count }
       for case let url as URL in enumerator {
         if Task.isCancelled { return .empty }
+        if isExcluded(url, excludedFolderPaths: excludedFolderPaths) {
+          enumerator.skipDescendants()
+          continue
+        }
         // Count every enumerated entry (files, directories, skipped placeholders)
         // so a directory-heavy or all-iCloud tree still trips the cap instead of
         // looping for a very long time without ever reaching it.
@@ -86,7 +104,11 @@ enum FileLibrary {
 
   // Single-pass tally for the category cards: total and not-yet-reviewed per
   // category (duplicates is scan-on-demand, so it is omitted here).
-  static func counts(folders: [URL], reviewedPaths reviewed: Set<String>) -> FileCountsResult {
+  static func counts(
+    folders: [URL],
+    reviewedPaths reviewed: Set<String>,
+    excludedFolderPaths: Set<String> = []
+  ) -> FileCountsResult {
     let oldCutoff = Calendar.current.date(byAdding: .day, value: -oldFileAgeDays, to: Date()) ?? .distantPast
     var total: [FileReviewCategory: Int] = [:]
     var fresh: [FileReviewCategory: Int] = [:]
@@ -96,6 +118,7 @@ enum FileLibrary {
     var accessErrorCount = 0
 
     folderLoop: for folder in folders {
+      guard !isExcluded(folder, excludedFolderPaths: excludedFolderPaths) else { continue }
       guard let (enumerator, errors) = enumerator(for: folder) else {
         accessErrorCount += 1
         continue
@@ -103,6 +126,10 @@ enum FileLibrary {
       defer { accessErrorCount += errors.count }
       for case let url as URL in enumerator {
         if Task.isCancelled { break folderLoop }
+        if isExcluded(url, excludedFolderPaths: excludedFolderPaths) {
+          enumerator.skipDescendants()
+          continue
+        }
         // Cap is global across all granted folders, not per-folder, so a labeled
         // break is required (a bare break would only end this folder's loop). Count
         // every enumerated entry so a directory-heavy tree still trips the cap.
@@ -134,13 +161,20 @@ enum FileLibrary {
   // Exact-content duplicates: bucket by size, hash only collision buckets, then
   // surface the redundant copies (every copy except the oldest "original" in
   // each identical group). Unique file sizes never get hashed.
-  static func duplicateRedundantCopies(folders: [URL], excluding reviewed: Set<String>, limit: Int, sort: FileSortOption = .largest) -> ScanResult {
+  static func duplicateRedundantCopies(
+    folders: [URL],
+    excluding reviewed: Set<String>,
+    excludedFolderPaths: Set<String> = [],
+    limit: Int,
+    sort: FileSortOption = .largest
+  ) -> ScanResult {
     var bySize: [Int64: [FileItem]] = [:]
     var seen = Set<String>()
     var examined = 0
     var truncated = false
     var accessErrorCount = 0
     folderLoop: for folder in folders {
+      guard !isExcluded(folder, excludedFolderPaths: excludedFolderPaths) else { continue }
       guard let (enumerator, errors) = enumerator(for: folder) else {
         accessErrorCount += 1
         continue
@@ -148,6 +182,10 @@ enum FileLibrary {
       defer { accessErrorCount += errors.count }
       for case let url as URL in enumerator {
         if Task.isCancelled { return .empty }
+        if isExcluded(url, excludedFolderPaths: excludedFolderPaths) {
+          enumerator.skipDescendants()
+          continue
+        }
         if examined >= maxFilesExamined { truncated = true; break folderLoop }
         examined += 1
         // Bucket by logical byte length, not allocated size: identical files on
@@ -206,6 +244,14 @@ enum FileLibrary {
     let trashedURLs: [URL]
   }
 
+  struct FolderTrashResult: Sendable {
+    let trashedURL: URL?
+    let freedBytes: Int64
+    let errorMessage: String?
+
+    var succeeded: Bool { trashedURL != nil && errorMessage == nil }
+  }
+
   static func moveToTrash(_ items: [FileItem]) -> TrashResult {
     let fm = FileManager.default
     var trashed = 0
@@ -224,6 +270,42 @@ enum FileLibrary {
       }
     }
     return TrashResult(trashed: trashed, freedBytes: freed, failed: failed, trashedURLs: trashedURLs)
+  }
+
+  static func moveFolderToTrash(_ folder: URL) -> FolderTrashResult {
+    let standardized = folder.standardizedFileURL
+    guard let values = try? standardized.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
+          values.isDirectory == true,
+          values.isSymbolicLink != true else {
+      return FolderTrashResult(
+        trashedURL: nil,
+        freedBytes: 0,
+        errorMessage: "The selected folder is no longer available."
+      )
+    }
+
+    var resultingURL: NSURL?
+    do {
+      try FileManager.default.trashItem(at: standardized, resultingItemURL: &resultingURL)
+      guard let trashedURL = resultingURL as URL? else {
+        return FolderTrashResult(
+          trashedURL: nil,
+          freedBytes: 0,
+          errorMessage: "macOS moved the folder but didn't return its Trash location."
+        )
+      }
+      return FolderTrashResult(
+        trashedURL: trashedURL,
+        freedBytes: allocatedSize(of: trashedURL),
+        errorMessage: nil
+      )
+    } catch {
+      return FolderTrashResult(
+        trashedURL: nil,
+        freedBytes: 0,
+        errorMessage: error.localizedDescription
+      )
+    }
   }
 
   // MARK: - Private
@@ -249,6 +331,39 @@ enum FileLibrary {
   // itself in duplicate detection so its only copy gets offered for trashing.
   private static func dedupKey(_ url: URL) -> String {
     url.standardizedFileURL.path
+  }
+
+  private static func isExcluded(_ url: URL, excludedFolderPaths: Set<String>) -> Bool {
+    guard !excludedFolderPaths.isEmpty else { return false }
+    let path = url.standardizedFileURL.path
+    return excludedFolderPaths.contains { excludedPath in
+      path == excludedPath || path.hasPrefix(excludedPath == "/" ? "/" : excludedPath + "/")
+    }
+  }
+
+  private static func allocatedSize(of folder: URL) -> Int64 {
+    let keys: [URLResourceKey] = [
+      .totalFileAllocatedSizeKey, .fileAllocatedSizeKey, .isRegularFileKey
+    ]
+    guard let enumerator = FileManager.default.enumerator(
+      at: folder,
+      includingPropertiesForKeys: keys,
+      options: [],
+      errorHandler: { _, _ in true }
+    ) else {
+      return 0
+    }
+
+    var total: Int64 = 0
+    for case let url as URL in enumerator {
+      if Task.isCancelled { break }
+      guard let values = try? url.resourceValues(forKeys: Set(keys)),
+            values.isRegularFile == true else {
+        continue
+      }
+      total += Int64(values.totalFileAllocatedSize ?? values.fileAllocatedSize ?? 0)
+    }
+    return total
   }
 
   private static func makeItem(_ url: URL) -> FileItem? {

@@ -8,6 +8,11 @@
 import Foundation
 import Photos
 import SwiftUI
+import UserNotifications
+
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct SettingsView: View {
   private let defaultReviewLimit = 20
@@ -23,9 +28,16 @@ struct SettingsView: View {
   @AppStorage("fileSortOption") private var fileSortOptionRawValue: String = FileSortOption.largest.rawValue
   #endif
   @AppStorage("reviewMemoryOption") private var reviewMemoryOptionRawValue: String = ReviewMemoryOption.thirtyDays.rawValue
+  @AppStorage("reviewReminderEnabled") private var reviewReminderEnabled = false
+  @AppStorage("reviewReminderHour") private var reviewReminderHour = ReviewReminderScheduler.defaultHour
+  @AppStorage("reviewReminderMinute") private var reviewReminderMinute = ReviewReminderScheduler.defaultMinute
   @AppStorage("totalDeletedCount") private var totalDeletedCount: Int = 0
   @AppStorage("totalDeletedBytes") private var totalDeletedBytes: Int = 0
   @State private var showResetLocalSettingsAlert = false
+  @State private var notificationStatus: UNAuthorizationStatus = .notDetermined
+  @State private var isUpdatingReminder = false
+  @State private var reminderErrorMessage: String?
+  @State private var reminderUpdateTask: Task<Void, Never>?
 
   var body: some View {
     #if os(macOS)
@@ -74,6 +86,40 @@ struct SettingsView: View {
           Text("Review size controls how many items appear in each session. Remember Reviewed skips items you've already reviewed so they don't show up again in any category.")
         }
 
+        Section {
+          Toggle("Daily Reminder", isOn: reminderEnabledBinding)
+            .disabled(isUpdatingReminder)
+
+          if reviewReminderEnabled {
+            DatePicker(
+              "Time",
+              selection: reminderTimeBinding,
+              displayedComponents: .hourAndMinute
+            )
+            .disabled(isUpdatingReminder)
+          }
+
+          if isUpdatingReminder {
+            HStack {
+              ProgressView()
+                .controlSize(.small)
+              Text("Updating reminder…")
+                .foregroundStyle(.secondary)
+            }
+          }
+        } header: {
+          Text("Reminders")
+        } footer: {
+          VStack(alignment: .leading, spacing: 6) {
+            Text(reminderFooterText)
+            if notificationStatus == .denied {
+              Button("Open Notification Settings") {
+                openNotificationSettings()
+              }
+            }
+          }
+        }
+
         Section("Lifetime Stats") {
           if totalDeletedCount == 0 {
             Text("No deletions yet.")
@@ -99,7 +145,7 @@ struct SettingsView: View {
           .settingsRowButtonStyle()
           .disabled(!hasLocalSettingsToReset)
         } footer: {
-          Text("Resets review size, Photos and Files sorting, review memory, and lifetime deleted stats on this device. This does not delete photos or files.")
+          Text("Resets review size, reminders, Photos and Files sorting, review memory, and lifetime deleted stats on this device. This does not delete photos or files.")
         }
 
         Section("Support") {
@@ -170,14 +216,70 @@ struct SettingsView: View {
         }
         Button("Cancel", role: .cancel) {}
       } message: {
-        Text("This clears your review size preference, Photos and Files sorting, review memory, and lifetime deleted stats on this device. Your photo library and files will not be changed.")
+        Text("This clears your review size preference, daily reminder, Photos and Files sorting, review memory, and lifetime deleted stats on this device. Your photo library and files will not be changed.")
       }
-      .onAppear { authStatus = PhotoLibrary.authorizationStatus() }
+      .alert("Reminder Couldn't Be Updated", isPresented: reminderErrorBinding) {
+        Button("OK", role: .cancel) {}
+      } message: {
+        Text(reminderErrorMessage ?? "Please try again.")
+      }
+      .onAppear {
+        authStatus = PhotoLibrary.authorizationStatus()
+        refreshNotificationStatus()
+      }
       .onChange(of: scenePhase) { _, newPhase in
         if newPhase == .active {
           authStatus = PhotoLibrary.authorizationStatus()
+          refreshNotificationStatus()
         }
       }
+      .onDisappear {
+        reminderUpdateTask?.cancel()
+        isUpdatingReminder = false
+      }
+  }
+
+  private var reminderEnabledBinding: Binding<Bool> {
+    Binding(
+      get: { reviewReminderEnabled },
+      set: { setReminderEnabled($0) }
+    )
+  }
+
+  private var reminderTimeBinding: Binding<Date> {
+    Binding(
+      get: {
+        Calendar.current.date(
+          bySettingHour: reviewReminderHour,
+          minute: reviewReminderMinute,
+          second: 0,
+          of: Date()
+        ) ?? Date()
+      },
+      set: { newValue in
+        let components = Calendar.current.dateComponents([.hour, .minute], from: newValue)
+        reviewReminderHour = components.hour ?? ReviewReminderScheduler.defaultHour
+        reviewReminderMinute = components.minute ?? ReviewReminderScheduler.defaultMinute
+        rescheduleReminder()
+      }
+    )
+  }
+
+  private var reminderErrorBinding: Binding<Bool> {
+    Binding(
+      get: { reminderErrorMessage != nil },
+      set: { if !$0 { reminderErrorMessage = nil } }
+    )
+  }
+
+  private var reminderFooterText: String {
+    if notificationStatus == .denied {
+      return "Notifications are off for SnipSnaps. Enable them in system settings to use a daily reminder."
+    }
+    if reviewReminderEnabled {
+      return "SnipSnaps will send one local notification each day at the time you choose."
+    }
+    return "Optionally get one local notification each day. Nothing is sent to a server."
   }
 
   private var photoAccessValueText: String {
@@ -219,6 +321,9 @@ struct SettingsView: View {
       || similarSortOptionRawValue != SimilarSortOption.recent.rawValue
       || hasFileSettingsToReset
       || reviewMemoryOptionRawValue != ReviewMemoryOption.thirtyDays.rawValue
+      || reviewReminderEnabled
+      || reviewReminderHour != ReviewReminderScheduler.defaultHour
+      || reviewReminderMinute != ReviewReminderScheduler.defaultMinute
       || PhotoReviewHistory.hasReviewedIdentifiers()
       || totalDeletedCount != 0
       || totalDeletedBytes != 0
@@ -302,12 +407,99 @@ struct SettingsView: View {
     fileSortOptionRawValue = FileSortOption.largest.rawValue
     #endif
     reviewMemoryOptionRawValue = ReviewMemoryOption.thirtyDays.rawValue
+    reviewReminderEnabled = false
+    reviewReminderHour = ReviewReminderScheduler.defaultHour
+    reviewReminderMinute = ReviewReminderScheduler.defaultMinute
+    reminderUpdateTask?.cancel()
+    isUpdatingReminder = false
+    ReviewReminderScheduler.cancel()
     PhotoReviewHistory.clearAll()
     #if os(macOS)
     FileReviewHistory.clearAll()
     #endif
     totalDeletedCount = 0
     totalDeletedBytes = 0
+  }
+
+  private func setReminderEnabled(_ enabled: Bool) {
+    reminderUpdateTask?.cancel()
+    guard enabled else {
+      isUpdatingReminder = false
+      reviewReminderEnabled = false
+      ReviewReminderScheduler.cancel()
+      return
+    }
+
+    isUpdatingReminder = true
+    let hour = reviewReminderHour
+    let minute = reviewReminderMinute
+    reminderUpdateTask = Task {
+      do {
+        let scheduled = try await ReviewReminderScheduler.requestAndSchedule(
+          hour: hour,
+          minute: minute
+        )
+        guard !Task.isCancelled else { return }
+        reviewReminderEnabled = scheduled
+        notificationStatus = await ReviewReminderScheduler.authorizationStatus()
+        if !scheduled {
+          reminderErrorMessage = "Notifications are disabled for SnipSnaps. You can enable them in system settings."
+        }
+      } catch is CancellationError {
+        return
+      } catch {
+        reviewReminderEnabled = false
+        reminderErrorMessage = error.localizedDescription
+      }
+      isUpdatingReminder = false
+    }
+  }
+
+  private func rescheduleReminder() {
+    guard reviewReminderEnabled else { return }
+    reminderUpdateTask?.cancel()
+    isUpdatingReminder = true
+    let hour = reviewReminderHour
+    let minute = reviewReminderMinute
+    reminderUpdateTask = Task {
+      do {
+        // A wheel-style time picker can publish several values in quick
+        // succession. Debounce them so only the settled time reaches the
+        // notification center and an older request cannot win a race.
+        try await Task.sleep(for: .milliseconds(250))
+        guard !Task.isCancelled else { return }
+        try await ReviewReminderScheduler.rescheduleIfEnabled(
+          hour: hour,
+          minute: minute
+        )
+        guard !Task.isCancelled else { return }
+      } catch is CancellationError {
+        return
+      } catch {
+        reminderErrorMessage = error.localizedDescription
+      }
+      isUpdatingReminder = false
+    }
+  }
+
+  private func refreshNotificationStatus() {
+    Task {
+      notificationStatus = await ReviewReminderScheduler.authorizationStatus()
+      if notificationStatus == .denied, reviewReminderEnabled {
+        reviewReminderEnabled = false
+        ReviewReminderScheduler.cancel()
+      }
+    }
+  }
+
+  private func openNotificationSettings() {
+    #if os(iOS)
+    guard let url = URL(string: UIApplication.openNotificationSettingsURLString) else { return }
+    openURL(url)
+    #elseif os(macOS)
+    guard let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") else { return }
+    openURL(url)
+    #endif
   }
 
   private func sendFeedback() {

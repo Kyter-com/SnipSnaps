@@ -25,14 +25,19 @@ enum FileReviewHistory {
       defer { sessionLock.unlock() }
       return sessionPaths
     }
-    return Set(filteredEntries(memoryOption: memoryOption).keys)
+    // Wait for any prior per-swipe writes on the serial queue before reading.
+    // Without this barrier, closing and immediately reopening a review could
+    // resurface files whose async "reviewed" write had not reached UserDefaults.
+    return persistQueue.sync {
+      Set(filteredEntries(memoryOption: memoryOption).keys)
+    }
   }
 
   static func hasReviewedPaths() -> Bool {
     sessionLock.lock()
     let hasSessionPaths = !sessionPaths.isEmpty
     sessionLock.unlock()
-    return hasSessionPaths || !persistentEntries().isEmpty
+    return hasSessionPaths || persistQueue.sync { !persistentEntries().isEmpty }
   }
 
   static func markReviewed(_ path: String, memoryOption: ReviewMemoryOption) {
@@ -74,7 +79,11 @@ enum FileReviewHistory {
     sessionLock.lock()
     sessionPaths.removeAll()
     sessionLock.unlock()
-    UserDefaults.standard.removeObject(forKey: storeKey)
+    // Order reset after every previously queued mark/unmark so an old async mark
+    // cannot finish later and resurrect history the user explicitly cleared.
+    persistQueue.sync {
+      UserDefaults.standard.removeObject(forKey: storeKey)
+    }
   }
 
   static func compact() {

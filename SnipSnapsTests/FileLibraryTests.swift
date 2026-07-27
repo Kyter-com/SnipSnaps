@@ -43,6 +43,74 @@ final class FileLibraryTests: XCTestCase {
     XCTAssertEqual(result.failed, [item])
   }
 
+  func testExcludedFolderIsSkippedByScansAndCounts() throws {
+    let root = try makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let project = root.appendingPathComponent("KeepThisProject", isDirectory: true)
+    try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+    try Data("project file".utf8).write(to: project.appendingPathComponent("source.swift"))
+
+    let looseFile = root.appendingPathComponent("review-me.txt")
+    try Data("loose file".utf8).write(to: looseFile)
+    let excluded = Set([project.standardizedFileURL.path])
+
+    let scan = FileLibrary.scan(
+      folders: [root],
+      category: .everything,
+      limit: 20,
+      excludedFolderPaths: excluded,
+      sort: .name
+    )
+    let counts = FileLibrary.counts(
+      folders: [root],
+      reviewedPaths: [],
+      excludedFolderPaths: excluded
+    )
+
+    XCTAssertEqual(scan.items.map(\.name), ["review-me.txt"])
+    XCTAssertEqual(counts.counts[.everything]?.total, 1)
+    XCTAssertEqual(counts.counts[.everything]?.notReviewed, 1)
+  }
+
+  func testPersistentReviewHistoryReadsWaitForQueuedWrites() {
+    FileReviewHistory.clearAll()
+    defer { FileReviewHistory.clearAll() }
+    let path = "/tmp/\(UUID().uuidString)"
+
+    FileReviewHistory.markReviewed(path, memoryOption: .forever)
+    XCTAssertTrue(FileReviewHistory.reviewedPaths(memoryOption: .forever).contains(path))
+
+    FileReviewHistory.unmarkReviewed(path, memoryOption: .forever)
+    XCTAssertFalse(FileReviewHistory.reviewedPaths(memoryOption: .forever).contains(path))
+
+    FileReviewHistory.markReviewed(path, memoryOption: .forever)
+    FileReviewHistory.clearAll()
+    XCTAssertFalse(FileReviewHistory.reviewedPaths(memoryOption: .forever).contains(path))
+  }
+
+  func testSimilarReviewHistoryReadsWaitForQueuedWrites() {
+    PhotoReviewHistory.clearAll()
+    defer { PhotoReviewHistory.clearAll() }
+    let identifier = UUID().uuidString
+
+    PhotoReviewHistory.markSimilarReviewed(identifier, memoryOption: .forever)
+    XCTAssertTrue(
+      PhotoReviewHistory.similarReviewedIdentifiers(memoryOption: .forever).contains(identifier)
+    )
+
+    PhotoReviewHistory.unmarkSimilarReviewed(identifier, memoryOption: .forever)
+    XCTAssertFalse(
+      PhotoReviewHistory.similarReviewedIdentifiers(memoryOption: .forever).contains(identifier)
+    )
+
+    PhotoReviewHistory.markSimilarReviewed(identifier, memoryOption: .forever)
+    PhotoReviewHistory.clearAll()
+    XCTAssertFalse(
+      PhotoReviewHistory.similarReviewedIdentifiers(memoryOption: .forever).contains(identifier)
+    )
+  }
+
   private func makeTemporaryDirectory() throws -> URL {
     let url = URL(fileURLWithPath: NSTemporaryDirectory())
       .appendingPathComponent(UUID().uuidString, isDirectory: true)

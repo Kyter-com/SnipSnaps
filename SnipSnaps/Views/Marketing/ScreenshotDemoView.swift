@@ -377,6 +377,14 @@ private struct ScreenshotSettingsDemo: View {
           Text("Review size controls how many items appear in each session. Remember Reviewed skips items you already chose for each review mode.")
         }
 
+        Section {
+          Toggle("Daily Reminder", isOn: .constant(false))
+        } header: {
+          Text("Reminders")
+        } footer: {
+          Text("Optionally get one local notification each day. Nothing is sent to a server.")
+        }
+
         Section("Lifetime Stats") {
           LabeledContent("Deleted photos", value: "184")
           LabeledContent("Space freed", value: "1.8 GB")
