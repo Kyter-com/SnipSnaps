@@ -84,7 +84,12 @@ Release-note text has one source of truth (Changesets) and is transformed into A
 
 ## Release Prep
 
-1. Review pending notes:
+The release commit must be the exact commit Xcode Cloud archives. Finish every
+repo mutation—release notes, version files, screenshot assets, metadata drafts,
+and build settings—before pushing it. App Store Connect updates made after the
+build processes do not require a follow-up git commit.
+
+1. Review and polish pending notes:
 
 ```sh
 npm run release:notes
@@ -104,15 +109,27 @@ This writes `docs/next-release-notes.md` before Changesets consumes the pending 
 op run --env-file <private-asc-env> -- npm run release:next-build -- --apply
 ```
 
-4. Commit the release files and push to the release branch used by Xcode Cloud or your archive workflow.
+4. Finish the App Store Connect staging work that does not require a processed
+   build: version strings, listing copy, categories, review notes, screenshots,
+   privacy, pricing/availability, and age rating. Verify the corresponding repo
+   drafts already match.
 
-5. After the build exists in App Store Connect, update TestFlight and App Store notes from pending changesets or `docs/next-release-notes.md`:
+5. Run tests, inspect `git diff`, then create and push one final release commit.
+   Do not commit anything else to the release branch until both Xcode Cloud
+   archives have been selected for the release.
+
+6. After the builds exist in App Store Connect, update TestFlight and App Store
+   notes from `docs/next-release-notes.md`. This command only changes App Store
+   Connect; it does not write repo files:
 
 ```sh
 op run --env-file <private-asc-env> -- npm run release:apply-notes -- --target both --confirm
 ```
 
-6. Tag the exact git commit that produced the Apple build:
+7. Attach the iOS and macOS builds produced from the final release commit,
+   validate both versions, and submit both for review.
+
+8. Tag the exact git commit that produced the Apple build:
 
 ```sh
 npm run release:tag -- --confirm
@@ -120,6 +137,15 @@ git push --tags
 ```
 
 Tags use `snipsnaps-ios@<marketing-version>+<build-number>`.
+
+### Xcode Cloud build numbers
+
+The iOS and macOS workflows share Xcode Cloud's run-number sequence, so two
+archives from the same git commit can have adjacent build numbers. Xcode Cloud
+may override the checked-in `CURRENT_PROJECT_VERSION`; that does not break the
+single-commit guarantee. Treat the marketing version and each build's
+`sourceCommit.commitSha` as the authoritative correlation, and pass an explicit
+`--tag` when the uploaded build number differs from the checked-in value.
 
 ## Backfill
 

@@ -2,20 +2,20 @@
   "_note": "Draft metadata for the macOS platform tab of the SHARED universal-purchase app record (com.kyter.SnipSnaps, ASC app id 6746975535). This is NOT a separate app. iOS/iPadOS metadata lives in app-store-connect.json. Not authoritative for release — ASC is the source of truth.",
   "platform": "MAC_OS",
   "name": "SnipSnaps",
-  "subtitle": "Clean up photos and files",
+  "subtitle": "Clean up your photo library",
   "bundleId": "com.kyter.SnipSnaps",
-  "versionString": "1.1.0",
+  "versionString": "1.2.0",
   "buildNumber": null,
   "primaryCategory": "PHOTO_AND_VIDEO",
   "secondaryCategory": "UTILITIES",
-  "_categoryNote": "Matches the established iOS store identity (Photo & Video primary). NOTE: the Mac binary's INFOPLIST_KEY_LSApplicationCategoryType is public.app-category.utilities (the Finder/Launchpad category), which disagrees with the Photo & Video store category. Both are allowed to differ, but consider aligning the Mac LSApplicationCategoryType to public.app-category.photography for consistency.",
-  "description": "SnipSnaps helps you clean up your Mac in quick, focused review sessions — both your photo library and the files piling up in your folders.\n\nPHOTOS\nSwipe through recent photos, screenshots, videos, screen recordings, large photos, Live Photos, bursts, photos from this day in past years, random shots, or similar-looking groups. Keep the shots that matter, mark the ones you do not need, and delete them when you are ready.\n\nFILES (Mac)\nPick a folder — Downloads, Desktop, Documents, or any folder you choose — and review what is taking up space. SnipSnaps surfaces everything, large files, old files you have not touched in months, screenshots, and duplicates. Anything you remove moves to the Trash, so it is always recoverable.\n\nUse SnipSnaps to:\n\n- Review your newest photos before clutter builds up\n- Clear old screenshots and screen recordings\n- Find similar-looking groups and keep the best shot\n- Clean out Downloads and other folders by size, age, or type\n- Move unwanted files to the Trash with a swipe or a keyboard shortcut\n- See how many photos and files, and how much storage, you have cleared\n\nSnipSnaps works entirely on your Mac. It asks for Photos access only so you can review and delete the photos you choose, and it only ever touches the folders you explicitly grant. Files you remove go to the Trash — nothing is deleted permanently without your confirmation, and nothing ever leaves your device.",
-  "promotionalText": "Clean up your photo library and clear out cluttered folders — review by size, age, or type and send the junk to the Trash.",
-  "keywords": "clean up mac,disk space,storage,delete files,downloads,duplicates,screenshots,photo cleaner",
-  "_keywordsNote": "100-character max, comma-separated, no spaces after commas. Current length is 91 chars. (Was 101 with ',declutter' appended, which ASC rejects; declutter removed to fit.)",
-  "whatsNew": "• SnipSnaps is now available on Mac.\n• Similar now scans your whole library and skips groups you have already reviewed, so each scan reaches new photos instead of showing you the same ones again.\n• Fixed Similar and Duplicates missing some photos that had no subtype, such as photos added by AirDrop or imported without camera information.\n• If you allow access to only selected photos, you can now add more photos or switch to full access at any time — from the Home screen, from Settings, or when a category runs out of photos to review.",
-  "_whatsNewNote": "For the FIRST macOS version, ASC treats the version as a new release and 'What's New' is optional/ignored — the description is what shows. Kept in sync with docs/next-release-notes.md so `npm run release:apply-notes:mac` can push it on later Mac updates.",
-  "reviewNotes": "SnipSnaps requires no account, no sign-in, and no network access — all processing happens locally on the Mac.\n\nThere are two review surfaces:\n\n1) PHOTOS — Grant Photos access when prompted. The app reads the local photo library to present review sessions. Deleting selected photos goes through the system Photos API, which shows a macOS confirmation dialog and moves the assets to Recently Deleted.\n\n2) FILES (macOS) — The app has NO file-system access until the reviewer explicitly grants a folder. Click the + (Add Folder) button and choose a folder such as Downloads or Desktop in the system open panel. SnipSnaps then lists files in that folder by category (Everything, Large, Old, Screenshots, Duplicates). Removing a file moves it to the Trash (fully recoverable) via a security-scoped bookmark limited to the granted folder — files are never deleted permanently and no other locations are accessed.\n\nTO EXERCISE DELETION DURING REVIEW:\n- Photos: ensure the review account's photo library has a few images.\n- Files: click + and add the Downloads or Desktop folder (or make a temporary folder with a few sample files), then swipe or use the keyboard shortcuts to review. Removed items appear in the Trash and can be restored.\n\nKEYBOARD: Left arrow = keep, Right arrow = remove, Delete = remove, Space = Quick Look, Cmd-Z = undo, Esc = exit review.\n\nApp Sandbox is enabled; entitlements are limited to user-selected file access, app-scoped bookmarks, and Photos-library access.",
+  "_categoryNote": "Matches the shared App Store identity (Photo & Video primary), and the Mac binary uses public.app-category.photography for Finder and Launchpad.",
+  "description": "SnipSnaps turns photo and file cleanup into quick, focused review sessions.\n\nPHOTOS\nReview recent photos, screenshots, videos, screen recordings, large photos, Live Photos, bursts, old favorites, On This Day memories, random shots, or similar-looking groups. Keep what matters, mark what does not, and confirm once at the end.\n\nFILES\nChoose Downloads, Desktop, Documents, or any folder you grant. Browse everything or focus on large, old, screenshot, or duplicate files. Exclude folders you want to protect. Swipe or use keyboard shortcuts to keep items or move them to the Trash; you can also move an enclosing folder to the Trash after confirmation. Trash actions stay recoverable.\n\nUse SnipSnaps to:\n\n- Clear photo clutter and compare similar-looking shots\n- Review Mac folders by size, age, or type\n- Exclude projects and other folders that should never be scanned\n- Move unwanted files or folders to the Trash\n- Set an optional daily cleanup reminder\n- Track how many items and how much storage you have cleared\n\nSnipSnaps requires no account and includes no ads or analytics. Everything happens on your Mac. Photo access is used only for the library you grant, and file access is limited to folders you explicitly choose.",
+  "promotionalText": "Clear photo and file clutter in quick, focused sessions. Review by size, age, or type, then move unwanted items to the Trash.",
+  "keywords": "disk space,storage,downloads,duplicates,screenshots,organizer,declutter,trash,folders,large files",
+  "_keywordsNote": "100-character max, comma-separated, no spaces after commas. Current length is 97 characters.",
+  "whatsNew": "• Set an optional daily reminder for a quick photo review at the time you choose.\n• On Mac, exclude folders from review and move an entire reviewed folder to the Trash with a recoverable action.\n• Enjoy roomier adaptive layouts on iPad and Mac.\n• Large Photo and Random reviews now stay responsive with more efficient loading and memory use.\n• Review progress is saved more reliably, with clearer VoiceOver context across photo and Similar reviews.",
+  "_whatsNewNote": "Kept in sync with docs/next-release-notes.md and applied to both iOS and macOS before submission.",
+  "reviewNotes": "SnipSnaps requires no account, sign-in, or network access. All processing happens locally on the Mac.\n\nPHOTOS\nGrant Photos access when prompted, choose a category, and review with swipes or the visible Keep and Delete controls. Confirmed photo deletions use the system Photos API and move items to Recently Deleted.\n\nFILES\n1. Open Files and click + to grant Downloads, Desktop, Documents, or a temporary test folder.\n2. Choose Everything, Large, Old, Screenshots, or Duplicates.\n3. Use the visible Folder menu during review to exclude an enclosing subfolder or move it to the Trash. Both actions require an eligible subfolder inside a granted review folder; a top-level granted folder is protected from this shortcut.\n4. Individual files marked for removal move to the Trash only after confirmation and remain recoverable.\n\nKeyboard shortcuts: Left arrow = keep, Right arrow or Delete = move to Trash, Space = Quick Look, Cmd-Z = undo, Esc = exit review.\n\nApp Sandbox is enabled. Entitlements are limited to user-selected file access, app-scoped bookmarks, and Photos-library access. The app contains no third-party SDKs, analytics, advertising, or networking.",
   "privacy": {
     "collectsData": false,
     "tracksUsers": false,
@@ -28,7 +28,17 @@
   "pricing": {
     "tier": "FREE",
     "inAppPurchases": false,
-    "_note": "App is free with no IAP. In ASC Pricing & Availability, confirm price = Free AND that the macOS platform is enabled/available in the intended territories (universal purchase does not auto-toggle Mac availability)."
+    "territoriesAvailable": 175,
+    "availableInNewTerritories": false,
+    "_note": "The universal app is free and available in every current App Store territory. Apple's public API does not allow changing the existing availableInNewTerritories flag."
+  },
+  "discoverability": {
+    "appTags": [],
+    "_note": "Apple has not generated app tags for this app; developers cannot create them directly."
+  },
+  "accessibility": {
+    "MAC": ["VoiceOver", "Reduce Motion", "Dark Interface", "Differentiate Without Color Alone"],
+    "_note": "Published in App Store Connect. Larger Text is not an accepted declaration field for the MAC device family."
   },
   "requiredAccountValues": {
     "supportUrl": "https://kyter.com/snipsnaps/support/",
@@ -44,9 +54,10 @@
     "files": ["01-home", "02-review", "03-similar", "04-files"]
   },
   "submissionGates": {
-    "appPrivacyLabel": "Data Not Collected (verified against source: no URLSession/analytics/SDKs/CloudKit)",
-    "ageRating": "Satisfied — the app-level 2026 age-rating questionnaire is complete and yields 4+ for all platforms (one shared appInfo; no separate macOS questionnaire).",
+    "appPrivacyLabel": "Data Not Collected (published and verified through asc web; no URLSession/analytics/SDKs/CloudKit found)",
+    "ageRating": "4+ with every content declaration set to NONE/false (shared app-level questionnaire).",
     "exportCompliance": "ITSAppUsesNonExemptEncryption=false in Info.plist should auto-clear the encryption question.",
-    "contentRights": "DOES_NOT_USE_THIRD_PARTY_CONTENT (uses only the user's own photos/files)."
+    "contentRights": "DOES_NOT_USE_THIRD_PARTY_CONTENT (uses only the user's own photos/files).",
+    "screenshots": "All four uploaded source checksums match the repository files."
   }
 }

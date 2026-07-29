@@ -2,15 +2,15 @@
   "name": "SnipSnaps",
   "subtitle": "Clean up your photo library",
   "bundleId": "com.kyter.SnipSnaps",
-  "versionString": "1.0.2",
-  "buildNumber": "38",
+  "versionString": "1.2.0",
+  "buildNumber": null,
   "primaryCategory": "PHOTO_AND_VIDEO",
   "secondaryCategory": "UTILITIES",
-  "description": "SnipSnaps helps you clean up your photo library in quick, focused review sessions.\n\nSwipe through recent photos, screenshots, videos, screen recordings, large photos, Live Photos, bursts, photos from this day in past years, random shots, or duplicate-looking photos. Keep the photos and videos that matter, mark the ones you do not need, and delete them when you are ready. Every session is designed to be fast enough for a spare minute and careful enough to avoid accidental cleanup.\n\nUse SnipSnaps to:\n\n- Review your newest photos before clutter builds up\n- Clear recent or older screenshots without digging through Photos\n- Sort videos by size, length, or date before reviewing\n- Review screen recordings, large photos, Live Photos, bursts, and older favorites\n- Revisit pictures from this day across past years\n- Find similar-looking groups and choose the best shot\n- See how many photos and videos, and how much storage you have cleared\n\nSnipSnaps works with your photo library on device. It asks for Photos access only so you can review and delete the photos and videos you choose.",
-  "promotionalText": "Clean up recent photos, videos, screenshots, screen recordings, library finds, and similar-looking shots in fast swipe sessions.",
-  "keywords": "photo cleaner,delete photos,storage,duplicates,screenshots,camera roll,photo organizer,cleanup",
-  "whatsNew": "• Added new review sections for quick cleanup, space savers, and library finds.\n• Added review modes for old screenshots, screen recordings, large photos, Live Photos, bursts, and old favorites.\n• Improved swipe smoothness with better photo caching and more reliable image loading during fast reviews.\n• Improved similar-photo scanning with progress, partial results, clearer comparison details, and smarter best-pick labels.\n• Refined similar-photo review to skip screenshots and improved Large Photos category counts.\n• Added review memory controls with not-reviewed and total counts for review modes.\n• Added a Home indicator while review counts are updating in the background.\n• Kept local review history and image caches bounded so app storage and memory stay controlled over time.\n• Refined Home count updating with a quieter indicator and more targeted refreshes.\n• Made Home load faster with cached counts, deferred heavy scans, and in-session metadata reuse.",
-  "reviewNotes": "SnipSnaps does not require an account or server access. To review the app, launch it and grant Photos permission when prompted. The app reads the user's photo library locally to present review sessions. When a user chooses to delete selected photos, iOS moves those assets to Recently Deleted through the system Photos API.",
+  "description": "SnipSnaps turns photo cleanup into quick, focused sessions you can finish.\n\nChoose a category—recent photos, screenshots, videos, screen recordings, large photos, Live Photos, bursts, old favorites, On This Day, random shots, or similar-looking groups. Swipe to keep what matters, mark what does not, and confirm once at the end before anything is deleted.\n\nUse SnipSnaps to:\n\n- Clear recent and older screenshots without digging through Photos\n- Review videos by size, length, or date\n- Find similar-looking groups and compare before choosing what to keep\n- Revisit photos from this day in past years\n- Set a session size and optional daily cleanup reminder\n- See how many items and how much storage you have cleared\n\nYour library stays on your device. SnipSnaps requires no account, includes no ads or analytics, and asks for Photos access only so you can review and delete the items you choose.",
+  "promotionalText": "Turn photo cleanup into quick swipe sessions. Review screenshots, videos, large photos, and similar shots—privately, on device.",
+  "keywords": "delete pictures,storage,duplicates,screenshots,camera roll,organizer,declutter,albums,similar,swipe",
+  "whatsNew": "• Set an optional daily reminder for a quick photo review at the time you choose.\n• On Mac, exclude folders from review and move an entire reviewed folder to the Trash with a recoverable action.\n• Enjoy roomier adaptive layouts on iPad and Mac.\n• Large Photo and Random reviews now stay responsive with more efficient loading and memory use.\n• Review progress is saved more reliably, with clearer VoiceOver context across photo and Similar reviews.",
+  "reviewNotes": "SnipSnaps requires no account, sign-in, or network access. All photo analysis happens on device.\n\nTo review the iPhone or iPad app:\n1. Launch SnipSnaps and grant Photos Full Access when prompted.\n2. Choose any category under Quick Clean, Space Savers, or Library Finds.\n3. Swipe right or tap the green checkmark to keep an item. Swipe left or tap the red X to mark it for deletion.\n4. Review the summary and confirm. iOS uses the system Photos deletion flow and moves deleted items to Recently Deleted.\n\nSimilar needs a library with related shots to produce groups. Daily Reminder can be tested in Settings; notifications are scheduled locally.\n\nThe app contains no third-party SDKs, analytics, advertising, or networking.",
   "privacy": {
     "collectsData": false,
     "tracksUsers": false,
@@ -19,14 +19,45 @@
     "networkingFoundInCode": false,
     "photoLibraryPurpose": "Accesses the user's photo library on device to display review sessions and delete only the photos and videos the user explicitly selects."
   },
+  "pricing": {
+    "tier": "FREE",
+    "inAppPurchases": false,
+    "territoriesAvailable": 175,
+    "availableInNewTerritories": false,
+    "_note": "The app is available in every current App Store territory. Apple's public API does not allow changing the existing availableInNewTerritories flag."
+  },
+  "discoverability": {
+    "appTags": [],
+    "_note": "Apple has not generated app tags for this app; developers cannot create them directly."
+  },
+  "accessibility": {
+    "IPHONE": ["VoiceOver", "Larger Text", "Reduce Motion", "Dark Interface", "Differentiate Without Color Alone"],
+    "IPAD": ["VoiceOver", "Larger Text", "Reduce Motion", "Dark Interface", "Differentiate Without Color Alone"],
+    "_note": "Published in App Store Connect and limited to claims supported by the source audit."
+  },
+  "screenshots": {
+    "iphoneSource": "marketing/app-store-screenshots/output/iphone-6.9/",
+    "iphoneCount": 6,
+    "iphoneDimensions": "1290x2796",
+    "ipadSource": "marketing/app-store-screenshots/output/ipad-13/",
+    "ipadCount": 6,
+    "ipadDimensions": "2064x2752",
+    "_note": "All uploaded source checksums match the repository files."
+  },
+  "submissionGates": {
+    "appPrivacyLabel": "Data Not Collected (published and verified through asc web)",
+    "ageRating": "4+ with every content declaration set to NONE/false",
+    "exportCompliance": "ITSAppUsesNonExemptEncryption=false",
+    "contentRights": "DOES_NOT_USE_THIRD_PARTY_CONTENT"
+  },
   "requiredAccountValues": {
     "supportUrl": "https://kyter.com/snipsnaps/support/",
     "marketingUrl": null,
     "privacyPolicyUrl": "https://kyter.com/snipsnaps/privacy/",
     "termsUrl": "https://kyter.com/snipsnaps/terms/",
-    "copyright": null,
+    "copyright": "2026 Kyter, LLC",
     "appStoreConnectKeyId": null,
     "appStoreConnectIssuerId": null,
-    "appStoreAppId": null
+    "appStoreAppId": "6746975535"
   }
 }
