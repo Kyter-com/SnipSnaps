@@ -25,23 +25,12 @@ When submitting a change:
 
 ## Contribution terms
 
-SnipSnaps is source available under its [proprietary license](LICENSE), not an
-open-source license. The license lets you inspect and build the project locally
-and fork it to prepare a contribution, but it does not let you reuse or
-redistribute the project.
+SnipSnaps is distributed under the [MIT License](LICENSE). By submitting a pull
+request or other contribution, you agree that your contribution will be
+licensed under the same terms.
 
-By submitting a pull request or other contribution, you agree to Section 3 of
-the license. In short:
-
-- you confirm that you have the right to submit the work;
-- you keep ownership of your original contribution; and
-- you grant Kyter, LLC the broad, permanent rights needed to use, modify,
-  sublicense, and commercialize the contribution, including in proprietary or
-  paid versions of SnipSnaps.
-
-Do not submit a contribution if you do not agree to those terms. If your
-employer or another organization owns the work, you must have its permission
-to contribute.
+You must own the work or have permission to submit it. If your employer or
+another organization owns the work, obtain its permission before contributing.
 
 ## Security
 

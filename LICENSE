@@ -1,70 +1,21 @@
-SnipSnaps Proprietary Source License
-Version 1.0 — July 28, 2026
+MIT License
 
-Copyright © 2025–2026 Kyter, LLC. All rights reserved.
+Copyright (c) 2025-2026 Kyter, LLC
 
-1. Reservation of rights
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-SnipSnaps and the source code, documentation, artwork, screenshots, and other
-materials in this repository (collectively, the "Software") are proprietary to
-Kyter, LLC ("Kyter"), except for third-party materials that are expressly
-identified as being provided under separate terms.
-
-Except for the limited permissions in Section 2 and rights required by the
-GitHub Terms of Service, no license or permission is granted to use, copy,
-modify, merge, publish, distribute, sublicense, sell, offer, host, or create
-derivative works from the Software. All rights not expressly granted are
-reserved by Kyter.
-
-2. Limited evaluation and contribution permission
-
-You may view the Software, fork this repository through GitHub, and download,
-build, run, and modify the Software locally only to:
-
-- evaluate SnipSnaps for personal, non-production purposes; or
-- prepare and submit a proposed contribution to the official SnipSnaps
-  repository at https://github.com/Kyter-com/SnipSnaps.
-
-You may not distribute a build or modified copy, use the Software or a
-derivative work in another product or service, make the Software available
-outside the GitHub contribution workflow, or use it for any commercial or
-production purpose without Kyter's prior written permission.
-
-These limited permissions terminate automatically if you breach these terms.
-
-3. Contributions
-
-By submitting code, documentation, artwork, or other material to the
-official SnipSnaps repository (a "Contribution"), you:
-
-- represent that you own the Contribution or have sufficient authority to
-  submit it under these terms;
-- retain ownership of your Contribution; and
-- grant Kyter a perpetual, worldwide, non-exclusive, irrevocable, royalty-free,
-  fully paid, transferable, and sublicensable license to use, reproduce,
-  modify, prepare derivative works of, publicly display, publicly perform,
-  distribute, make, have made, sell, offer for sale, import, commercialize, and
-  otherwise exploit the Contribution under any license or business model,
-  including as part of proprietary or paid products and services.
-
-To the extent any patent claim you control would necessarily be infringed by
-your Contribution alone or by its combination with SnipSnaps, you also grant
-Kyter a perpetual, worldwide, non-exclusive, irrevocable, royalty-free,
-transferable, and sublicensable license to make, have made, use, sell, offer
-for sale, import, and otherwise transfer the Contribution and that combination.
-
-Kyter is not required to accept, use, or distribute any Contribution.
-
-4. Names and branding
-
-No permission is granted to use the SnipSnaps or Kyter names, app icons, logos,
-trade dress, screenshots, or other branding except when referring accurately
-to the project or preparing a Contribution under Section 2.
-
-5. Disclaimer
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS
-FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT. TO THE MAXIMUM EXTENT
-PERMITTED BY LAW, KYTER WILL NOT BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
-LIABILITY ARISING FROM OR RELATED TO THE SOFTWARE OR ITS USE.
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

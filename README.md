@@ -19,7 +19,7 @@
   <img src="https://img.shields.io/badge/iOS-18.5%2B-000000?style=flat-square&logo=apple" alt="iOS 18.5 or later">
   <img src="https://img.shields.io/badge/macOS-15%2B-000000?style=flat-square&logo=apple" alt="macOS 15 or later">
   <img src="https://img.shields.io/badge/Privacy-On--device-167C80?style=flat-square&logo=icloud&logoColor=white" alt="On-device privacy">
-  <img src="https://img.shields.io/badge/License-Source_available-5C2D91?style=flat-square" alt="Source-available proprietary license">
+  <img src="https://img.shields.io/badge/License-MIT-yellow?style=flat-square" alt="MIT license">
 </p>
 
 <p align="center">
@@ -88,7 +88,7 @@ For security-sensitive reports, use the contact path on the [support page](https
 
 ## License
 
-SnipSnaps is **source available, not open source**. You may inspect the code, build it locally for evaluation, and fork it to propose contributions. You may not reuse, redistribute, or ship the code or its assets without written permission from Kyter, LLC. See the [license](LICENSE) for the complete terms.
+SnipSnaps is available under the [MIT License](LICENSE).
 
 ---
 
