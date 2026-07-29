@@ -19,6 +19,7 @@
   <img src="https://img.shields.io/badge/iOS-18.5%2B-000000?style=flat-square&logo=apple" alt="iOS 18.5 or later">
   <img src="https://img.shields.io/badge/macOS-15%2B-000000?style=flat-square&logo=apple" alt="macOS 15 or later">
   <img src="https://img.shields.io/badge/Privacy-On--device-167C80?style=flat-square&logo=icloud&logoColor=white" alt="On-device privacy">
+  <img src="https://img.shields.io/badge/License-Source_available-5C2D91?style=flat-square" alt="Source-available proprietary license">
 </p>
 
 <p align="center">
@@ -27,9 +28,17 @@
   <a href="https://kyter.com/snipsnaps/privacy/">Privacy</a>
   ·
   <a href="CHANGELOG.md">Changelog</a>
+  ·
+  <a href="LICENSE">License</a>
 </p>
 
-![SnipSnaps on Mac](.github/assets/mac-home.jpg)
+<p align="center">
+  <img src=".github/assets/iphone-home.jpg" width="31%" alt="Browse photo cleanup categories in SnipSnaps">
+  &nbsp;
+  <img src=".github/assets/iphone-review.jpg" width="31%" alt="Review a photo with swipe controls in SnipSnaps">
+  &nbsp;
+  <img src=".github/assets/iphone-similar.jpg" width="31%" alt="Compare similar photos in SnipSnaps">
+</p>
 
 SnipSnaps turns cleanup into small sessions you can finish. Choose a category, keep what matters, mark what does not, and confirm once at the end.
 
@@ -43,15 +52,9 @@ The app is free, requires no account, and keeps its work on your device. There a
 - **Recoverable removal** — photos go through the system Photos deletion flow; Mac files move to the Trash.
 - **Local by design** — your library is processed on device without an account or server.
 
-## See it in action
+## SnipSnaps on Mac
 
-<p align="center">
-  <img src=".github/assets/iphone-home.jpg" width="31%" alt="Browse photo cleanup categories in SnipSnaps">
-  &nbsp;
-  <img src=".github/assets/iphone-review.jpg" width="31%" alt="Review a photo with swipe controls in SnipSnaps">
-  &nbsp;
-  <img src=".github/assets/iphone-similar.jpg" width="31%" alt="Compare similar photos in SnipSnaps">
-</p>
+![SnipSnaps on Mac](.github/assets/mac-home.jpg)
 
 On macOS, SnipSnaps also helps clear Downloads, Desktop, Documents, or any other folder you choose. Access is limited to the folders you grant, and removed files stay recoverable in the Trash.
 
@@ -79,9 +82,13 @@ Select the `SnipSnaps` scheme in Xcode, choose an iPhone, iPad, or Mac destinati
 
 ## Contributing
 
-Bug reports, feature ideas, and focused pull requests are welcome. Please open an issue before a large change so the approach can be discussed. Include tests when practical, and add a Changeset for user-facing changes.
+Bug reports, feature ideas, and focused pull requests are welcome. Please read the [contribution guide](CONTRIBUTING.md) and open an issue before a large change so the approach can be discussed.
 
 For security-sensitive reports, use the contact path on the [support page](https://kyter.com/snipsnaps/support/) instead of opening a public issue.
+
+## License
+
+SnipSnaps is **source available, not open source**. You may inspect the code, build it locally for evaluation, and fork it to propose contributions. You may not reuse, redistribute, or ship the code or its assets without written permission from Kyter, LLC. See the [license](LICENSE) for the complete terms.
 
 ---
 
