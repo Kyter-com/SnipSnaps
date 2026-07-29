@@ -200,6 +200,47 @@ final class ScreenshotCaptureTests: XCTestCase {
     sleep(1)
 
     // ---- Settings ------------------------------------------------------
+    navigateToSettingsAndCapture(in: app)
+  }
+
+  /// Focused path for refreshing the Settings marketing slide without driving
+  /// every photo-review state first. It still launches the production app,
+  /// handles the real Photos permission dialog, and verifies navigation before
+  /// saving so a missed tab tap cannot be mislabeled as Settings.
+  @MainActor
+  func testCaptureSettingsScreen() throws {
+    let app = XCUIApplication()
+    app.launch()
+
+    let homeTitle = app.staticTexts["SnipSnaps"].firstMatch
+    _ = homeTitle.waitForExistence(timeout: 12)
+
+    let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+    let enableButton = app.buttons["Enable Photo Access"].firstMatch
+    for _ in 0..<15 {
+      let exactAllow = springboard.buttons["Allow Full Access"].firstMatch
+      let fallbackAllow = springboard.buttons.matching(
+        NSPredicate(format: "label CONTAINS[c] 'Full Access' OR label BEGINSWITH[c] 'Allow'")
+      ).firstMatch
+      let allow = exactAllow.exists ? exactAllow : fallbackAllow
+      if allow.exists {
+        allow.tap()
+        break
+      }
+      if enableButton.exists {
+        enableButton.tap()
+      }
+      sleep(1)
+    }
+    sleep(2)
+
+    navigateToSettingsAndCapture(in: app)
+  }
+
+  // MARK: - Helpers
+
+  @MainActor
+  private func navigateToSettingsAndCapture(in app: XCUIApplication) {
     // iPhone shows the tabs in a bottom tab bar; on iPad the same TabView
     // renders as a floating tab bar at the top that isn't exposed under
     // `tabBars`, so fall back to a plain button query for the "Settings" tab.
@@ -212,17 +253,20 @@ final class ScreenshotCaptureTests: XCTestCase {
         settingsButton.tap()
       }
     }
-    // Settle only once the Settings screen's title is actually on screen, so we
-    // never capture the Home list if the tap missed.
-    _ = app.navigationBars["Settings"].firstMatch.waitForExistence(timeout: 4)
+
+    let settingsTitle = app.navigationBars["Settings"].firstMatch
+    XCTAssertTrue(
+      settingsTitle.waitForExistence(timeout: 4),
+      "Settings must be visible before capturing 06-settings"
+    )
+    guard settingsTitle.exists else { return }
     sleep(1)
     capture("06-settings")
   }
 
-  // MARK: - Helpers
-
   /// Take a full-screen screenshot and attach it with a stable name so the
   /// host extraction script can find it inside the xcresult bundle.
+  @MainActor
   private func capture(_ name: String) {
     let screenshot = XCUIScreen.main.screenshot()
     let attachment = XCTAttachment(screenshot: screenshot)

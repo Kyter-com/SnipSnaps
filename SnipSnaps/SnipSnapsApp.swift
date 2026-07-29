@@ -29,7 +29,7 @@ struct SnipSnapsApp: App {
           case .active:
             PhotoReviewHistory.compactStoredHistory()
           case .background:
-            PhotoReviewHistory.compactStoredHistory()
+            PhotoReviewHistory.flushStoredHistory()
             PhotoLibrary.clearMemoryCaches()
           case .inactive:
             break

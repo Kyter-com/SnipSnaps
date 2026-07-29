@@ -111,6 +111,83 @@ final class FileLibraryTests: XCTestCase {
     )
   }
 
+  func testSharedPhotoReviewHistoryReadsWaitForQueuedWrites() {
+    PhotoReviewHistory.clearAll()
+    defer { PhotoReviewHistory.clearAll() }
+    let identifier = UUID().uuidString
+
+    PhotoReviewHistory.markReviewedIdentifier(identifier, for: .today, memoryOption: .forever)
+    XCTAssertTrue(
+      PhotoReviewHistory.reviewedIdentifiers(for: .today, memoryOption: .forever).contains(identifier)
+    )
+
+    PhotoReviewHistory.unmarkReviewedIdentifier(identifier, for: .today, memoryOption: .forever)
+    XCTAssertFalse(
+      PhotoReviewHistory.reviewedIdentifiers(for: .today, memoryOption: .forever).contains(identifier)
+    )
+
+    PhotoReviewHistory.markReviewedIdentifier(identifier, for: .today, memoryOption: .forever)
+    PhotoReviewHistory.clearAll()
+    XCTAssertFalse(
+      PhotoReviewHistory.reviewedIdentifiers(for: .today, memoryOption: .forever).contains(identifier)
+    )
+  }
+
+  func testPhotoReviewHistoryFlushPersistsQueuedMutations() {
+    PhotoReviewHistory.clearAll()
+    defer { PhotoReviewHistory.clearAll() }
+    let sharedIdentifier = UUID().uuidString
+    let similarIdentifier = UUID().uuidString
+
+    PhotoReviewHistory.markReviewedIdentifier(
+      sharedIdentifier,
+      for: .today,
+      memoryOption: .forever
+    )
+    PhotoReviewHistory.markSimilarReviewed(similarIdentifier, memoryOption: .forever)
+    PhotoReviewHistory.flushStoredHistory()
+
+    XCTAssertNotNil(
+      UserDefaults.standard.dictionary(forKey: "reviewedAssetIdentifiers.shared")?[sharedIdentifier]
+    )
+    XCTAssertNotNil(
+      UserDefaults.standard.dictionary(forKey: "reviewedAssetIdentifiers.similar")?[similarIdentifier]
+    )
+
+    PhotoReviewHistory.unmarkReviewedIdentifier(
+      sharedIdentifier,
+      for: .today,
+      memoryOption: .forever
+    )
+    PhotoReviewHistory.unmarkSimilarReviewed(similarIdentifier, memoryOption: .forever)
+    PhotoReviewHistory.flushStoredHistory()
+
+    XCTAssertNil(
+      UserDefaults.standard.dictionary(forKey: "reviewedAssetIdentifiers.shared")?[sharedIdentifier]
+    )
+    XCTAssertNil(
+      UserDefaults.standard.dictionary(forKey: "reviewedAssetIdentifiers.similar")?[similarIdentifier]
+    )
+  }
+
+  func testPhotoReviewHistoryClearInvalidatesScheduledWrites() {
+    PhotoReviewHistory.clearAll()
+    defer { PhotoReviewHistory.clearAll() }
+
+    PhotoReviewHistory.markReviewedIdentifier(
+      UUID().uuidString,
+      for: .today,
+      memoryOption: .forever
+    )
+    PhotoReviewHistory.markSimilarReviewed(UUID().uuidString, memoryOption: .forever)
+    PhotoReviewHistory.clearAll()
+
+    Thread.sleep(forTimeInterval: 0.4)
+
+    XCTAssertNil(UserDefaults.standard.object(forKey: "reviewedAssetIdentifiers.shared"))
+    XCTAssertNil(UserDefaults.standard.object(forKey: "reviewedAssetIdentifiers.similar"))
+  }
+
   private func makeTemporaryDirectory() throws -> URL {
     let url = URL(fileURLWithPath: NSTemporaryDirectory())
       .appendingPathComponent(UUID().uuidString, isDirectory: true)

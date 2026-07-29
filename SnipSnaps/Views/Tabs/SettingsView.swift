@@ -83,7 +83,7 @@ struct SettingsView: View {
         } header: {
           Text("Review")
         } footer: {
-          Text("Review size controls how many items appear in each session. Remember Reviewed skips items you've already reviewed so they don't show up again in any category.")
+          Text(reviewSettingsFooterText)
         }
 
         Section {
@@ -280,6 +280,14 @@ struct SettingsView: View {
       return "SnipSnaps will send one local notification each day at the time you choose."
     }
     return "Optionally get one local notification each day. Nothing is sent to a server."
+  }
+
+  private var reviewSettingsFooterText: String {
+    #if os(macOS)
+    return "Review Size controls each photo or file session; Similar uses up to 60 groups. Remember Reviewed keeps handled cleanup items out of view for the chosen time. Similar is tracked separately, while On This Day always resurfaces memories."
+    #else
+    return "Review Size controls each photo session; Similar uses up to 60 groups. Remember Reviewed keeps handled cleanup items out of view for the chosen time. Similar is tracked separately, while On This Day always resurfaces memories."
+    #endif
   }
 
   private var photoAccessValueText: String {

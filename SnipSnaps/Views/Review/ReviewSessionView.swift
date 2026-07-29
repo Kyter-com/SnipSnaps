@@ -22,7 +22,6 @@ import AppKit
 typealias PlatformImage = NSImage
 #endif
 
-#if os(macOS)
 // A concise, fetch-free VoiceOver label for a review card (media type + capture date).
 private extension PHAsset {
   var reviewAccessibilityLabel: String {
@@ -41,7 +40,6 @@ private extension PHAsset {
     return parts.joined(separator: ", ")
   }
 }
-#endif
 
 enum PhotoDecision {
   case keep
@@ -185,6 +183,7 @@ struct ReviewSessionView: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var authStatus = PhotoLibrary.authorizationStatus()
   @State private var isLoading = true
+  @State private var loadTask: Task<Void, Never>?
   @State private var assets: [PHAsset] = []
   @State private var currentIndex = 0
   @State private var keptAssets: [PHAsset] = []
@@ -359,6 +358,7 @@ struct ReviewSessionView: View {
     .toolbar(.hidden, for: .tabBar)
     #endif
     .onAppear { loadAssets() }
+    .onDisappear { loadTask?.cancel() }
     .onChange(of: currentIndex) { _, _ in
       updateCaching()
       refreshCurrentPhotoDetails()
@@ -531,13 +531,11 @@ struct ReviewSessionView: View {
       .onTapGesture {
         showMetadataSheet = true
       }
-      #if os(macOS)
-      // VoiceOver: label the otherwise-unlabeled photo and expose its tap (Details)
-      // as a rotor action. Keep/Delete stay on the labeled decision buttons.
+      // VoiceOver: label the otherwise-unlabeled photo and expose its tap
+      // (Details) as a rotor action. Keep/Delete stay on the decision buttons.
       .accessibilityElement(children: .ignore)
       .accessibilityLabel(asset.reviewAccessibilityLabel)
       .accessibilityAction(named: "Details") { showMetadataSheet = true }
-      #endif
       .gesture(
         DragGesture(minimumDistance: 4)
           .updating($gestureOffset) { value, state, _ in
@@ -766,8 +764,18 @@ struct ReviewSessionView: View {
   }
 
   private var loadingView: some View {
-    ProgressView()
-      .controlSize(.large)
+    VStack(spacing: 12) {
+      ProgressView()
+        .controlSize(.large)
+      Text("Preparing \(mode.title)")
+        .font(.headline)
+      Text("Finding \(assetPluralName) for your review…")
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
+    }
+    .multilineTextAlignment(.center)
+    .padding(24)
+    .accessibilityElement(children: .combine)
   }
 
   private var emptyView: some View {
@@ -801,21 +809,40 @@ struct ReviewSessionView: View {
   }
 
   private func loadAssets() {
+    loadTask?.cancel()
     isLoading = true
-    Task {
+    loadTask = Task {
       let status = await PhotoLibrary.ensureAuthorization()
+      guard !Task.isCancelled else { return }
       await MainActor.run { authStatus = status }
       guard PhotoLibrary.canAccessPhotos(status) else {
-        await MainActor.run { isLoading = false }
+        await MainActor.run {
+          isLoading = false
+          loadTask = nil
+        }
         return
       }
-      let fetched = PhotoLibrary.fetchAssets(
-        for: mode,
-        limit: sessionLimit,
-        screenshotSort: screenshotSortOption,
-        videoSort: videoSortOption,
-        reviewMemory: reviewMemoryOption
-      )
+
+      let mode = mode
+      let sessionLimit = sessionLimit
+      let screenshotSortOption = screenshotSortOption
+      let videoSortOption = videoSortOption
+      let reviewMemoryOption = reviewMemoryOption
+      let worker = Task.detached(priority: .userInitiated) {
+        PhotoLibrary.fetchAssets(
+          for: mode,
+          limit: sessionLimit,
+          screenshotSort: screenshotSortOption,
+          videoSort: videoSortOption,
+          reviewMemory: reviewMemoryOption
+        )
+      }
+      let fetched = await withTaskCancellationHandler(operation: {
+        await worker.value
+      }, onCancel: {
+        worker.cancel()
+      })
+      guard !Task.isCancelled else { return }
       await MainActor.run {
         assets = fetched
         currentIndex = 0
@@ -826,6 +853,7 @@ struct ReviewSessionView: View {
         currentPhotoDetails = fetched.first.map(ReviewPhotoDetails.init)
         showSummary = fetched.isEmpty
         isLoading = false
+        loadTask = nil
       }
     }
   }
@@ -1396,6 +1424,9 @@ struct SimilarReviewSessionView: View {
           .buttonStyle(.plain)
           .interactiveCardHover()
           .id(asset.localIdentifier)
+          .accessibilityLabel(asset.reviewAccessibilityLabel)
+          .accessibilityValue(thumbnailAccessibilityValue(for: asset))
+          .accessibilityHint("Opens full-screen comparison")
         }
       }
       .padding(.horizontal, 2)
@@ -1416,6 +1447,22 @@ struct SimilarReviewSessionView: View {
     withAnimation(.snappy(duration: 0.25)) {
       proxy.scrollTo(id, anchor: .center)
     }
+  }
+
+  private func thumbnailAccessibilityValue(for asset: PHAsset) -> String {
+    var parts: [String] = []
+    if asset.localIdentifier == currentPhoto?.localIdentifier {
+      parts.append("Current photo")
+    }
+    switch decision(for: asset) {
+    case .keep:
+      parts.append("Kept")
+    case .delete:
+      parts.append("Marked for deletion")
+    case nil:
+      parts.append("Not reviewed")
+    }
+    return parts.joined(separator: ", ")
   }
 
   private var cardStack: some View {
@@ -1476,12 +1523,10 @@ struct SimilarReviewSessionView: View {
     .onTapGesture {
       metadataTarget = MetadataTarget(asset: asset, details: details(for: asset))
     }
-    #if os(macOS)
     // VoiceOver: label the photo and expose its tap (Details) as a rotor action.
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(asset.reviewAccessibilityLabel)
     .accessibilityAction(named: "Details") { metadataTarget = MetadataTarget(asset: asset, details: details(for: asset)) }
-    #endif
     .gesture(
       DragGesture(minimumDistance: 4)
         .updating($gestureOffset) { value, state, _ in

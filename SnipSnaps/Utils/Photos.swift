@@ -123,6 +123,17 @@ enum PhotoReviewHistory {
   private static let migrationLock = NSLock()
   nonisolated(unsafe) private static var sessionIdentifiers: Set<String> = []
   nonisolated(unsafe) private static var didMigrateLegacyStores = false
+  private static let persistentWriteDebounce: DispatchTimeInterval = .milliseconds(250)
+  // Persistent review history can contain thousands of identifiers. Keep a
+  // queue-confined cache so a swipe only mutates one dictionary entry instead
+  // of decoding and rewriting the entire UserDefaults payload. Synchronous
+  // reads act as a barrier behind queued marks/unmarks before a new review or
+  // count begins.
+  private static let sharedPersistQueue = DispatchQueue(
+    label: "com.kyter.SnipSnaps.PhotoReviewHistory.sharedPersist"
+  )
+  nonisolated(unsafe) private static var sharedPersistentCache: [String: TimeInterval]?
+  nonisolated(unsafe) private static var sharedPersistGeneration = 0
 
   // Similar review memory lives in its own namespace, separate from the shared
   // cross-mode store. Keeping it separate means (a) keeping one of two
@@ -138,6 +149,8 @@ enum PhotoReviewHistory {
   private static let similarPersistQueue = DispatchQueue(
     label: "com.kyter.SnipSnaps.PhotoReviewHistory.similarPersist"
   )
+  nonisolated(unsafe) private static var similarPersistentCache: [String: TimeInterval]?
+  nonisolated(unsafe) private static var similarPersistGeneration = 0
 
   static func supportsSkipping(for mode: ReviewMode) -> Bool {
     switch mode {
@@ -158,14 +171,28 @@ enum PhotoReviewHistory {
       return sessionReviewedIdentifiers()
     }
 
-    return Set(filteredPersistentEntries(memoryOption: memoryOption).keys)
+    return sharedPersistQueue.sync {
+      ensureSharedPersistentCacheOnQueue()
+      return Set(
+        filteredPersistentEntries(
+          sharedPersistentCache ?? [:],
+          memoryOption: memoryOption
+        ).keys
+      )
+    }
   }
 
   static func hasReviewedIdentifiers() -> Bool {
     !sessionReviewedIdentifiersAreEmpty()
-      || !persistentEntries().isEmpty
+      || sharedPersistQueue.sync {
+        ensureSharedPersistentCacheOnQueue()
+        return !(sharedPersistentCache?.isEmpty ?? true)
+      }
       || !similarSessionReviewedIdentifiersAreEmpty()
-      || similarPersistQueue.sync { !decodeEntries(forKey: similarKey).isEmpty }
+      || similarPersistQueue.sync {
+        ensureSimilarPersistentCacheOnQueue()
+        return !(similarPersistentCache?.isEmpty ?? true)
+      }
   }
 
   private static func similarSessionReviewedIdentifiersAreEmpty() -> Bool {
@@ -175,29 +202,49 @@ enum PhotoReviewHistory {
   }
 
   static func markReviewed(_ asset: PHAsset, for mode: ReviewMode, memoryOption: ReviewMemoryOption) {
+    markReviewedIdentifier(asset.localIdentifier, for: mode, memoryOption: memoryOption)
+  }
+
+  static func markReviewedIdentifier(
+    _ identifier: String,
+    for mode: ReviewMode,
+    memoryOption: ReviewMemoryOption
+  ) {
     guard supportsSkipping(for: mode) else { return }
     guard memoryOption != .never else { return }
     if memoryOption == .session {
-      insertSessionReviewedIdentifier(asset.localIdentifier)
+      insertSessionReviewedIdentifier(identifier)
       return
     }
 
-    var entries = persistentEntries()
-    entries[asset.localIdentifier] = Date().timeIntervalSince1970
-    storePersistentEntries(entries)
+    sharedPersistQueue.async {
+      ensureSharedPersistentCacheOnQueue()
+      sharedPersistentCache?[identifier] = Date().timeIntervalSince1970
+      scheduleSharedPersistOnQueue()
+    }
   }
 
   static func unmarkReviewed(_ asset: PHAsset, for mode: ReviewMode, memoryOption: ReviewMemoryOption) {
+    unmarkReviewedIdentifier(asset.localIdentifier, for: mode, memoryOption: memoryOption)
+  }
+
+  static func unmarkReviewedIdentifier(
+    _ identifier: String,
+    for mode: ReviewMode,
+    memoryOption: ReviewMemoryOption
+  ) {
     guard supportsSkipping(for: mode) else { return }
     guard memoryOption != .never else { return }
     if memoryOption == .session {
-      removeSessionReviewedIdentifier(asset.localIdentifier)
+      removeSessionReviewedIdentifier(identifier)
       return
     }
 
-    var entries = persistentEntries()
-    entries.removeValue(forKey: asset.localIdentifier)
-    storePersistentEntries(entries)
+    sharedPersistQueue.async {
+      ensureSharedPersistentCacheOnQueue()
+      sharedPersistentCache?.removeValue(forKey: identifier)
+      scheduleSharedPersistOnQueue()
+    }
   }
 
   // Similar mode reviews whole groups rather than single photos, and it does not
@@ -214,7 +261,13 @@ enum PhotoReviewHistory {
     // Barrier behind any prior per-swipe mark/unmark so a new scan cannot race
     // ahead of the async persistent write and resurface the group just reviewed.
     return similarPersistQueue.sync {
-      Set(filteredPersistentEntries(forKey: similarKey, memoryOption: memoryOption).keys)
+      ensureSimilarPersistentCacheOnQueue()
+      return Set(
+        filteredPersistentEntries(
+          similarPersistentCache ?? [:],
+          memoryOption: memoryOption
+        ).keys
+      )
     }
   }
 
@@ -232,9 +285,9 @@ enum PhotoReviewHistory {
     // Off the main actor: this fires on every keep/delete swipe and the read
     // path is already detached, so the write shouldn't block the swipe either.
     similarPersistQueue.async {
-      var entries = decodeEntries(forKey: similarKey)
-      entries[identifier] = Date().timeIntervalSince1970
-      storePersistentEntries(entries, forKey: similarKey)
+      ensureSimilarPersistentCacheOnQueue()
+      similarPersistentCache?[identifier] = Date().timeIntervalSince1970
+      scheduleSimilarPersistOnQueue()
     }
   }
 
@@ -247,38 +300,69 @@ enum PhotoReviewHistory {
       return
     }
     similarPersistQueue.async {
-      var entries = decodeEntries(forKey: similarKey)
-      entries.removeValue(forKey: identifier)
-      storePersistentEntries(entries, forKey: similarKey)
+      ensureSimilarPersistentCacheOnQueue()
+      similarPersistentCache?.removeValue(forKey: identifier)
+      scheduleSimilarPersistOnQueue()
     }
   }
 
   static func clearAll() {
     clearSessionReviewedIdentifiers()
-    UserDefaults.standard.removeObject(forKey: sharedKey)
+    // Wait behind queued shared-history writes so an older mark cannot recreate
+    // history after the user explicitly resets it.
+    sharedPersistQueue.sync {
+      sharedPersistGeneration &+= 1
+      sharedPersistentCache = [:]
+      UserDefaults.standard.removeObject(forKey: sharedKey)
+      for mode in ReviewMode.allCases where mode != .similar {
+        UserDefaults.standard.removeObject(forKey: key(for: mode))
+      }
+      clearLegacyModeKeys()
+      migrationLock.lock()
+      didMigrateLegacyStores = true
+      migrationLock.unlock()
+    }
     // Order reset after every queued Similar mark/unmark so a stale async mark
     // cannot complete later and recreate history the user explicitly cleared.
     similarPersistQueue.sync {
+      similarPersistGeneration &+= 1
+      similarPersistentCache = [:]
       UserDefaults.standard.removeObject(forKey: similarKey)
     }
     sessionLock.lock()
     similarSessionIdentifiers.removeAll()
     sessionLock.unlock()
-    for mode in ReviewMode.allCases {
-      UserDefaults.standard.removeObject(forKey: key(for: mode))
-    }
-    clearLegacyModeKeys()
-    migrationLock.lock()
-    didMigrateLegacyStores = true
-    migrationLock.unlock()
   }
 
   static func compactStoredHistory() {
     trimSessionReviewedIdentifiers()
-    storePersistentEntries(persistentEntries())
-    similarPersistQueue.sync {
-      storePersistentEntries(decodeEntries(forKey: similarKey), forKey: similarKey)
+    sharedPersistQueue.async {
+      sharedPersistGeneration &+= 1
+      persistSharedEntriesOnQueue()
     }
+    similarPersistQueue.async {
+      similarPersistGeneration &+= 1
+      persistSimilarEntriesOnQueue()
+    }
+    trimSimilarSessionReviewedIdentifiers()
+  }
+
+  // Scene backgrounding has a limited execution window, so commit the latest
+  // cache synchronously rather than waiting for the debounce timer to fire.
+  static func flushStoredHistory() {
+    trimSessionReviewedIdentifiers()
+    sharedPersistQueue.sync {
+      sharedPersistGeneration &+= 1
+      persistSharedEntriesOnQueue()
+    }
+    similarPersistQueue.sync {
+      similarPersistGeneration &+= 1
+      persistSimilarEntriesOnQueue()
+    }
+    trimSimilarSessionReviewedIdentifiers()
+  }
+
+  private static func trimSimilarSessionReviewedIdentifiers() {
     sessionLock.lock()
     while similarSessionIdentifiers.count > maxIdentifiers, let excess = similarSessionIdentifiers.first {
       similarSessionIdentifiers.remove(excess)
@@ -303,8 +387,10 @@ enum PhotoReviewHistory {
   // Callers (reviewedIdentifiers) handle .never and .session before reaching
   // here, so the only options that arrive are .forever (nil interval -> keep
   // everything) and the timed windows (keep entries newer than the cutoff).
-  private static func filteredPersistentEntries(memoryOption: ReviewMemoryOption) -> [String: TimeInterval] {
-    let entries = persistentEntries()
+  private static func filteredPersistentEntries(
+    _ entries: [String: TimeInterval],
+    memoryOption: ReviewMemoryOption
+  ) -> [String: TimeInterval] {
     guard let expirationInterval = memoryOption.expirationInterval, expirationInterval > 0 else {
       return entries
     }
@@ -313,17 +399,46 @@ enum PhotoReviewHistory {
     return entries.filter { $0.value >= cutoff }
   }
 
-  // Window filter for a specific store key. Unlike the shared variant it reads
-  // the key directly and does not run the legacy per-mode migration, which only
-  // ever applied to the shared store.
-  private static func filteredPersistentEntries(forKey key: String, memoryOption: ReviewMemoryOption) -> [String: TimeInterval] {
-    let entries = decodeEntries(forKey: key)
-    guard let expirationInterval = memoryOption.expirationInterval, expirationInterval > 0 else {
-      return entries
-    }
+  // These helpers are only called on their corresponding serial queues.
+  private static func ensureSharedPersistentCacheOnQueue() {
+    guard sharedPersistentCache == nil else { return }
+    sharedPersistentCache = normalizedPersistentEntries(persistentEntries())
+  }
 
-    let cutoff = Date().timeIntervalSince1970 - expirationInterval
-    return entries.filter { $0.value >= cutoff }
+  private static func ensureSimilarPersistentCacheOnQueue() {
+    guard similarPersistentCache == nil else { return }
+    similarPersistentCache = normalizedPersistentEntries(decodeEntries(forKey: similarKey))
+  }
+
+  private static func scheduleSharedPersistOnQueue() {
+    sharedPersistGeneration &+= 1
+    let generation = sharedPersistGeneration
+    sharedPersistQueue.asyncAfter(deadline: .now() + persistentWriteDebounce) {
+      guard generation == sharedPersistGeneration else { return }
+      persistSharedEntriesOnQueue()
+    }
+  }
+
+  private static func scheduleSimilarPersistOnQueue() {
+    similarPersistGeneration &+= 1
+    let generation = similarPersistGeneration
+    similarPersistQueue.asyncAfter(deadline: .now() + persistentWriteDebounce) {
+      guard generation == similarPersistGeneration else { return }
+      persistSimilarEntriesOnQueue()
+    }
+  }
+
+  private static func persistSharedEntriesOnQueue() {
+    ensureSharedPersistentCacheOnQueue()
+    sharedPersistentCache = storePersistentEntries(sharedPersistentCache ?? [:])
+  }
+
+  private static func persistSimilarEntriesOnQueue() {
+    ensureSimilarPersistentCacheOnQueue()
+    similarPersistentCache = storePersistentEntries(
+      similarPersistentCache ?? [:],
+      forKey: similarKey
+    )
   }
 
   private static func persistentEntries() -> [String: TimeInterval] {
@@ -380,31 +495,39 @@ enum PhotoReviewHistory {
     storePersistentEntries(merged)
   }
 
-  private static func compactedPersistentEntries(_ entries: [String: TimeInterval]) -> [String: TimeInterval] {
+  private static func normalizedPersistentEntries(
+    _ entries: [String: TimeInterval]
+  ) -> [String: TimeInterval] {
     let cutoff = Date().timeIntervalSince1970 - maxPersistentHistoryAge
-    return entries.filter { $0.value >= cutoff }
+    let compactedEntries = entries.filter { $0.value >= cutoff }
+    // Only pay for the O(n log n) sort + trim when actually over the cap; the
+    // common persistence pass stays well under maxIdentifiers and skips it.
+    guard compactedEntries.count > maxIdentifiers else {
+      return compactedEntries
+    }
+    let limitedEntries = compactedEntries.sorted { $0.value > $1.value }.prefix(maxIdentifiers)
+    return Dictionary(uniqueKeysWithValues: limitedEntries.map { ($0.key, $0.value) })
   }
 
-  private static func storePersistentEntries(_ entries: [String: TimeInterval]) {
+  @discardableResult
+  private static func storePersistentEntries(
+    _ entries: [String: TimeInterval]
+  ) -> [String: TimeInterval] {
     storePersistentEntries(entries, forKey: sharedKey)
   }
 
-  private static func storePersistentEntries(_ entries: [String: TimeInterval], forKey key: String) {
-    let compactedEntries = compactedPersistentEntries(entries)
-    guard !compactedEntries.isEmpty else {
+  @discardableResult
+  private static func storePersistentEntries(
+    _ entries: [String: TimeInterval],
+    forKey key: String
+  ) -> [String: TimeInterval] {
+    let dictionary = normalizedPersistentEntries(entries)
+    guard !dictionary.isEmpty else {
       UserDefaults.standard.removeObject(forKey: key)
-      return
-    }
-    // Only pay for the O(n log n) sort + trim when actually over the cap; the
-    // common per-swipe write stays well under maxIdentifiers and skips it.
-    let dictionary: [String: TimeInterval]
-    if compactedEntries.count > maxIdentifiers {
-      let limitedEntries = compactedEntries.sorted { $0.value > $1.value }.prefix(maxIdentifiers)
-      dictionary = Dictionary(uniqueKeysWithValues: limitedEntries.map { ($0.key, $0.value) })
-    } else {
-      dictionary = compactedEntries
+      return [:]
     }
     UserDefaults.standard.set(dictionary, forKey: key)
+    return dictionary
   }
 
   private static func sessionReviewedIdentifiers() -> Set<String> {
@@ -1385,19 +1508,34 @@ enum PhotoLibrary {
     excluding reviewedIdentifiers: Set<String>
   ) -> [PHAsset] {
     let total = result.count
-    guard total > 0 else { return [] }
+    guard total > 0, limit > 0 else { return [] }
 
-    var eligibleAssets: [PHAsset] = []
-    eligibleAssets.reserveCapacity(total)
+    // Reservoir sampling gives every eligible asset an equal chance while
+    // retaining only the requested session size. The previous implementation
+    // materialized the entire library before shuffling it, which could briefly
+    // retain tens of thousands of PHAsset objects for a 20-photo session.
+    var sampledAssets: [PHAsset] = []
+    sampledAssets.reserveCapacity(min(total, limit))
+    var eligibleCount = 0
     for index in 0..<total {
+      guard !Task.isCancelled else { return [] }
       let asset = result.object(at: index)
       guard !reviewedIdentifiers.contains(asset.localIdentifier) else { continue }
-      eligibleAssets.append(asset)
+      eligibleCount += 1
+
+      if sampledAssets.count < limit {
+        sampledAssets.append(asset)
+        continue
+      }
+
+      let replacementIndex = Int.random(in: 0..<eligibleCount)
+      if replacementIndex < limit {
+        sampledAssets[replacementIndex] = asset
+      }
     }
 
-    guard !eligibleAssets.isEmpty else { return [] }
-    eligibleAssets.shuffle()
-    return Array(eligibleAssets.prefix(limit))
+    sampledAssets.shuffle()
+    return sampledAssets
   }
 
   private static func counts(
