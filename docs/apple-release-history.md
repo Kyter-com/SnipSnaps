@@ -1,6 +1,6 @@
 # Apple Release History
 
-Generated from App Store Connect and git on 2026-07-14T01:11:23.040Z.
+Generated from App Store Connect and git on 2026-07-29T01:01:47.075Z.
 
 ASC is the source of truth for Apple versions and builds. Git commits are correlated by Xcode `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` snapshots.
 
@@ -12,22 +12,24 @@ ASC is the source of truth for Apple versions and builds. Git commits are correl
 | iOS | 1.0.1 | READY_FOR_SALE | 2026-05-17 |  | 5b4f1ba (2026-05-17) | • Improved video playback behavior and similar-photo scan responsiveness. • Added muted autoplay for video review cards and a location map in details when location data is available. • Added a dedicated video review mode with sorting by size, length, date, or random order. • Added sorting controls for screenshot review sessions. • Improved similar photo matching with burst detection, smarter visual matching, and confidence labels. • Added sorting controls and clearer cleanup estimates for similar photo groups. • Added a reset option for local settings and lifetime cleanup stats. |
 | iOS | 1.0.2 | READY_FOR_SALE | 2026-06-06 |  | e6a0d8a (2026-06-08) | • Added new review sections for quick cleanup, space savers, and library finds. • Added review modes for old screenshots, screen recordings, large photos, Live Photos, bursts, and old favorites. • Improved swipe smoothness with better photo caching and more reliable image loading during fast reviews. • Improved similar-photo scanning with progress, partial results, clearer comparison details, and smarter best-pick labels. • Refined similar-photo review to skip screenshots and improved Large Photos category counts. • Added review memory controls with not-reviewed and total counts for review modes. • Added a Home indicator while review counts are updating in the background. • Kept local review history and image caches bounded so app storage and memory stay controlled over time. • Refined Home count updating with a quieter indicator and more targeted refreshes. • Made Home load faster with cached counts, deferred heavy scans, and in-session metadata reuse. |
 | iOS | 1.0.4 | READY_FOR_SALE | 2026-06-20 |  | b92215c (2026-07-02) | • Redesigned the Similar photos review. Every photo now gets a clear Keep or Delete choice instead of selecting which ones to keep. Swipe through each photo in a group, tap a photo to see its details, open photos full screen to compare them, skip a group to decide later, and undo your last choice at any time. • Improved how similar photos are grouped, so unrelated photos are much less likely to appear together. • Reviewed photos now stay reviewed across every category. Once you keep or remove an item, it no longer reappears in another category until your Remember Reviewed window passes. • The Delete button on the review summary is pinned to the bottom, so finishing a cleanup no longer means scrolling past the marked photos to find it. • On This Day always resurfaces photos from past years, even ones you have reviewed elsewhere. |
-| iOS | 1.1.0 | WAITING_FOR_REVIEW | 2026-07-03 |  | 5246667 (2026-07-12) | • SnipSnaps is now available on Mac. • Similar now scans your whole library and skips groups you have already reviewed, so each scan reaches new photos instead of showing you the same ones again. • Fixed Similar and Duplicates missing some photos that had no subtype, such as photos added by AirDrop or imported without camera information. • If you allow access to only selected photos, you can now add more photos or switch to full access at any time — from the Home screen, from Settings, or when a category runs out of photos to review. Before, limited access could leave you with nothing left to review and no way to add more. |
-| macOS | 1.1.0 | WAITING_FOR_REVIEW | 2026-07-13 |  | 5246667 (2026-07-12) |  |
+| iOS | 1.1.0 | READY_FOR_SALE | 2026-07-03 |  | 5246667 (2026-07-12) | • SnipSnaps is now available on Mac. • Similar now scans your whole library and skips groups you have already reviewed, so each scan reaches new photos instead of showing you the same ones again. • Fixed Similar and Duplicates missing some photos that had no subtype, such as photos added by AirDrop or imported without camera information. • If you allow access to only selected photos, you can now add more photos or switch to full access at any time — from the Home screen, from Settings, or when a category runs out of photos to review. Before, limited access could leave you with nothing left to review and no way to add more. |
+| macOS | 1.1.0 | READY_FOR_SALE | 2026-07-13 |  | 5246667 (2026-07-12) |  |
+| iOS | 1.1.1 | PREPARE_FOR_SUBMISSION | 2026-07-18 |  | 89bcc76 (2026-07-18) |  |
+| macOS | 1.1.1 | PREPARE_FOR_SUBMISSION | 2026-07-18 |  | 89bcc76 (2026-07-18) |  |
 
 ## Builds
 
 | Platform | Version | Build | Uploaded | Processing State | Expired | Matched Git Commit |
 | --- | --- | --- | --- | --- | --- | --- |
-| iOS | 1.0 | 5 | 2026-04-21 | VALID |  | 64a79f8 (2026-05-17) |
-| iOS | 1.0 | 6 | 2026-04-21 | VALID |  | 64a79f8 (2026-05-17) |
-| iOS | 1.0 | 8 | 2026-04-21 | VALID |  | 64a79f8 (2026-05-17) |
-| iOS | 1.0 | 9 | 2026-04-21 | VALID |  | 64a79f8 (2026-05-17) |
-| iOS | 1.0 | 10 | 2026-04-21 | VALID |  | 64a79f8 (2026-05-17) |
-| iOS | 1.0 | 11 | 2026-04-21 | VALID |  | 64a79f8 (2026-05-17) |
-| iOS | 1.0 | 12 | 2026-04-23 | VALID |  | 64a79f8 (2026-05-17) |
-| iOS | 1.0 | 13 | 2026-04-23 | VALID |  | 64a79f8 (2026-05-17) |
-| iOS | 1.0 | 14 | 2026-04-23 | VALID |  | 64a79f8 (2026-05-17) |
+| iOS | 1.0 | 5 | 2026-04-21 | VALID | true | 64a79f8 (2026-05-17) |
+| iOS | 1.0 | 6 | 2026-04-21 | VALID | true | 64a79f8 (2026-05-17) |
+| iOS | 1.0 | 8 | 2026-04-21 | VALID | true | 64a79f8 (2026-05-17) |
+| iOS | 1.0 | 9 | 2026-04-21 | VALID | true | 64a79f8 (2026-05-17) |
+| iOS | 1.0 | 10 | 2026-04-21 | VALID | true | 64a79f8 (2026-05-17) |
+| iOS | 1.0 | 11 | 2026-04-21 | VALID | true | 64a79f8 (2026-05-17) |
+| iOS | 1.0 | 12 | 2026-04-23 | VALID | true | 64a79f8 (2026-05-17) |
+| iOS | 1.0 | 13 | 2026-04-23 | VALID | true | 64a79f8 (2026-05-17) |
+| iOS | 1.0 | 14 | 2026-04-23 | VALID | true | 64a79f8 (2026-05-17) |
 | iOS | 1.0 | 15 | 2026-05-08 | VALID |  | 64a79f8 (2026-05-17) |
 | iOS | 1.0 | 17 | 2026-05-08 | VALID |  | 64a79f8 (2026-05-17) |
 | iOS | 1.0 | 18 | 2026-05-08 | VALID |  | 64a79f8 (2026-05-17) |
@@ -71,6 +73,12 @@ ASC is the source of truth for Apple versions and builds. Git commits are correl
 | macOS | 1.1.0 | 59 | 2026-07-13 | VALID |  | 5246667 (2026-07-12) |
 | iOS | 1.1.0 | 60 | 2026-07-13 | VALID |  | 5246667 (2026-07-12) |
 | macOS | 1.1.0 | 61 | 2026-07-13 | VALID |  | 5246667 (2026-07-12) |
+| macOS | 1.1.0 | 62 | 2026-07-13 | VALID |  | 5246667 (2026-07-12) |
+| iOS | 1.1.0 | 63 | 2026-07-13 | VALID |  | 5246667 (2026-07-12) |
+| iOS | 1.1.1 | 64 | 2026-07-18 | VALID |  | 89bcc76 (2026-07-18) |
+| macOS | 1.1.1 | 65 | 2026-07-18 | VALID |  | 89bcc76 (2026-07-18) |
+| iOS | 1.1.1 | 66 | 2026-07-26 | VALID |  | 89bcc76 (2026-07-18) |
+| macOS | 1.1.1 | 67 | 2026-07-26 | VALID |  | 89bcc76 (2026-07-18) |
 
 ## Correlated Commits
 
@@ -465,6 +473,46 @@ No commits found in this range.
 ### macOS 1.1.0 (61)
 
 Matched 5246667 from 2026-07-12: chore: release 1.1.0 (build 56)
+
+No commits found in this range.
+
+### macOS 1.1.0 (62)
+
+Matched 5246667 from 2026-07-12: chore: release 1.1.0 (build 56)
+
+No commits found in this range.
+
+### iOS 1.1.0 (63)
+
+Matched 5246667 from 2026-07-12: chore: release 1.1.0 (build 56)
+
+No commits found in this range.
+
+### iOS 1.1.1 (64)
+
+Matched 89bcc76 from 2026-07-18: Adopt Icon Composer app icon and release 1.1.1
+
+- Fix Mac App Store screenshots: uncropped home hero + consistent counts
+- macos portion
+- Record 1.1.0 macOS release and fix macOS keyword length
+- Harden release-notes flow and clean up changelog history
+- Adopt Icon Composer app icon and release 1.1.1
+
+### macOS 1.1.1 (65)
+
+Matched 89bcc76 from 2026-07-18: Adopt Icon Composer app icon and release 1.1.1
+
+No commits found in this range.
+
+### iOS 1.1.1 (66)
+
+Matched 89bcc76 from 2026-07-18: Adopt Icon Composer app icon and release 1.1.1
+
+No commits found in this range.
+
+### macOS 1.1.1 (67)
+
+Matched 89bcc76 from 2026-07-18: Adopt Icon Composer app icon and release 1.1.1
 
 No commits found in this range.
 
