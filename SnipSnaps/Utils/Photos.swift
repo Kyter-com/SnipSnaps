@@ -593,6 +593,14 @@ final class PhotoLibraryChangeBroadcaster: NSObject, PHPhotoLibraryChangeObserve
 
   func startIfNeeded() {
     guard !isRegistered else { return }
+    // Don't register while undetermined: registering prompts for photo
+    // access, which would pop a system alert the moment Home appears — before
+    // the user has read the explainer or tapped Enable. Worse, it races the
+    // Enable button's own request, and the superseded request can resolve as
+    // denied with no prompt ever shown. Callers retry this once access is
+    // available (see HomeView's refresh paths), so observation still starts
+    // for every granted session.
+    guard PhotoLibrary.authorizationStatus() != .notDetermined else { return }
     isRegistered = true
     PHPhotoLibrary.shared().register(self)
   }

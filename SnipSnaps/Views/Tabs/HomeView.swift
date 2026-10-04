@@ -207,6 +207,12 @@ struct HomeView: View {
         .frame(maxWidth: .infinity, alignment: .top)
       }
       .background(AppColor.background)
+      // iOS pull-to-refresh (macOS has the toolbar refresh button instead).
+      #if os(iOS)
+      .refreshable {
+        await pullToRefreshCounts()
+      }
+      #endif
       #if os(macOS)
       .navigationTitle("Photos")
       #else
@@ -294,7 +300,7 @@ struct HomeView: View {
           usesWideGridCard: usesTwoColumnLayout
         )
       }
-      .buttonStyle(.plain)
+      .reviewCardButtonStyle()
       .interactiveCardHover()
       .disabled(!canAccessPhotos)
 
@@ -346,6 +352,9 @@ struct HomeView: View {
       .padding(.vertical, 6)
       .background(AppColor.chip, in: Capsule(style: .continuous))
     }
+    // The label draws its own chevron; macOS 27 also appends a system menu
+    // indicator, which would double it. No visible effect on iOS.
+    .menuIndicator(.hidden)
     .accessibilityLabel("Sort screenshots by \(screenshotSortOption.title)")
   }
 
@@ -374,6 +383,9 @@ struct HomeView: View {
       .padding(.vertical, 6)
       .background(AppColor.chip, in: Capsule(style: .continuous))
     }
+    // The label draws its own chevron; macOS 27 also appends a system menu
+    // indicator, which would double it. No visible effect on iOS.
+    .menuIndicator(.hidden)
     .accessibilityLabel("Sort videos by \(videoSortOption.subtitle)")
   }
 
@@ -402,6 +414,9 @@ struct HomeView: View {
       .padding(.vertical, 6)
       .background(AppColor.chip, in: Capsule(style: .continuous))
     }
+    // The label draws its own chevron; macOS 27 also appends a system menu
+    // indicator, which would double it. No visible effect on iOS.
+    .menuIndicator(.hidden)
     .accessibilityLabel("Sort similar groups by \(similarSortOption.subtitle)")
   }
 
@@ -485,6 +500,10 @@ struct HomeView: View {
       isRefreshingCounts = false
       return
     }
+    // Access is available, so (re)try starting change observation. On a fresh
+    // install the onAppear attempt is skipped while undetermined (registering
+    // would auto-prompt); this picks it up once the grant lands.
+    PhotoLibraryChangeBroadcaster.shared.startIfNeeded()
     let modesToRefresh = modesToRefresh ?? allCountModes
     guard !modesToRefresh.isEmpty else {
       isRefreshingCounts = false
@@ -534,6 +553,20 @@ struct HomeView: View {
     refresh(modes: fastCountModes, deferredModes: expensiveModesToRefresh)
   }
 
+  #if os(iOS)
+  // Pull-to-refresh entry point: recount, holding the spinner while the fast
+  // recount runs so the gesture feels connected to the count updates. Bails
+  // after ~10s so a slow library can't pin the spinner.
+  @MainActor
+  private func pullToRefreshCounts() async {
+    refreshForCurrentMemoryOption()
+    let deadline = Date().addingTimeInterval(10)
+    while isRefreshingCounts, Date() < deadline {
+      try? await Task.sleep(for: .milliseconds(200))
+    }
+  }
+  #endif
+
   private func recordReviewStart(for mode: ReviewMode) {
     guard PhotoReviewHistory.supportsSkipping(for: mode), reviewMemoryOption != .never else { return }
     reviewedIdentifierCountsAtReviewStart[mode] = PhotoReviewHistory.reviewedIdentifiers(
@@ -578,6 +611,9 @@ struct HomeView: View {
     isRefreshingCounts = !modesToRefresh.isEmpty
     let reviewMemoryOption = reviewMemoryOption
     let reviewMemoryOptionRawValue = reviewMemoryOptionRawValue
+    // Access is available, so (re)try starting change observation — see the
+    // single-arg refresh(_:) above for why this lives here and not onAppear.
+    PhotoLibraryChangeBroadcaster.shared.startIfNeeded()
     countRefreshTask = Task.detached(priority: .userInitiated) {
       if !modesToRefresh.isEmpty {
         let refreshedCounts = Self.fetchCounts(for: modesToRefresh, reviewMemoryOption: reviewMemoryOption)
@@ -644,6 +680,30 @@ struct HomeView: View {
       modes.append(.largePhotos)
     }
     return modes
+  }
+}
+
+#if os(iOS)
+// iOS press feedback for review-mode cards. The plain style gives zero visual
+// response on touch, so taps feel dead until navigation starts; a subtle
+// shrink (macOS gets hover lift instead) confirms the touch immediately.
+private struct CardPressStyle: ButtonStyle {
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label
+      .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
+      .animation(.snappy(duration: 0.18), value: configuration.isPressed)
+  }
+}
+#endif
+
+private extension View {
+  @ViewBuilder
+  func reviewCardButtonStyle() -> some View {
+    #if os(iOS)
+    buttonStyle(CardPressStyle())
+    #else
+    buttonStyle(.plain)
+    #endif
   }
 }
 
