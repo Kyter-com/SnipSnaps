@@ -36,10 +36,12 @@ extension View {
   }
 
   // Background for a small floating info chip (e.g. the review date/size pill).
+  // Interactive glass: every current use is a tappable chip (opens the details
+  // sheet), so the glass should respond to touch like the other controls.
   @ViewBuilder
   func infoChipBackground(cornerRadius: CGFloat = 14) -> some View {
     if #available(iOS 26, macOS 26, *) {
-      glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
+      glassEffect(.regular.interactive(), in: .rect(cornerRadius: cornerRadius))
     } else {
       materialChipBackground(cornerRadius: cornerRadius)
     }
@@ -100,7 +102,36 @@ extension View {
         }
     }
   }
+
+  // iOS press feedback for tappable review cards and thumbnails (Home mode
+  // cards, the similar-review filmstrip). The plain style gives zero visual
+  // response on touch, so taps feel dead until navigation starts; a subtle
+  // shrink (macOS gets the hover lift from interactiveCardHover instead)
+  // confirms the touch immediately.
+  @ViewBuilder
+  func reviewCardButtonStyle() -> some View {
+    #if os(iOS)
+    buttonStyle(CardPressStyle())
+    #else
+    buttonStyle(.plain)
+    #endif
+  }
 }
+
+#if os(iOS)
+// Pressed scale honors Reduce Motion the same way MacHoverHighlight does: the
+// pressed state itself is direct-manipulation feedback and stays, but the
+// springy release animation is dropped.
+private struct CardPressStyle: ButtonStyle {
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label
+      .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
+      .animation(reduceMotion ? nil : .snappy(duration: 0.18), value: configuration.isPressed)
+  }
+}
+#endif
 
 #if os(macOS)
 private struct MacHoverHighlight: ViewModifier {

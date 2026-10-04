@@ -1421,7 +1421,7 @@ struct SimilarReviewSessionView: View {
                   .strokeBorder(isActive ? AppColor.primary : AppColor.separator, lineWidth: isActive ? 2.5 : 0.5)
               }
           }
-          .buttonStyle(.plain)
+          .reviewCardButtonStyle()
           .interactiveCardHover()
           .id(asset.localIdentifier)
           .accessibilityLabel(asset.reviewAccessibilityLabel)

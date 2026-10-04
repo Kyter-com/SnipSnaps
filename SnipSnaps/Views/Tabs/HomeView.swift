@@ -556,12 +556,14 @@ struct HomeView: View {
   #if os(iOS)
   // Pull-to-refresh entry point: recount, holding the spinner while the fast
   // recount runs so the gesture feels connected to the count updates. Bails
-  // after ~10s so a slow library can't pin the spinner.
+  // after ~10s so a slow library can't pin the spinner, and also if the
+  // refreshable task itself is cancelled — Task.sleep then returns instantly,
+  // so without this check the loop would spin hot until the deadline.
   @MainActor
   private func pullToRefreshCounts() async {
     refreshForCurrentMemoryOption()
     let deadline = Date().addingTimeInterval(10)
-    while isRefreshingCounts, Date() < deadline {
+    while isRefreshingCounts, Date() < deadline, !Task.isCancelled {
       try? await Task.sleep(for: .milliseconds(200))
     }
   }
@@ -680,30 +682,6 @@ struct HomeView: View {
       modes.append(.largePhotos)
     }
     return modes
-  }
-}
-
-#if os(iOS)
-// iOS press feedback for review-mode cards. The plain style gives zero visual
-// response on touch, so taps feel dead until navigation starts; a subtle
-// shrink (macOS gets hover lift instead) confirms the touch immediately.
-private struct CardPressStyle: ButtonStyle {
-  func makeBody(configuration: Configuration) -> some View {
-    configuration.label
-      .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
-      .animation(.snappy(duration: 0.18), value: configuration.isPressed)
-  }
-}
-#endif
-
-private extension View {
-  @ViewBuilder
-  func reviewCardButtonStyle() -> some View {
-    #if os(iOS)
-    buttonStyle(CardPressStyle())
-    #else
-    buttonStyle(.plain)
-    #endif
   }
 }
 
