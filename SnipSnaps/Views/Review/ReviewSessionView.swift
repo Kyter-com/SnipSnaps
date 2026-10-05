@@ -676,7 +676,7 @@ struct ReviewSessionView: View {
               .fontWeight(.semibold)
               .frame(maxWidth: .infinity)
           }
-          .buttonStyle(.bordered)
+          .secondaryActionButton()
           .controlSize(.large)
           .disabled(deleteInProgress)
         }
@@ -1078,6 +1078,7 @@ struct SimilarReviewSessionView: View {
   @State private var cardSize: CGSize = .zero
   @AppStorage("reviewLimit") private var reviewLimit: Int = 20
   @AppStorage("similarSortOption") private var similarSortOptionRawValue: String = SimilarSortOption.recent.rawValue
+  @AppStorage("similarThreshold") private var similarThreshold: Double = SimilarThreshold.defaultValue
   @AppStorage("reviewMemoryOption") private var reviewMemoryOptionRawValue: String = ReviewMemoryOption.thirtyDays.rawValue
   @AppStorage("totalDeletedCount") private var totalDeletedCount: Int = 0
   @AppStorage("totalDeletedBytes") private var totalDeletedBytes: Int = 0
@@ -1421,7 +1422,7 @@ struct SimilarReviewSessionView: View {
                   .strokeBorder(isActive ? AppColor.primary : AppColor.separator, lineWidth: isActive ? 2.5 : 0.5)
               }
           }
-          .buttonStyle(.plain)
+          .reviewCardButtonStyle()
           .interactiveCardHover()
           .id(asset.localIdentifier)
           .accessibilityLabel(asset.reviewAccessibilityLabel)
@@ -1558,7 +1559,7 @@ struct SimilarReviewSessionView: View {
           skipGroup()
         }
         .font(.footnote.weight(.semibold))
-        .buttonStyle(.bordered)
+        .secondaryActionButton()
         .controlSize(.small)
 
         if !undoStack.isEmpty {
@@ -1566,7 +1567,7 @@ struct SimilarReviewSessionView: View {
             undo()
           }
           .font(.footnote.weight(.semibold))
-          .buttonStyle(.bordered)
+          .secondaryActionButton()
           .controlSize(.small)
         }
       }
@@ -1748,7 +1749,7 @@ struct SimilarReviewSessionView: View {
               .fontWeight(.semibold)
               .frame(maxWidth: .infinity)
           }
-          .buttonStyle(.bordered)
+          .secondaryActionButton()
           .controlSize(.large)
           .disabled(deleteInProgress)
         }
@@ -1849,6 +1850,7 @@ struct SimilarReviewSessionView: View {
       let maxGroups = maxGroups
       let similarSortOption = similarSortOption
       let reviewMemoryOption = reviewMemoryOption
+      let featureMatchThreshold = Float(similarThreshold)
       let worker = Task.detached(priority: .userInitiated) {
         // Decode the (up to 20k) reviewed-identifier store off the main thread.
         let reviewedIdentifiers = PhotoReviewHistory.similarReviewedIdentifiers(memoryOption: reviewMemoryOption)
@@ -1857,6 +1859,7 @@ struct SimilarReviewSessionView: View {
           maxGroups: maxGroups,
           sort: similarSortOption,
           reviewedIdentifiers: reviewedIdentifiers,
+          featureMatchThreshold: featureMatchThreshold,
           progressHandler: { progress in
             await MainActor.run {
               guard isScanning else { return }
@@ -2269,8 +2272,11 @@ private struct FullScreenPhotoView: View {
         Image(systemName: "xmark")
           .font(.body.weight(.semibold))
           .foregroundStyle(.white)
+          // Soft glyph shadow keeps the white X legible on glass over bright
+          // photos; invisible against the fallback scrim.
+          .shadow(color: .black.opacity(0.35), radius: 3, x: 0, y: 1)
           .padding(12)
-          .background(Color.black.opacity(0.45), in: Circle())
+          .floatingCloseButtonBackground()
       }
       .padding(.top, 12)
       .padding(.trailing, 16)
@@ -2934,10 +2940,7 @@ private struct SwipeOverlayView: View {
       .symbolRenderingMode(.hierarchical)
       .foregroundStyle(tint)
       .frame(width: 64, height: 64)
-      .background(backgroundTint, in: Circle())
-      .overlay(
-        Circle().strokeBorder(tint.opacity(0.12), lineWidth: 0.5)
-      )
+      .reviewActionCircleBackground(tint: tint, backgroundTint: backgroundTint)
       .scaleEffect(0.84 + (revealProgress * 0.16))
       .rotationEffect(.degrees(Double((offset > 0 ? 1 : -1) * (1 - revealProgress) * 8)))
       .shadow(color: AppColor.shadow.opacity(1.4), radius: 14, x: 0, y: 8)
@@ -2960,10 +2963,7 @@ private struct ReviewActionButton: View {
         .symbolRenderingMode(.hierarchical)
         .foregroundStyle(tint)
         .frame(width: 56, height: 56)
-        .background(backgroundTint, in: Circle())
-        .overlay(
-          Circle().strokeBorder(tint.opacity(0.12), lineWidth: 0.5)
-        )
+        .reviewActionCircleBackground(tint: tint, backgroundTint: backgroundTint)
     }
     .buttonStyle(.plain)
     .contentShape(Circle())

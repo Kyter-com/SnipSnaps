@@ -41,23 +41,19 @@ struct ContentView: View {
   @State private var selectedTab = 0
 
   private var tabView: some View {
+    // Modern Tab API (the .tabItem builder is soft-deprecated). On iOS 26+ the
+    // bar renders as floating Liquid Glass and collapses while scrolling.
     TabView(selection: $selectedTab) {
-      HomeView()
-        .tabItem {
-          Label("Home", systemImage: "house")
-        }
-        .tag(0)
-      SettingsView()
-        .tabItem {
-          Label("Settings", systemImage: "gearshape")
-        }
-        .tag(1)
+      Tab("Home", systemImage: "house", value: 0) {
+        HomeView()
+      }
+      Tab("Settings", systemImage: "gearshape", value: 1) {
+        SettingsView()
+      }
     }
     .tint(AppColor.primary)
-    .onChange(of: selectedTab) {
-      let generator = UIImpactFeedbackGenerator(style: .light)
-      generator.impactOccurred()
-    }
+    .adaptiveTabBarMinimize()
+    .sensoryFeedback(.selection, trigger: selectedTab)
   }
   #endif
 }

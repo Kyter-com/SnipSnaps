@@ -24,6 +24,7 @@ struct SettingsView: View {
   @AppStorage("screenshotSortOption") private var screenshotSortOptionRawValue: String = ScreenshotSortOption.recent.rawValue
   @AppStorage("videoSortOption") private var videoSortOptionRawValue: String = VideoSortOption.largest.rawValue
   @AppStorage("similarSortOption") private var similarSortOptionRawValue: String = SimilarSortOption.recent.rawValue
+  @AppStorage("similarThreshold") private var similarThreshold: Double = SimilarThreshold.defaultValue
   #if os(macOS)
   @AppStorage("fileSortOption") private var fileSortOptionRawValue: String = FileSortOption.largest.rawValue
   #endif
@@ -87,6 +88,41 @@ struct SettingsView: View {
         }
 
         Section {
+          VStack(alignment: .leading, spacing: 8) {
+            HStack {
+              Text("Similarity")
+              Spacer()
+              Text(SimilarThreshold.presetName(for: similarThreshold))
+                .foregroundStyle(.secondary)
+            }
+            Slider(
+              value: $similarThreshold,
+              in: SimilarThreshold.range,
+              step: SimilarThreshold.step
+            ) {
+              Text("Similarity")
+            } minimumValueLabel: {
+              Text("Strict")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            } maximumValueLabel: {
+              Text("Loose")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            .accessibilityValue(SimilarThreshold.presetName(for: similarThreshold))
+            .sensoryFeedback(
+              .selection,
+              trigger: SimilarThreshold.detentIndex(for: similarThreshold)
+            )
+          }
+        } header: {
+          Text("Similar")
+        } footer: {
+          Text("How alike photos must be to group as Similar. Strict finds near-identical shots; Loose catches more lookalikes. Burst photos always group together. Applies to your next scan.")
+        }
+
+        Section {
           Toggle("Daily Reminder", isOn: reminderEnabledBinding)
             .disabled(isUpdatingReminder)
 
@@ -145,7 +181,7 @@ struct SettingsView: View {
           .settingsRowButtonStyle()
           .disabled(!hasLocalSettingsToReset)
         } footer: {
-          Text("Resets review size, reminders, Photos and Files sorting, review memory, and lifetime deleted stats on this device. This does not delete photos or files.")
+          Text("Resets review size, Similar matching, reminders, Photos and Files sorting, review memory, and lifetime deleted stats on this device. This does not delete photos or files.")
         }
 
         Section("Support") {
@@ -216,7 +252,7 @@ struct SettingsView: View {
         }
         Button("Cancel", role: .cancel) {}
       } message: {
-        Text("This clears your review size preference, daily reminder, Photos and Files sorting, review memory, and lifetime deleted stats on this device. Your photo library and files will not be changed.")
+        Text("This clears your review size preference, Similar matching, daily reminder, Photos and Files sorting, review memory, and lifetime deleted stats on this device. Your photo library and files will not be changed.")
       }
       .alert("Reminder Couldn't Be Updated", isPresented: reminderErrorBinding) {
         Button("OK", role: .cancel) {}
@@ -327,6 +363,8 @@ struct SettingsView: View {
       || screenshotSortOptionRawValue != ScreenshotSortOption.recent.rawValue
       || videoSortOptionRawValue != VideoSortOption.largest.rawValue
       || similarSortOptionRawValue != SimilarSortOption.recent.rawValue
+      // Epsilon: the stepped slider can store 0.35000000000000003 for Balanced.
+      || abs(similarThreshold - SimilarThreshold.defaultValue) > 0.000_1
       || hasFileSettingsToReset
       || reviewMemoryOptionRawValue != ReviewMemoryOption.thirtyDays.rawValue
       || reviewReminderEnabled
@@ -411,6 +449,7 @@ struct SettingsView: View {
     screenshotSortOptionRawValue = ScreenshotSortOption.recent.rawValue
     videoSortOptionRawValue = VideoSortOption.largest.rawValue
     similarSortOptionRawValue = SimilarSortOption.recent.rawValue
+    similarThreshold = SimilarThreshold.defaultValue
     #if os(macOS)
     fileSortOptionRawValue = FileSortOption.largest.rawValue
     #endif
