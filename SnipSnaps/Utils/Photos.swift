@@ -848,9 +848,11 @@ enum PhotoLibrary {
     maxGroups: Int,
     sort: SimilarSortOption = .recent,
     reviewedIdentifiers: Set<String> = [],
+    featureMatchThreshold: Float = Float(SimilarThreshold.defaultValue),
     progressHandler: ((SimilarPhotoScanProgress) async -> Void)? = nil,
     partialGroupsHandler: (([SimilarPhotoGroup]) async -> Void)? = nil
   ) async -> [SimilarPhotoGroup] {
+    let matchThreshold = Float(SimilarThreshold.clamped(Double(featureMatchThreshold)))
     let options = PHFetchOptions()
     options.sortDescriptors = [
       NSSortDescriptor(key: "creationDate", ascending: sort == .oldest)
@@ -986,7 +988,7 @@ enum PhotoLibrary {
         if clusterIndex.isMultiple(of: 16), Task.isCancelled {
           return currentGroups()
         }
-        if let match = similarMatch(fingerprint, clusters[clusterIndex].anchor, cache: featurePrints) {
+        if let match = similarMatch(fingerprint, clusters[clusterIndex].anchor, cache: featurePrints, threshold: matchThreshold) {
           matchedClusterIndex = clusterIndex
           matchInfo = match
           break
@@ -1042,14 +1044,15 @@ enum PhotoLibrary {
   private static func similarMatch(
     _ candidate: SimilarPhotoFingerprint,
     _ anchor: SimilarPhotoFingerprint,
-    cache: NSCache<NSString, VNFeaturePrintObservation>
+    cache: NSCache<NSString, VNFeaturePrintObservation>,
+    threshold: Float
   ) -> (hashDistance: Int, featureDistance: Float)? {
     let hashDistance = hammingDistance(candidate.hash, anchor.hash)
     guard abs(candidate.aspectRatio - anchor.aspectRatio) < 0.12, hashDistance <= 14 else {
       return nil
     }
     if let distance = featurePrintDistance(from: anchor.asset, to: candidate.asset, cache: cache) {
-      guard distance <= similarFeatureMatchThreshold else { return nil }
+      guard distance <= threshold else { return nil }
       return (hashDistance, distance)
     } else if hashDistance <= 4 {
       return (hashDistance, .greatestFiniteMagnitude)
@@ -1596,12 +1599,6 @@ enum PhotoLibrary {
       closestFeatureDistance = min(closestFeatureDistance, featureDistance)
     }
   }
-
-  // Vision feature-print distance below which two photos count as similar. The
-  // scale is small: ~0 identical, ~0.35 genuinely similar, ~0.5 unrelated photos
-  // of the same general scene. Lower toward 0.3 for stricter matching, raise
-  // toward 0.4 for looser.
-  private static let similarFeatureMatchThreshold: Float = 0.35
 
   private static func burstSimilarGroups(
     from assets: [PHAsset],

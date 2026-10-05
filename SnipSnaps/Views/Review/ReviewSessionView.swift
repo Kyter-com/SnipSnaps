@@ -1078,6 +1078,7 @@ struct SimilarReviewSessionView: View {
   @State private var cardSize: CGSize = .zero
   @AppStorage("reviewLimit") private var reviewLimit: Int = 20
   @AppStorage("similarSortOption") private var similarSortOptionRawValue: String = SimilarSortOption.recent.rawValue
+  @AppStorage("similarThreshold") private var similarThreshold: Double = SimilarThreshold.defaultValue
   @AppStorage("reviewMemoryOption") private var reviewMemoryOptionRawValue: String = ReviewMemoryOption.thirtyDays.rawValue
   @AppStorage("totalDeletedCount") private var totalDeletedCount: Int = 0
   @AppStorage("totalDeletedBytes") private var totalDeletedBytes: Int = 0
@@ -1849,6 +1850,7 @@ struct SimilarReviewSessionView: View {
       let maxGroups = maxGroups
       let similarSortOption = similarSortOption
       let reviewMemoryOption = reviewMemoryOption
+      let featureMatchThreshold = Float(similarThreshold)
       let worker = Task.detached(priority: .userInitiated) {
         // Decode the (up to 20k) reviewed-identifier store off the main thread.
         let reviewedIdentifiers = PhotoReviewHistory.similarReviewedIdentifiers(memoryOption: reviewMemoryOption)
@@ -1857,6 +1859,7 @@ struct SimilarReviewSessionView: View {
           maxGroups: maxGroups,
           sort: similarSortOption,
           reviewedIdentifiers: reviewedIdentifiers,
+          featureMatchThreshold: featureMatchThreshold,
           progressHandler: { progress in
             await MainActor.run {
               guard isScanning else { return }
