@@ -56,6 +56,7 @@ enum FileLibrary {
     excludedFolderPaths: Set<String> = [],
     sort: FileSortOption = .largest
   ) -> ScanResult {
+    guard limit > 0 else { return .empty }
     if category == .duplicates {
       return duplicateRedundantCopies(
         folders: folders,
@@ -67,39 +68,14 @@ enum FileLibrary {
     }
 
     let oldCutoff = Calendar.current.date(byAdding: .day, value: -oldFileAgeDays, to: Date()) ?? .distantPast
-    var items: [FileItem] = []
-    var seen = Set<String>()
-    var examined = 0
-    var truncated = false
-    var accessErrorCount = 0
-
-    folderLoop: for folder in folders {
-      guard !isExcluded(folder, excludedFolderPaths: excludedFolderPaths) else { continue }
-      guard let (enumerator, errors) = enumerator(for: folder) else {
-        accessErrorCount += 1
-        continue
-      }
-      defer { accessErrorCount += errors.count }
-      for case let url as URL in enumerator {
-        if Task.isCancelled { return .empty }
-        if isExcluded(url, excludedFolderPaths: excludedFolderPaths) {
-          enumerator.skipDescendants()
-          continue
-        }
-        // Count every enumerated entry (files, directories, skipped placeholders)
-        // so a directory-heavy or all-iCloud tree still trips the cap instead of
-        // looping for a very long time without ever reaching it.
-        if examined >= maxFilesExamined { truncated = true; break folderLoop }
-        examined += 1
-        guard let item = makeItem(url) else { continue }
-        guard seen.insert(dedupKey(item.url)).inserted else { continue }
-        if matches(item, category: category, oldCutoff: oldCutoff), !reviewed.contains(item.url.path) {
-          items.append(item)
-        }
+    var batch = RankedBatch(limit: limit, sort: sort)
+    let enumeration = enumerateFiles(folders: folders, excludedFolderPaths: excludedFolderPaths) { item in
+      if matches(item, category: category, oldCutoff: oldCutoff), !reviewed.contains(item.url.path) {
+        batch.insert(item)
       }
     }
-
-    return ScanResult(items: Array(sortItems(items, by: sort).prefix(limit)), truncated: truncated, accessErrorCount: accessErrorCount)
+    guard !Task.isCancelled else { return .empty }
+    return ScanResult(items: batch.sortedItems, truncated: enumeration.truncated, accessErrorCount: enumeration.accessErrorCount)
   }
 
   // Single-pass tally for the category cards: total and not-yet-reviewed per
@@ -112,50 +88,23 @@ enum FileLibrary {
     let oldCutoff = Calendar.current.date(byAdding: .day, value: -oldFileAgeDays, to: Date()) ?? .distantPast
     var total: [FileReviewCategory: Int] = [:]
     var fresh: [FileReviewCategory: Int] = [:]
-    var seen = Set<String>()
-    var examined = 0
-    var truncated = false
-    var accessErrorCount = 0
-
-    folderLoop: for folder in folders {
-      guard !isExcluded(folder, excludedFolderPaths: excludedFolderPaths) else { continue }
-      guard let (enumerator, errors) = enumerator(for: folder) else {
-        accessErrorCount += 1
-        continue
+    let enumeration = enumerateFiles(folders: folders, excludedFolderPaths: excludedFolderPaths) { item in
+      let notReviewed = !reviewed.contains(item.url.path)
+      func bump(_ category: FileReviewCategory) {
+        total[category, default: 0] += 1
+        if notReviewed { fresh[category, default: 0] += 1 }
       }
-      defer { accessErrorCount += errors.count }
-      for case let url as URL in enumerator {
-        if Task.isCancelled { break folderLoop }
-        if isExcluded(url, excludedFolderPaths: excludedFolderPaths) {
-          enumerator.skipDescendants()
-          continue
-        }
-        // Cap is global across all granted folders, not per-folder, so a labeled
-        // break is required (a bare break would only end this folder's loop). Count
-        // every enumerated entry so a directory-heavy tree still trips the cap.
-        if examined >= maxFilesExamined { truncated = true; break folderLoop }
-        examined += 1
-        guard let item = makeItem(url) else { continue }
-        // Skip files already tallied via an overlapping grant so the cards don't
-        // double-count the same physical file.
-        guard seen.insert(dedupKey(item.url)).inserted else { continue }
-        let notReviewed = !reviewed.contains(item.url.path)
-        func bump(_ category: FileReviewCategory) {
-          total[category, default: 0] += 1
-          if notReviewed { fresh[category, default: 0] += 1 }
-        }
-        bump(.everything)
-        if item.size >= largeFileMinimumBytes { bump(.large) }
-        if item.modified < oldCutoff { bump(.old) }
-        if item.isScreenshot { bump(.screenshots) }
-      }
+      bump(.everything)
+      if item.size >= largeFileMinimumBytes { bump(.large) }
+      if item.modified < oldCutoff { bump(.old) }
+      if item.isScreenshot { bump(.screenshots) }
     }
 
     var result: [FileReviewCategory: FileCounts] = [:]
     for category in [FileReviewCategory.everything, .large, .old, .screenshots] {
       result[category] = FileCounts(total: total[category] ?? 0, notReviewed: fresh[category] ?? 0)
     }
-    return FileCountsResult(counts: result, truncated: truncated, accessErrorCount: accessErrorCount)
+    return FileCountsResult(counts: result, truncated: enumeration.truncated, accessErrorCount: enumeration.accessErrorCount)
   }
 
   // Exact-content duplicates: bucket by size, hash only collision buckets, then
@@ -168,54 +117,33 @@ enum FileLibrary {
     limit: Int,
     sort: FileSortOption = .largest
   ) -> ScanResult {
+    guard limit > 0 else { return .empty }
     var bySize: [Int64: [FileItem]] = [:]
-    var seen = Set<String>()
-    var examined = 0
-    var truncated = false
-    var accessErrorCount = 0
-    folderLoop: for folder in folders {
-      guard !isExcluded(folder, excludedFolderPaths: excludedFolderPaths) else { continue }
-      guard let (enumerator, errors) = enumerator(for: folder) else {
-        accessErrorCount += 1
-        continue
-      }
-      defer { accessErrorCount += errors.count }
-      for case let url as URL in enumerator {
-        if Task.isCancelled { return .empty }
-        if isExcluded(url, excludedFolderPaths: excludedFolderPaths) {
-          enumerator.skipDescendants()
-          continue
-        }
-        if examined >= maxFilesExamined { truncated = true; break folderLoop }
-        examined += 1
-        // Bucket by logical byte length, not allocated size: identical files on
-        // volumes with different block sizes share a logical size but not an
-        // allocated one, and must still be compared.
-        guard let item = makeItem(url), item.logicalSize > 0 else { continue }
-        // Dedup by real path BEFORE bucketing: a file reachable through two
-        // overlapping grants would otherwise hash-match itself and be surfaced as a
-        // redundant copy — trashing it would delete the only copy of a unique file.
-        guard seen.insert(dedupKey(item.url)).inserted else { continue }
+    let enumeration = enumerateFiles(folders: folders, excludedFolderPaths: excludedFolderPaths) { item in
+      // Equal logical lengths may have different allocated sizes across volumes.
+      if item.logicalSize > 0 {
         bySize[item.logicalSize, default: []].append(item)
       }
     }
+    guard !Task.isCancelled else { return .empty }
 
-    var redundant: [FileItem] = []
+    var batch = RankedBatch(limit: limit, sort: sort)
     for (_, sameSize) in bySize where sameSize.count > 1 {
       if Task.isCancelled { return .empty }
       var byHash: [String: [FileItem]] = [:]
       for item in sameSize {
+        if Task.isCancelled { return .empty }
         guard let hash = contentHash(item.url) else { continue }
         byHash[hash, default: []].append(item)
       }
       for (_, identical) in byHash where identical.count > 1 {
         let ordered = identical.sorted { $0.created < $1.created }
         for copy in ordered.dropFirst() where !reviewed.contains(copy.url.path) {
-          redundant.append(copy)
+          batch.insert(copy)
         }
       }
     }
-    return ScanResult(items: Array(sortItems(redundant, by: sort).prefix(limit)), truncated: truncated, accessErrorCount: accessErrorCount)
+    return ScanResult(items: batch.sortedItems, truncated: enumeration.truncated, accessErrorCount: enumeration.accessErrorCount)
   }
 
   private static func contentHash(_ url: URL) -> String? {
@@ -309,6 +237,52 @@ enum FileLibrary {
   }
 
   // MARK: - Private
+
+  private static func enumerateFiles(
+    folders: [URL],
+    excludedFolderPaths: Set<String>,
+    visit: (FileItem) -> Void
+  ) -> (truncated: Bool, accessErrorCount: Int) {
+    var seen = Set<String>()
+    var examined = 0
+    var truncated = false
+    var accessErrorCount = 0
+    for folder in folders {
+      guard !Task.isCancelled, !truncated else { break }
+      guard !isExcluded(folder, excludedFolderPaths: excludedFolderPaths) else { continue }
+      guard let (enumerator, errors) = enumerator(for: folder) else {
+        accessErrorCount += 1
+        continue
+      }
+      while !Task.isCancelled {
+        // Foundation's enumerator and resource lookups create autoreleased
+        // objects. Drain them per entry on detached workers instead of keeping
+        // an entire tree's temporary metadata alive until the task completes.
+        let hasNext = autoreleasepool { () -> Bool in
+          guard let url = enumerator.nextObject() as? URL else { return false }
+          if isExcluded(url, excludedFolderPaths: excludedFolderPaths) {
+            enumerator.skipDescendants()
+            return true
+          }
+          // Bound all entries, including directories and iCloud placeholders.
+          if examined >= maxFilesExamined {
+            truncated = true
+            return false
+          }
+          examined += 1
+          guard let item = makeItem(url) else { return true }
+          // Deduplicate overlapping grants BEFORE counting or hashing: a file
+          // must never match itself and be offered as a redundant copy.
+          guard seen.insert(dedupKey(item.url)).inserted else { return true }
+          visit(item)
+          return true
+        }
+        if !hasNext { break }
+      }
+      accessErrorCount += errors.count
+    }
+    return (truncated, accessErrorCount)
+  }
 
   private static func enumerator(for folder: URL) -> (FileManager.DirectoryEnumerator, AccessErrorCounter)? {
     let errors = AccessErrorCounter()
@@ -406,18 +380,73 @@ enum FileLibrary {
     }
   }
 
-  private static func sortItems(_ items: [FileItem], by option: FileSortOption) -> [FileItem] {
-    switch option {
-    case .largest:
-      return items.sorted { $0.size > $1.size }
-    case .smallest:
-      return items.sorted { $0.size < $1.size }
-    case .recent:
-      return items.sorted { $0.modified > $1.modified }
-    case .oldest:
-      return items.sorted { $0.modified < $1.modified }
-    case .name:
-      return items.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+  // Keep only the requested review batch while examining the whole tree. A
+  // worst-first heap avoids retaining/sorting up to 200k FileItems to show 20.
+  // The traversal cap, exclusions, and global ranking are unchanged. Encounter
+  // order breaks ties, preserving the previous stable full-sort behavior.
+  private struct RankedBatch {
+    private struct Entry {
+      let item: FileItem
+      let order: Int
+    }
+
+    let limit: Int
+    let sort: FileSortOption
+    private var heap: [Entry] = []
+    private var nextOrder = 0
+
+    init(limit: Int, sort: FileSortOption) {
+      self.limit = limit
+      self.sort = sort
+    }
+
+    var sortedItems: [FileItem] {
+      heap.sorted(by: precedes).map(\.item)
+    }
+
+    mutating func insert(_ item: FileItem) {
+      let entry = Entry(item: item, order: nextOrder)
+      nextOrder += 1
+      if heap.count < limit {
+        heap.append(entry)
+        var child = heap.count - 1
+        while child > 0 {
+          let parent = (child - 1) / 2
+          guard precedes(heap[parent], heap[child]) else { break }
+          heap.swapAt(parent, child)
+          child = parent
+        }
+      } else if precedes(entry, heap[0]) {
+        heap[0] = entry
+        var parent = 0
+        while parent * 2 + 1 < heap.count {
+          var worseChild = parent * 2 + 1
+          let right = worseChild + 1
+          if right < heap.count, precedes(heap[worseChild], heap[right]) {
+            worseChild = right
+          }
+          guard precedes(heap[parent], heap[worseChild]) else { break }
+          heap.swapAt(parent, worseChild)
+          parent = worseChild
+        }
+      }
+    }
+
+    private func precedes(_ lhs: Entry, _ rhs: Entry) -> Bool {
+      switch sort {
+      case .largest:
+        if lhs.item.size != rhs.item.size { return lhs.item.size > rhs.item.size }
+      case .smallest:
+        if lhs.item.size != rhs.item.size { return lhs.item.size < rhs.item.size }
+      case .recent:
+        if lhs.item.modified != rhs.item.modified { return lhs.item.modified > rhs.item.modified }
+      case .oldest:
+        if lhs.item.modified != rhs.item.modified { return lhs.item.modified < rhs.item.modified }
+      case .name:
+        let order = lhs.item.name.localizedStandardCompare(rhs.item.name)
+        if order != .orderedSame { return order == .orderedAscending }
+      }
+      return lhs.order < rhs.order
     }
   }
 }

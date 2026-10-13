@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
@@ -433,17 +434,28 @@ def compose(device: str, slide, index: int):
 
 
 def main():
-    count = 0
-    for device in DEVICES:
-        if device == "mac":
-            for i, slide in enumerate(SLIDES_MAC, 1):
-                compose_mac(device, slide, i)
-                count += 1
-        else:
-            for i, slide in enumerate(SLIDES, 1):
-                compose(device, slide, i)
-                count += 1
-    print(f"Generated {count} screenshots in {OUT}")
+    parser = argparse.ArgumentParser(description="Composite the existing App Store screenshot style.")
+    parser.add_argument("--device", action="append", choices=DEVICES, help="Repeat to select devices; defaults to all.")
+    parser.add_argument("--screen", action="append", choices=sorted({s["screen"] for s in SLIDES + SLIDES_MAC}),
+                        help="Repeat to select screens; keeps the original slide numbering.")
+    args = parser.parse_args()
+    selected = [
+        (device, i, slide)
+        for device in DEVICES if not args.device or device in args.device
+        for i, slide in enumerate(SLIDES_MAC if device == "mac" else SLIDES, 1)
+        if not args.screen or slide["screen"] in args.screen
+    ]
+    if not selected:
+        parser.error("No slides match the selected device and screen.")
+    # Check the entire selection before writing any output. A missing capture
+    # must not silently turn into placeholder UI in a release asset.
+    for device, i, slide in selected:
+        path = RAW / device / f"{i:02d}-{slide['screen']}.png"
+        if not path.is_file():
+            parser.error(f"Missing raw capture: {path}")
+    for device, i, slide in selected:
+        (compose_mac if device == "mac" else compose)(device, slide, i)
+    print(f"Generated {len(selected)} screenshots in {OUT}")
 
 
 if __name__ == "__main__":

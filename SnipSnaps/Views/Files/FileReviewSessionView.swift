@@ -613,6 +613,7 @@ struct FileReviewSessionView: View {
       )
       if Task.isCancelled { return }
       await MainActor.run {
+        guard !Task.isCancelled else { return }
         items = result.items
         didTruncate = result.truncated
         accessErrorCount = result.accessErrorCount
@@ -866,7 +867,8 @@ private struct FileThumbnailView: View {
 
   @Environment(\.displayScale) private var displayScale
   @State private var image: NSImage?
-  @State private var requestedURL: URL?
+  @State private var thumbnailRequestID: UUID?
+  @State private var thumbnailRequest: QLThumbnailGenerator.Request?
 
   var body: some View {
     GeometryReader { proxy in
@@ -885,13 +887,16 @@ private struct FileThumbnailView: View {
       .frame(width: proxy.size.width, height: proxy.size.height)
       .onAppear { load(into: proxy.size) }
       .onChange(of: url) { _, _ in load(into: proxy.size) }
+      .onDisappear { cancelThumbnailRequest() }
     }
   }
 
   private func load(into size: CGSize) {
+    cancelThumbnailRequest()
     let requestURL = url
     image = nil
-    requestedURL = requestURL
+    let requestID = UUID()
+    thumbnailRequestID = requestID
     let target = CGSize(width: max(size.width, 80), height: max(size.height, 80))
     let request = QLThumbnailGenerator.Request(
       fileAt: requestURL,
@@ -899,13 +904,26 @@ private struct FileThumbnailView: View {
       scale: displayScale,
       representationTypes: .all
     )
+    thumbnailRequest = request
     QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { representation, _ in
       guard let nsImage = representation?.nsImage else { return }
       let boxed = UncheckedSendableBox(nsImage)
       Task { @MainActor in
-        if requestedURL == requestURL { image = boxed.value }
+        if thumbnailRequestID == requestID {
+          image = boxed.value
+          thumbnailRequest = nil
+          thumbnailRequestID = nil
+        }
       }
     }
+  }
+
+  private func cancelThumbnailRequest() {
+    if let thumbnailRequest {
+      QLThumbnailGenerator.shared.cancel(thumbnailRequest)
+    }
+    thumbnailRequest = nil
+    thumbnailRequestID = nil
   }
 }
 

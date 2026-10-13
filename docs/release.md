@@ -103,10 +103,12 @@ npm run version
 
 This writes `docs/next-release-notes.md` before Changesets consumes the pending changesets, so the exact notes can still be applied after the Apple build finishes processing.
 
-3. Ask ASC for the next build number and apply it to Xcode:
+3. Ask ASC for the next build number across both platforms and apply it to Xcode.
+   The query includes all previous marketing versions so a new release does not
+   reuse an older Mac build number:
 
 ```sh
-op run --env-file <private-asc-env> -- npm run release:next-build -- --apply
+ASC_OP_ITEM=<item> npm run release:next-build:all -- --apply
 ```
 
 4. Finish the App Store Connect staging work that does not require a processed
@@ -114,26 +116,34 @@ op run --env-file <private-asc-env> -- npm run release:next-build -- --apply
    privacy, pricing/availability, and age rating. Verify the corresponding repo
    drafts already match.
 
-5. Run tests, inspect `git diff`, then create and push one final release commit.
-   Do not commit anything else to the release branch until both Xcode Cloud
-   archives have been selected for the release.
+5. Run tests, inspect `git diff`, then commit all release files and push the PR
+   branch. Merge with a final `Release SnipSnaps <version>` commit on `main`.
+   Both Xcode Cloud workflows trigger on `main`. Do not add a follow-up commit;
+   finish the remaining steps in ASC and git tags.
 
 6. After the builds exist in App Store Connect, update TestFlight and App Store
    notes from `docs/next-release-notes.md`. This command only changes App Store
    Connect; it does not write repo files:
 
 ```sh
-op run --env-file <private-asc-env> -- npm run release:apply-notes -- --target both --confirm
+ASC_OP_ITEM=<item> npm run release:apply-notes:all -- --target appstore --confirm
+ASC_OP_ITEM=<item> npm run release:apply-notes -- --platform IOS --build-number <ios-build> --target testflight --confirm
+ASC_OP_ITEM=<item> npm run release:apply-notes -- --platform MAC_OS --build-number <mac-build> --target testflight --confirm
+ASC_OP_ITEM=<item> npm run release:notes:verify:all
 ```
 
 7. Attach the iOS and macOS builds produced from the final release commit,
    validate both versions, and submit both for review.
 
-8. Tag the exact git commit that produced the Apple build:
+8. Fast-forward the local release branch to the merge commit, verify its SHA
+   matches both archives, and tag it. Use the actual iOS archive number in the
+   existing tag convention (the Mac archive can have a different number):
 
 ```sh
-npm run release:tag -- --confirm
-git push --tags
+git fetch origin
+git merge --ff-only origin/main
+npm run release:tag -- --tag snipsnaps-ios@<version>+<ios-build> --confirm
+git push origin snipsnaps-ios@<version>+<ios-build>
 ```
 
 Tags use `snipsnaps-ios@<marketing-version>+<build-number>`.
@@ -146,6 +156,10 @@ may override the checked-in `CURRENT_PROJECT_VERSION`; that does not break the
 single-commit guarantee. Treat the marketing version and each build's
 `sourceCommit.commitSha` as the authoritative correlation, and pass an explicit
 `--tag` when the uploaded build number differs from the checked-in value.
+Likewise, `apply-notes --build-number` targets a single platform's processed
+archive without editing the project. A TestFlight notes failure exits non-zero.
+
+Run `node --test scripts/release/ios-release.test.mjs` when changing this tooling.
 
 ## Backfill
 

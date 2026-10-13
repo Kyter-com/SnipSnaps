@@ -2,15 +2,15 @@
   "name": "SnipSnaps",
   "subtitle": "Clean up your photo library",
   "bundleId": "com.kyter.SnipSnaps",
-  "versionString": "1.2.0",
+  "versionString": "1.3.0",
   "buildNumber": null,
   "primaryCategory": "PHOTO_AND_VIDEO",
   "secondaryCategory": "UTILITIES",
   "description": "SnipSnaps turns photo cleanup into quick, focused sessions you can finish.\n\nChoose a category—recent photos, screenshots, videos, screen recordings, large photos, Live Photos, bursts, old favorites, On This Day, random shots, or similar-looking groups. Swipe to keep what matters, mark what does not, and confirm once at the end before anything is deleted.\n\nUse SnipSnaps to:\n\n- Clear recent and older screenshots without digging through Photos\n- Review videos by size, length, or date\n- Find similar-looking groups and compare before choosing what to keep\n- Revisit photos from this day in past years\n- Set a session size and optional daily cleanup reminder\n- See how many items and how much storage you have cleared\n\nYour library stays on your device. SnipSnaps requires no account, includes no ads or analytics, and asks for Photos access only so you can review and delete the items you choose.",
   "promotionalText": "Turn photo cleanup into quick swipe sessions. Review screenshots, videos, large photos, and similar shots—privately, on device.",
   "keywords": "delete pictures,storage,duplicates,screenshots,camera roll,organizer,declutter,albums,similar,swipe",
-  "whatsNew": "• Set an optional daily reminder for a quick photo review at the time you choose.\n• On Mac, exclude folders from review and move an entire reviewed folder to the Trash with a recoverable action.\n• Enjoy roomier adaptive layouts on iPad and Mac.\n• Large Photo and Random reviews now stay responsive with more efficient loading and memory use.\n• Review progress is saved more reliably, with clearer VoiceOver context across photo and Similar reviews.",
-  "reviewNotes": "SnipSnaps requires no account, sign-in, or network access. All photo analysis happens on device.\n\nTo review the iPhone or iPad app:\n1. Launch SnipSnaps and grant Photos Full Access when prompted.\n2. Choose any category under Quick Clean, Space Savers, or Library Finds.\n3. Swipe right or tap the green checkmark to keep an item. Swipe left or tap the red X to mark it for deletion.\n4. Review the summary and confirm. iOS uses the system Photos deletion flow and moves deleted items to Recently Deleted.\n\nSimilar needs a library with related shots to produce groups. Daily Reminder can be tested in Settings; notifications are scheduled locally.\n\nThe app contains no third-party SDKs, analytics, advertising, or networking.",
+  "whatsNew": "• Enjoy a refreshed Liquid Glass interface on iPhone, iPad, and Mac, with clearer review controls, a floating tab bar on iPhone, and livelier tap feedback.\n• Tune Similar matching with a new slider in Settings. Choose Strict for near-identical shots, Balanced for the familiar matching behavior, or Loose to find more lookalikes.\n• Pull to refresh photo counts on iPhone and iPad. Photos access is now requested only when you choose Enable.\n• On Mac, file review categories sit above your folders so they stay easy to reach.\n• Review large Mac file collections faster with much lower memory use.\n• Improve contrast, spacing, larger-text layouts, and VoiceOver descriptions across Home, review controls, and Settings.\n• Make photo counts refresh more reliably, including Large Photos, and cancel file previews when they are no longer needed.",
+  "reviewNotes": "SnipSnaps requires no account, sign-in, or network access. All photo analysis happens on device.\n\nTo review the iPhone or iPad app:\n1. Launch SnipSnaps, tap Enable, and grant Photos Full Access when prompted.\n2. Choose any category under Quick Clean, Space Savers, or Library Finds.\n3. Swipe right or tap the green checkmark to keep an item. Swipe left or tap the red X to mark it for deletion.\n4. Review the summary and confirm. iOS uses the system Photos deletion flow and moves deleted items to Recently Deleted.\n\nSimilar needs a library with related shots to produce groups. Daily Reminder can be tested in Settings; notifications are scheduled locally.\n\nThe app contains no third-party SDKs, analytics, advertising, or networking.\n\nVersion 1.3.0 refreshes the interface and adds a Similarity slider in Settings. Changes to the slider apply to the next Similar scan.",
   "privacy": {
     "collectsData": false,
     "tracksUsers": false,
@@ -31,8 +31,20 @@
     "_note": "Apple has not generated app tags for this app; developers cannot create them directly."
   },
   "accessibility": {
-    "IPHONE": ["VoiceOver", "Larger Text", "Reduce Motion", "Dark Interface", "Differentiate Without Color Alone"],
-    "IPAD": ["VoiceOver", "Larger Text", "Reduce Motion", "Dark Interface", "Differentiate Without Color Alone"],
+    "IPHONE": [
+      "VoiceOver",
+      "Larger Text",
+      "Reduce Motion",
+      "Dark Interface",
+      "Differentiate Without Color Alone"
+    ],
+    "IPAD": [
+      "VoiceOver",
+      "Larger Text",
+      "Reduce Motion",
+      "Dark Interface",
+      "Differentiate Without Color Alone"
+    ],
     "_note": "Published in App Store Connect and limited to claims supported by the source audit."
   },
   "screenshots": {
@@ -59,5 +71,6 @@
     "appStoreConnectKeyId": null,
     "appStoreConnectIssuerId": null,
     "appStoreAppId": "6746975535"
-  }
+  },
+  "_note": "Metadata draft for iOS/iPadOS on the shared universal-purchase record. ASC, git, and Changesets are the release source of truth. Xcode Cloud assigns the uploaded build numbers."
 }

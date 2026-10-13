@@ -16,101 +16,16 @@ import UIKit
 ///
 /// Conventions:
 /// - Every step calls capture(name:) which attaches a PNG named like "01-home".
-/// - The test never fails mid-flow; it always continues so partial captures land.
+/// - Required waypoints are asserted so a failed navigation cannot produce a
+///   passing run with mislabeled screenshots.
 final class ScreenshotCaptureTests: XCTestCase {
   override func setUpWithError() throws {
-    continueAfterFailure = true
+    continueAfterFailure = false
   }
 
   @MainActor
   func testCaptureAllScreens() throws {
-    let app = XCUIApplication()
-    app.launch()
-
-    // Wait for home
-    let homeTitle = app.staticTexts["SnipSnaps"].firstMatch
-    _ = homeTitle.waitForExistence(timeout: 12)
-
-    // Grant Photos access. `simctl privacy grant photos` does NOT stick on
-    // iOS 26.x (tccd keeps serving its own value), so a fresh sim always shows
-    // the system permission dialog. The app surfaces an "Enable Photo Access"
-    // button when not-determined and also auto-requests on appear, so the
-    // SpringBoard alert can show up either on its own or after a tap — and the
-    // timing races. Poll for up to ~15s: tap the in-app button if it's there,
-    // and tap "Allow Full Access" the moment the alert appears.
-    let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-    let enableButton = app.buttons["Enable Photo Access"].firstMatch
-    func allowFullAccess() -> XCUIElement {
-      let exact = springboard.buttons["Allow Full Access"].firstMatch
-      if exact.exists { return exact }
-      return springboard.buttons.matching(
-        NSPredicate(format: "label CONTAINS[c] 'Full Access' OR label BEGINSWITH[c] 'Allow'")
-      ).firstMatch
-    }
-    for _ in 0..<15 {
-      let allow = allowFullAccess()
-      if allow.exists { allow.tap(); break }
-      if enableButton.exists { enableButton.tap() }
-      sleep(1)
-    }
-    sleep(2)
-
-    sleep(1)
-    capture("01-home")
-
-    // ---- Similar (must run BEFORE the Today review) --------------------
-    // "Similar" is in the "Space Savers" section near the bottom of the home
-    // list, so scroll it into view first. The card is one button labelled
-    // "Similar" (older builds exposed it as a static text). This has to happen
-    // before any review below: once photos are reviewed, their near-duplicate
-    // groups are remembered and skipped, leaving "No Similar Photos Found".
-    let similarButton = app.buttons["Similar"].firstMatch
-    let similarText = app.staticTexts["Similar"].firstMatch
-    var scrollTries = 0
-    while !(similarButton.exists || similarText.exists) && scrollTries < 6 {
-      app.swipeUp()
-      scrollTries += 1
-      usleep(500_000)
-    }
-    let similarCard = similarButton.exists ? similarButton : similarText
-    if similarCard.exists {
-      var hitTries = 0
-      while !similarCard.isHittable && hitTries < 4 {
-        app.swipeUp()
-        hitTries += 1
-        usleep(400_000)
-      }
-      similarCard.tap()
-    }
-    let closeSimilar = app.buttons["Close similar review"].firstMatch
-    _ = closeSimilar.waitForExistence(timeout: 12)
-    sleep(4)  // give the hashing/grouping pass a moment to finish
-    capture("03-similar")
-    if closeSimilar.exists {
-      closeSimilar.tap()
-      sleep(1)
-    }
-
-    // Scroll the home list back to the top so "Today" is reachable again.
-    _ = homeTitle.waitForExistence(timeout: 6)
-    var topTries = 0
-    while !app.staticTexts["Today"].firstMatch.isHittable && topTries < 6 {
-      app.swipeDown()
-      topTries += 1
-      usleep(400_000)
-    }
-
-    // ---- Today → review ------------------------------------------------
-    let todayCard = app.staticTexts["Today"].firstMatch
-    if todayCard.waitForExistence(timeout: 5) {
-      todayCard.tap()
-    }
-    // Reliable waypoint: the toolbar "Close review" button is unique to the
-    // running review session.
-    let closeReview = app.buttons["Close review"].firstMatch
-    _ = closeReview.waitForExistence(timeout: 8)
-    sleep(2)  // let the photo render
-    capture("02-review")
+    let app = launchAndCaptureReviewScreens()
 
     // ---- Details (tap the date+size info pill) -------------------------
     // The whole pill is one Button whose label concatenates date + size + info icon.
@@ -131,9 +46,9 @@ final class ScreenshotCaptureTests: XCTestCase {
     let storageButton = app.buttons.matching(
       NSPredicate(format: "label CONTAINS[c] ' MB' OR label CONTAINS[c] ' KB' OR label CONTAINS[c] ' bytes'")
     ).firstMatch
-    if storageButton.waitForExistence(timeout: 3) {
-      storageButton.tap()
-    }
+    XCTAssertTrue(storageButton.waitForExistence(timeout: 3))
+    storageButton.tap()
+    XCTAssertTrue(app.navigationBars["Photo Details"].firstMatch.waitForExistence(timeout: 4))
 
     // Get the details sheet showing the full metadata list + the Location map.
     // On iPhone the sheet opens at .medium, so drag its nav-bar chrome up to the
@@ -182,7 +97,7 @@ final class ScreenshotCaptureTests: XCTestCase {
       button.tap()
       usleep(350_000)
     }
-    _ = summaryTitle.waitForExistence(timeout: 8)
+    XCTAssertTrue(summaryTitle.waitForExistence(timeout: 8))
     sleep(2)
     capture("05-summary")
 
@@ -203,6 +118,89 @@ final class ScreenshotCaptureTests: XCTestCase {
     navigateToSettingsAndCapture(in: app)
   }
 
+  /// Refresh only the Review, Similar, and Settings marketing slides.
+  /// Closing the review here avoids marking or deleting any seeded photos.
+  @MainActor
+  func testCaptureRefreshedScreens() throws {
+    let app = launchAndCaptureReviewScreens()
+    app.buttons["Close review"].firstMatch.tap()
+    navigateToSettingsAndCapture(in: app)
+  }
+
+  @MainActor
+  private func launchAndCaptureReviewScreens() -> XCUIApplication {
+    let app = XCUIApplication()
+    app.launch()
+
+    // Wait for home
+    let homeTitle = app.staticTexts["SnipSnaps"].firstMatch
+    _ = homeTitle.waitForExistence(timeout: 12)
+
+    grantPhotosAccessIfNeeded(in: app)
+    sleep(2)
+
+    sleep(1)
+    capture("01-home")
+
+    // ---- Similar (must run BEFORE the Today review) --------------------
+    // "Similar" is in the "Space Savers" section near the bottom of the home
+    // list, so scroll it into view first. The card is one button labelled
+    // "Similar" (older builds exposed it as a static text). This has to happen
+    // before any review below: once photos are reviewed, their near-duplicate
+    // groups are remembered and skipped, leaving "No Similar Photos Found".
+    let similarButton = app.buttons["Similar"].firstMatch
+    let similarText = app.staticTexts["Similar"].firstMatch
+    var scrollTries = 0
+    while !(similarButton.exists || similarText.exists) && scrollTries < 6 {
+      app.swipeUp()
+      scrollTries += 1
+      usleep(500_000)
+    }
+    let similarCard = similarButton.exists ? similarButton : similarText
+    if similarCard.exists {
+      var hitTries = 0
+      while !similarCard.isHittable && hitTries < 4 {
+        app.swipeUp()
+        hitTries += 1
+        usleep(400_000)
+      }
+      similarCard.tap()
+    }
+    let closeSimilar = app.buttons["Close similar review"].firstMatch
+    XCTAssertTrue(closeSimilar.waitForExistence(timeout: 12))
+    XCTAssertTrue(app.buttons["Keep photo"].firstMatch.waitForExistence(timeout: 30), "Seed photos must produce a Similar review")
+    sleep(2)  // let the first photo's metadata transition and glass layout settle
+    capture("03-similar")
+    if closeSimilar.exists {
+      closeSimilar.tap()
+      sleep(1)
+    }
+
+    // Scroll the home list back to the top so "Today" is reachable again.
+    _ = homeTitle.waitForExistence(timeout: 6)
+    var topTries = 0
+    let todayButton = app.buttons["Today"].firstMatch
+    while topTries < 6 && (!todayButton.exists || !todayButton.isHittable) {
+      app.swipeDown()
+      topTries += 1
+      usleep(400_000)
+    }
+
+    // ---- Today → review ------------------------------------------------
+    let todayCard = app.buttons["Today"].firstMatch
+    XCTAssertTrue(todayCard.waitForExistence(timeout: 5))
+    todayCard.tap()
+    // Reliable waypoint: the toolbar "Close review" button is unique to the
+    // running review session.
+    let closeReview = app.buttons["Close review"].firstMatch
+    XCTAssertTrue(closeReview.waitForExistence(timeout: 8))
+    XCTAssertTrue(app.buttons["Keep photo"].firstMatch.waitForExistence(timeout: 8))
+    sleep(2)  // let the photo render
+    capture("02-review")
+
+    return app
+  }
+
   /// Focused path for refreshing the Settings marketing slide without driving
   /// every photo-review state first. It still launches the production app,
   /// handles the real Photos permission dialog, and verifies navigation before
@@ -215,29 +213,86 @@ final class ScreenshotCaptureTests: XCTestCase {
     let homeTitle = app.staticTexts["SnipSnaps"].firstMatch
     _ = homeTitle.waitForExistence(timeout: 12)
 
-    let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-    let enableButton = app.buttons["Enable Photo Access"].firstMatch
-    for _ in 0..<15 {
-      let exactAllow = springboard.buttons["Allow Full Access"].firstMatch
-      let fallbackAllow = springboard.buttons.matching(
-        NSPredicate(format: "label CONTAINS[c] 'Full Access' OR label BEGINSWITH[c] 'Allow'")
-      ).firstMatch
-      let allow = exactAllow.exists ? exactAllow : fallbackAllow
-      if allow.exists {
-        allow.tap()
-        break
-      }
-      if enableButton.exists {
-        enableButton.tap()
-      }
-      sleep(1)
-    }
+    grantPhotosAccessIfNeeded(in: app)
     sleep(2)
 
     navigateToSettingsAndCapture(in: app)
   }
 
   // MARK: - Helpers
+
+  /// Grant Photos access through the system dialog. `simctl privacy grant
+  /// photos` does NOT stick on iOS 26.x+ (tccd keeps serving its own value),
+  /// so a fresh sim always shows the system permission dialog. The app
+  /// requests only via its "Enable Photo Access" button, so tap that once
+  /// and then poll ~20s for the alert, tapping "Allow Full Access" once its
+  /// buttons settle.
+  @MainActor
+  private func grantPhotosAccessIfNeeded(in app: XCUIApplication) {
+    let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+    func allowFullAccess() -> XCUIElement {
+      let exact = springboard.buttons["Allow Full Access"].firstMatch
+      if exact.exists { return exact }
+      return springboard.buttons.matching(
+        NSPredicate(format: "label CONTAINS[c] 'Full Access' OR label BEGINSWITH[c] 'Allow'")
+      ).firstMatch
+    }
+    // Tap Enable at most once: a second request while one is still pending can
+    // resolve the first as denied with no prompt ever shown. Afterwards the
+    // loop only polls for the alert.
+    var tappedEnable = false
+    for _ in 0..<20 {
+      let today = app.buttons["Today"].firstMatch
+      if today.exists, today.isEnabled { return }
+      if allowFullAccess().exists {
+        if tapAllowWhenSettled(resolve: allowFullAccess) { break }
+      } else if !tappedEnable {
+        // Re-query rather than caching the element: a cached handle can go
+        // stale if the card re-renders, and its tap then lands on whatever
+        // took the button's place.
+        let enableButton = app.buttons["Enable Photo Access"].firstMatch
+        if enableButton.exists {
+          enableButton.tap()
+          tappedEnable = true
+        }
+      }
+      sleep(1)
+    }
+  }
+
+  /// Tap the SpringBoard allow button once its frame is stable across
+  /// samples. iOS 27's photo-access card lays out asynchronously (photo grid,
+  /// counts), so tapping the instant the button is hittable can land on a
+  /// neighbor mid-shift. Every sample resolves a fresh element — a handle
+  /// resolved mid-animation reports a stale frame and taps one too — and the
+  /// tap itself goes to a just-resolved handle with no delay. Returns true if
+  /// a tap was delivered.
+  @MainActor
+  private func tapAllowWhenSettled(resolve: () -> XCUIElement) -> Bool {
+    var lastFrame = CGRect.zero
+    var stableSamples = 0
+    for _ in 0..<25 {  // ~5s max
+      let allow = resolve()
+      guard allow.exists, allow.isHittable else {
+        stableSamples = 0
+        usleep(200_000)
+        continue
+      }
+      let frame = allow.frame
+      if frame.width > 0, frame.equalTo(lastFrame) {
+        stableSamples += 1
+        if stableSamples >= 3 {
+          resolve().tap()
+          return true
+        }
+      } else {
+        stableSamples = 0
+        lastFrame = frame
+      }
+      usleep(200_000)
+    }
+    return false
+  }
 
   @MainActor
   private func navigateToSettingsAndCapture(in app: XCUIApplication) {

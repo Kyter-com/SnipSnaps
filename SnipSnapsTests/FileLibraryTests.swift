@@ -3,6 +3,94 @@ import XCTest
 @testable import SnipSnaps
 
 final class FileLibraryTests: XCTestCase {
+  func testLimitedScansMatchFullRankingForEverySortAndCategory() throws {
+    let root = try makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let nested = root.appendingPathComponent("Nested", isDirectory: true)
+    try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+    let oldDate = Date(timeIntervalSince1970: 1_600_000_000)
+    for i in 0..<67 {
+      let directory = i.isMultiple(of: 2) ? nested : root
+      let url = directory.appendingPathComponent("Screenshot \((i * 31) % 67).png")
+      // Distinct allocated sizes and repeated dates exercise both rankings
+      // and stable ties; numbered names exercise natural (2 before 10) sorting.
+      try Data(repeating: UInt8(i), count: (i + 1) * 4096).write(to: url)
+      try FileManager.default.setAttributes(
+        [.modificationDate: oldDate.addingTimeInterval(Double(i / 3))],
+        ofItemAtPath: url.path
+      )
+    }
+    // Review history records the enumerated URL's path (which can differ
+    // from the fixture URL through macOS's /var -> /private/var alias).
+    let firstScan = FileLibrary.scan(folders: [root], category: .everything, limit: 100)
+    let reviewed = Set(firstScan.items.filter { $0.name == "Screenshot 0.png" }.map { $0.url.path })
+    XCTAssertEqual(reviewed.count, 1)
+    for category in [FileReviewCategory.everything, .old, .screenshots] {
+      for sort in FileSortOption.allCases {
+        let full = FileLibrary.scan(
+          folders: [root, nested], category: category, limit: 100,
+          excluding: reviewed, sort: sort
+        )
+        XCTAssertEqual(full.items.count, 66)
+        for limit in [1, 5, 20, 66, 100] {
+          let batch = FileLibrary.scan(
+            folders: [root, nested], category: category, limit: limit,
+            excluding: reviewed, sort: sort
+          )
+          XCTAssertEqual(batch.items, Array(full.items.prefix(limit)), "\(category), \(sort), limit \(limit)")
+          XCTAssertFalse(batch.truncated)
+          XCTAssertEqual(batch.accessErrorCount, 0)
+        }
+      }
+    }
+    let names = FileLibrary.scan(folders: [root], category: .everything, limit: 3, sort: .name)
+    XCTAssertEqual(names.items.map(\.name), ["Screenshot 0.png", "Screenshot 1.png", "Screenshot 2.png"])
+    let sizes = FileLibrary.scan(folders: [root], category: .everything, limit: 3, sort: .largest)
+    XCTAssertEqual(sizes.items.map(\.logicalSize), [67, 66, 65].map { Int64($0 * 4096) })
+  }
+
+  func testNonpositiveReviewLimitsAreEmpty() throws {
+    let root = try makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Data("same".utf8).write(to: root.appendingPathComponent("first.txt"))
+    try Data("same".utf8).write(to: root.appendingPathComponent("second.txt"))
+    for limit in [0, -1] {
+      for category in FileReviewCategory.allCases {
+        XCTAssertTrue(FileLibrary.scan(folders: [root], category: category, limit: limit).items.isEmpty)
+      }
+    }
+  }
+
+  func testEnumerationStillSkipsHiddenFilesPackagesAndSymlinks() throws {
+    let root = try makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let package = root.appendingPathComponent("Example.app", isDirectory: true)
+    try FileManager.default.createDirectory(at: package, withIntermediateDirectories: true)
+    try Data("inside".utf8).write(to: package.appendingPathComponent("contents.txt"))
+    try Data("hidden".utf8).write(to: root.appendingPathComponent(".hidden"))
+    let visible = root.appendingPathComponent("visible.txt")
+    try Data("visible".utf8).write(to: visible)
+    try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("link.txt"), withDestinationURL: visible)
+    let scan = FileLibrary.scan(folders: [root], category: .everything, limit: 20)
+    XCTAssertEqual(scan.items.map(\.name), ["visible.txt"])
+    XCTAssertEqual(FileLibrary.counts(folders: [root], reviewedPaths: []).counts[.everything]?.total, 1)
+  }
+
+  func testDuplicateBatchContainsOnlyRedundantUnreviewedCopies() throws {
+    let root = try makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    for i in 0..<5 {
+      try Data("identical bytes".utf8).write(to: root.appendingPathComponent("copy-\(i).txt"))
+    }
+    try Data("unique contents".utf8).write(to: root.appendingPathComponent("unique.txt"))
+    let all = FileLibrary.scan(folders: [root, root], category: .duplicates, limit: 20, sort: .name)
+    XCTAssertEqual(all.items.count, 4)
+    XCTAssertFalse(all.items.contains { $0.name == "unique.txt" })
+    let reviewed = Set(all.items.prefix(2).map { $0.url.path })
+    let batch = FileLibrary.scan(folders: [root, root], category: .duplicates, limit: 1, excluding: reviewed, sort: .name)
+    XCTAssertEqual(batch.items, Array(all.items.dropFirst(2).prefix(1)))
+  }
+
   func testDuplicateScanDoesNotSurfaceOverlappingFolderGrantAsDuplicate() throws {
     let root = try makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }

@@ -42,9 +42,11 @@ struct FilesView: View {
           if store.folders.isEmpty {
             onboarding
           } else {
+            // Review categories first: with many folders the folder lists
+            // would otherwise bury the actions this tab exists for.
+            categoriesSection
             grantedFoldersSection
             excludedFoldersSection
-            categoriesSection
           }
         }
         .padding(20)

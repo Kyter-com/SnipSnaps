@@ -1,145 +1,92 @@
 # macOS Release Runbook (Mac App Store)
 
-How to ship the macOS build of SnipSnaps on the **same universal-purchase app
-record** as iOS/iPadOS (`com.kyter.SnipSnaps`, ASC app id `6746975535`). See
-`docs/release.md` for the shared version/notes tooling; this doc covers only the
-Mac-specific setup.
+SnipSnaps ships on the same universal-purchase app record as iOS/iPadOS:
+`com.kyter.SnipSnaps`, ASC app `6746975535`. Follow [release.md](release.md) for
+versioning, notes, and the final release commit. ASC and git are the source of
+truth for current release status; this runbook describes the standing setup.
 
-## Current state (updated 2026-07-14 — 1.1.0 iOS + macOS submitted for review)
+## Xcode Cloud
 
-- **macOS now ships via Xcode Cloud (Path B).** A second workflow **"Default - macOS"** (id `a171fa58-2a04-4c34-9a16-3d6dfe4a5361`) mirrors "Default" (iOS): a macOS archive of the `SnipSnaps` scheme, App Store distribution, triggering on push to `main`, on `latest:stable` (Xcode 26.5 / macOS Tahoe 26.5.1). Xcode Cloud handles Mac App Store distribution signing in the cloud — **no local Apple Distribution cert or MAS profile is needed.** Net effect: every push to `main` now produces an iOS **and** a macOS build.
-- **1.1.0 is in review (submitted 2026-07-14).** iOS App Store version `5ccacaf2-879f-477f-9f2e-1f4c9cdc3278` (build **58**) and macOS version `f95f9217-9a40-4500-a281-e12e7e9c1e23` (build **59**, from commit `41efbb1`) are both `WAITING_FOR_REVIEW`, release type `AFTER_APPROVAL`. Live on the store today: **1.0.4** (iOS).
-- **Build numbers are auto-incremented by Xcode Cloud** (ASC max + 1), so the committed `CURRENT_PROJECT_VERSION` (56) lags the shipped builds (58/59). This is cosmetic — the cloud ignores the local value.
-- App is **free, no IAP** (no StoreKit in the codebase). App Privacy = **Data Not Collected** (published). Age rating **4+**. Export compliance auto-cleared (`ITSAppUsesNonExemptEncryption=false`).
-- **Distribution decision: Mac App Store only.** Do **not** notarize — Apple notarizes MAS builds server-side. `notarytool`/`stapler` are only for Developer-ID direct downloads, which we are not doing.
-- macOS metadata/screenshots/review-notes for the store live in `marketing/app-store-metadata/app-store-connect-macos.json` and `marketing/app-store-screenshots/output/mac/` (4 shots, 2880×1800, uploaded to the `APP_DESKTOP` set). ASC is the source of truth.
+Both enabled workflows archive the `SnipSnaps` scheme from
+`SnipSnaps.xcodeproj`, distribute an App Store eligible build, and trigger only
+on pushes to `main`:
 
-## Signing — pick one path
+| Platform | Workflow | ID |
+|---|---|---|
+| iOS/iPadOS | Default | `2C58B198-EB14-489F-A62D-487D9F58EF1B` |
+| macOS | Default - macOS | `a171fa58-2a04-4c34-9a16-3d6dfe4a5361` |
 
-The dev Mac currently has only an "Apple Development" identity (no Apple
-Distribution / Mac Installer Distribution cert, no `com.kyter.SnipSnaps`
-profiles). You do **not** need to create certs by hand — pick a path:
+Product: `43CEA0A8-23AD-4736-B633-C8A954293A22`.
+Xcode Cloud manages distribution signing. No local distribution certificate or
+Mac App Store provisioning profile is needed for this path. Distribution is
+through the Mac App Store; a Developer ID notarization/export is not part of it.
 
-### Path A — Xcode.app Automatic signing (simplest for a manual one-off)
-The target uses `CODE_SIGN_STYLE=Automatic`. With the **W2W286Y75F** Apple ID
-(Admin or App Manager) signed into **Xcode ▸ Settings ▸ Accounts**, Xcode mints
-the **Apple Distribution** cert and the **Mac App Store** provisioning profile on
-demand at archive time. Then:
+Prepare code, release notes, version/build settings, metadata drafts, screenshot
+assets, and documentation before merging the release PR. The final `main`
+commit must be the source commit for both archives. Cloud assigns separate run
+numbers, so the two uploaded build numbers can differ from each other and from
+`CURRENT_PROJECT_VERSION`. Match both by marketing version and source SHA.
 
-1. Xcode ▸ scheme destination **My Mac** (or "Any Mac").
-2. **Product ▸ Archive**.
-3. In the **Organizer**, select the archive ▸ **Distribute App ▸ App Store Connect ▸ Upload**, keep "Automatically manage signing".
-4. Repeat with an **iOS** destination for the iPhone/iPad archive.
-
-### Path B — Xcode Cloud (✅ used for 1.1.0 — this is the standing setup)
-Xcode Cloud manages distribution signing in the cloud, so no local certs are
-needed. macOS 1.1.0 (build 59) shipped this way via a dedicated **"Default -
-macOS"** workflow that mirrors the iOS "Default" workflow.
-
-**How it was set up via the `asc` CLI (repeatable, no GUI):**
-Requires an Apple web session (`asc web auth login --apple-id dev@kyter.com
---provider-id 127815394`; needs a 2FA code, so run interactively). Then:
+Use the Homebrew CLI to inspect the workflow and recent runs:
 
 ```sh
-# 1. Read the raw v15 payload of the working iOS workflow to use as a template.
-#    (asc web ... workflows describe gives a SIMPLIFIED view that does NOT round-trip;
-#     the create payload needs the full content shape incl. description,
-#     environment_variables, product_environment_variables, locked, and an action id.)
-# 2. Create the macOS workflow from a full payload (see marketing/.../workflow-macos template):
-asc web xcode-cloud workflows create --product-id 43CEA0A8-23AD-4736-B633-C8A954293A22 \
-  --file workflow-macos.json --apple-id dev@kyter.com
-#    key fields vs iOS: actions[0].platform = {"name":"macOS"}, post_actions = [],
-#    archive_config.distribution_type = "testFlightExternalAndAppStore".
-# 3. Trigger a build for the current commit (public API, keychain creds — no web session):
-asc xcode-cloud run --workflow-id <new-macos-workflow-id> --branch main
-# 4. Monitor: asc xcode-cloud status --run-id <run> --wait ; asc builds wait --app 6746975535 \
-#      --build-number <n> --version 1.1.0 --platform MAC_OS --fail-on-invalid
+/opt/homebrew/bin/asc xcode-cloud workflows --app 6746975535
+/opt/homebrew/bin/asc xcode-cloud build-runs --workflow-id <workflow-id> --sort=-number --limit 5
+/opt/homebrew/bin/asc xcode-cloud status --run-id <run-id>
+/opt/homebrew/bin/asc xcode-cloud build-runs builds --run-id <run-id>
 ```
 
-**GUI equivalent** (if you prefer): Xcode ▸ **Product ▸ Xcode Cloud ▸ Manage
-Workflows** (or ASC ▸ your app ▸ **Xcode Cloud**) ▸ **＋** a workflow ▸ scheme
-`SnipSnaps` ▸ Archive action with **Platform = macOS** ▸ deliver to App Store
-Connect ▸ trigger on `main`.
-
-### Path C — command line (for a scripted/CI archive; optional)
-Once a distribution cert exists (Path A creates it), you can script it. No
-notarization for MAS.
+Verify the actual Xcode version on the new runs. Detailed workflow toolchain
+settings can be read through `asc web xcode-cloud workflows describe` with a
+valid Apple web session. Public API authentication alone does not provide that
+web session. If a trigger is missed, first confirm that no matching run exists,
+then start the same committed `main` revision explicitly:
 
 ```sh
-# macOS App Store archive
-xcodebuild -project SnipSnaps.xcodeproj -scheme SnipSnaps -configuration Release \
-  -destination 'generic/platform=macOS' \
-  -archivePath build/SnipSnaps-mac.xcarchive archive
-
-xcodebuild -exportArchive -archivePath build/SnipSnaps-mac.xcarchive \
-  -exportPath build/export-mac -exportOptionsPlist ExportOptions-MAS.plist
-
-# upload the signed .pkg (Apple notarizes MAS itself; do NOT run notarytool)
-xcrun altool --upload-app -f build/export-mac/SnipSnaps.pkg -t macos \
-  --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+/opt/homebrew/bin/asc xcode-cloud run --workflow-id <workflow-id> --branch main
 ```
 
-`ExportOptions-MAS.plist`:
+## Store metadata
 
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>method</key><string>app-store-connect</string>
-  <key>teamID</key><string>W2W286Y75F</string>
-  <key>signingStyle</key><string>automatic</string>
-  <key>destination</key><string>export</string>
-</dict></plist>
+The Mac draft is `marketing/app-store-metadata/app-store-connect-macos.json`.
+Create the next `MAC_OS` version on the existing app, copy the last live version's
+metadata, and update its release notes and review instructions. Use the four
+committed 2880×1800 screenshots in
+`marketing/app-store-screenshots/output/mac/` for the `APP_DESKTOP` set. Verify
+uploaded checksums and order against the files before submission.
+
+Review instructions describe Photos access, granting a folder, file categories,
+keyboard controls, and recoverable Trash actions. SnipSnaps is free with no IAP,
+uses no accounts or analytics, and declares `ITSAppUsesNonExemptEncryption=false`.
+Verify the current privacy, age rating, content rights, pricing, and availability
+in ASC when validating the release.
+
+Once the selected build is VALID, use the shared release helper with the actual
+Mac build number; this does not mutate repository files:
+
+```sh
+ASC_OP_ITEM=<item> npm run release:apply-notes -- --platform MAC_OS --build-number <mac-build> --target testflight --confirm
+ASC_OP_ITEM=<item> npm run release:apply-notes:all -- --target appstore --confirm
+ASC_OP_ITEM=<item> npm run release:notes:verify:all
+/opt/homebrew/bin/asc versions attach-build --version-id <mac-version-id> --build-id <mac-build-id>
+/opt/homebrew/bin/asc validate --app 6746975535 --version-id <mac-version-id> --platform MAC_OS
+/opt/homebrew/bin/asc review submit --app 6746975535 --version-id <mac-version-id> --platform MAC_OS --build-id <mac-build-id> --confirm
 ```
 
-The iOS/iPad archive is the same with `-destination 'generic/platform=iOS'`, a
-`.ipa` output, and `-t ios` on upload.
+The iOS version is staged and submitted separately on the same app record. Keep
+build IDs and source SHAs in ASC/PR release evidence, rather than making another
+commit to record them after the release build starts.
 
-## Release sequence (launch iOS + macOS 1.1.0 together)
+## Verification scope
 
-1. **App Store Connect app setup (once):**
-   - Confirm the **macOS platform** is enabled on record 6746975535 (universal purchase — never create a second Mac record). First Mac build upload finalizes it.
-   - **Pricing & Availability**: price = **Free**, and confirm the **macOS** platform is available in the intended territories (Mac availability is not auto-toggled by the iOS availability).
-2. **Build numbers:** for the first Mac upload, build 56 is fine (Mac has an independent sequence). For later builds keep them in lockstep:
-   ```sh
-   ASC_OP_ITEM=<item> npm run release:next-build:all -- --apply   # writes max(next iOS, next Mac)
-   ```
-3. **Archive + upload both platforms** (Path A/B/C above). Confirm both process to VALID:
-   ```sh
-   ASC_OP_ITEM=<item> npm run release:status:all
-   ```
-4. **Create the macOS 1.1.0 version** and fill its metadata from
-   `marketing/app-store-metadata/app-store-connect-macos.json`:
-   - Description (covers Photos + the Mac Files surface), subtitle, keywords, promo text.
-   - **Screenshots:** upload the 4 committed shots from `marketing/app-store-screenshots/output/mac/` (2880×1800) to the macOS slot.
-   - **App Review notes:** paste the Mac-specific `reviewNotes` (folder-grant flow + Trash recoverability + how to get test content). This is important — a destructive utility with no testable content risks a Guideline 2.1 rejection.
-5. **Submission gates (both platforms):** App Privacy = **Data Not Collected**; **age rating** questionnaire (2026 rules) per platform; export compliance (auto from `ITSAppUsesNonExemptEncryption=false`); content rights = no third-party content; verify privacy/support/terms URLs return 200.
-6. **Apply What's New** to both platforms from `docs/next-release-notes.md`:
-   ```sh
-   ASC_OP_ITEM=<item> npm run release:apply-notes:all -- --confirm
-   ```
-7. **Submit** both the iOS and macOS versions for review (attach build 57+ to iOS, the new Mac build to macOS).
-8. **Tag** the shipped commit (shared): `npm run release:tag -- --confirm`.
+Run macOS unit tests and a Release build before the release commit. File scanning
+tests cover sorting, limits, reviewed items, overlapping roots, hidden files,
+packages, symlinks, and duplicate grouping. Marketing demo captures verify
+presentation; they do not exercise a real Photos library or the production file
+permission flow.
 
-## Platform-aware release tooling
-
-The npm release scripts now take `--platform IOS|MAC_OS|all` (default `IOS`;
-also `SNIPSNAPS_PLATFORM`). Convenience scripts:
-
-| Script | Effect |
-|---|---|
-| `release:status` / `:mac` / `:all` | ASC status for iOS / macOS / both |
-| `release:next-build` / `:all` | next build number; `:all --apply` writes the max so the shared `CURRENT_PROJECT_VERSION` is valid for both trains |
-| `release:apply-notes` / `:mac` / `:all` | push What's New / TestFlight notes to iOS / macOS / both |
-| `release:backfill` / `:all` | regenerate `docs/apple-release-history.md` (now has a Platform column) |
-
-All ASC-backed scripts need the 1Password-injected key, e.g.
-`ASC_OP_ITEM=<item> npm run release:status:all` or
-`op run --env-file <private-asc-env> -- npm run release:status:all`.
-
-## Pre-ship verification still owed (on a populated Mac)
-
-- Files ▸ move-to-Trash + **⌘Z undo** round-trip.
-- Security-scoped-bookmark resolve/stale/re-grant across an app relaunch.
-- Similar/duplicate matching accuracy on a real library.
-- iOS/iPad regression build + core Photos flow (can be done on the dev Mac — iOS 18.5–26.5 simulators are installed).
+A populated Mac smoke test should cover moving files to Trash and undoing,
+resolving saved folder access across relaunch, and matching real similar photos.
+Record which checks actually ran in the PR. iOS/iPad simulator checks cover the
+Photos review flow and accessibility separately; physical-device haptic feel
+requires a device.

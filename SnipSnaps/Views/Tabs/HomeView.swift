@@ -207,6 +207,12 @@ struct HomeView: View {
         .frame(maxWidth: .infinity, alignment: .top)
       }
       .background(AppColor.background)
+      // iOS pull-to-refresh (macOS has the toolbar refresh button instead).
+      #if os(iOS)
+      .refreshable {
+        await pullToRefreshCounts()
+      }
+      #endif
       #if os(macOS)
       .navigationTitle("Photos")
       #else
@@ -220,7 +226,7 @@ struct HomeView: View {
           } else {
             #if os(macOS)
             Button {
-              refreshForCurrentMemoryOption()
+              refresh(modes: allCountModes)
             } label: {
               Image(systemName: "arrow.clockwise")
             }
@@ -238,7 +244,7 @@ struct HomeView: View {
         PhotoLibraryChangeBroadcaster.shared.startIfNeeded()
       }
       .onDisappear {
-        countRefreshTask?.cancel()
+        cancelCountRefresh()
       }
       // Any change to the (possibly limited) library — including photos added from
       // Settings or the review empty state, which don't background the app or change
@@ -265,7 +271,7 @@ struct HomeView: View {
         guard latest != authStatus else { return }
         authStatus = latest
         loadCachedCounts()
-        refreshForCurrentMemoryOption()
+        refresh(modes: allCountModes)
       }
     }
   }
@@ -294,7 +300,7 @@ struct HomeView: View {
           usesWideGridCard: usesTwoColumnLayout
         )
       }
-      .buttonStyle(.plain)
+      .reviewCardButtonStyle()
       .interactiveCardHover()
       .disabled(!canAccessPhotos)
 
@@ -341,11 +347,14 @@ struct HomeView: View {
           .font(.caption2.weight(.bold))
       }
       .font(.caption.weight(.semibold))
-      .foregroundStyle(.secondary)
+      .foregroundStyle(Color.secondary)
       .padding(.horizontal, 10)
       .padding(.vertical, 6)
       .background(AppColor.chip, in: Capsule(style: .continuous))
     }
+    // The label draws its own chevron; macOS 27 also appends a system menu
+    // indicator, which would double it. No visible effect on iOS.
+    .menuIndicator(.hidden)
     .accessibilityLabel("Sort screenshots by \(screenshotSortOption.title)")
   }
 
@@ -369,11 +378,14 @@ struct HomeView: View {
           .font(.caption2.weight(.bold))
       }
       .font(.caption.weight(.semibold))
-      .foregroundStyle(.secondary)
+      .foregroundStyle(Color.secondary)
       .padding(.horizontal, 10)
       .padding(.vertical, 6)
       .background(AppColor.chip, in: Capsule(style: .continuous))
     }
+    // The label draws its own chevron; macOS 27 also appends a system menu
+    // indicator, which would double it. No visible effect on iOS.
+    .menuIndicator(.hidden)
     .accessibilityLabel("Sort videos by \(videoSortOption.subtitle)")
   }
 
@@ -397,11 +409,14 @@ struct HomeView: View {
           .font(.caption2.weight(.bold))
       }
       .font(.caption.weight(.semibold))
-      .foregroundStyle(.secondary)
+      .foregroundStyle(Color.secondary)
       .padding(.horizontal, 10)
       .padding(.vertical, 6)
       .background(AppColor.chip, in: Capsule(style: .continuous))
     }
+    // The label draws its own chevron; macOS 27 also appends a system menu
+    // indicator, which would double it. No visible effect on iOS.
+    .menuIndicator(.hidden)
     .accessibilityLabel("Sort similar groups by \(similarSortOption.subtitle)")
   }
 
@@ -485,6 +500,10 @@ struct HomeView: View {
       isRefreshingCounts = false
       return
     }
+    // Access is available, so (re)try starting change observation. On a fresh
+    // install the onAppear attempt is skipped while undetermined (registering
+    // would auto-prompt); this picks it up once the grant lands.
+    PhotoLibraryChangeBroadcaster.shared.startIfNeeded()
     let modesToRefresh = modesToRefresh ?? allCountModes
     guard !modesToRefresh.isEmpty else {
       isRefreshingCounts = false
@@ -519,6 +538,16 @@ struct HomeView: View {
     refreshForCurrentMemoryOption()
   }
 
+  private func cancelCountRefresh() {
+    countRefreshTask?.cancel()
+    countRefreshTask = nil
+    // Invalidate callbacks already queued on the main actor, and retry any
+    // interrupted fast or deferred counts when Home becomes visible again.
+    countRefreshID = UUID()
+    isRefreshingCounts = false
+    hasLoadedInitialCounts = false
+  }
+
   private func loadCachedCounts() {
     counts = HomeCountCache.load(memoryOptionRawValue: reviewMemoryOptionRawValue)
   }
@@ -533,6 +562,24 @@ struct HomeView: View {
     }
     refresh(modes: fastCountModes, deferredModes: expensiveModesToRefresh)
   }
+
+  #if os(iOS)
+  // Pull-to-refresh entry point: recount, holding the spinner while the
+  // recount runs so the gesture feels connected to the count updates. An
+  // explicit refresh bypasses the automatic Large Photos freshness cache. Bails
+  // after ~10s so a slow library can't pin the spinner, and also if the
+  // refreshable task itself is cancelled — Task.sleep then returns instantly,
+  // so without this check the loop would spin hot until the deadline.
+  @MainActor
+  private func pullToRefreshCounts() async {
+    guard !Task.isCancelled else { return }
+    refresh(modes: allCountModes)
+    let deadline = Date().addingTimeInterval(10)
+    while isRefreshingCounts, Date() < deadline, !Task.isCancelled {
+      try? await Task.sleep(for: .milliseconds(200))
+    }
+  }
+  #endif
 
   private func recordReviewStart(for mode: ReviewMode) {
     guard PhotoReviewHistory.supportsSkipping(for: mode), reviewMemoryOption != .never else { return }
@@ -578,6 +625,9 @@ struct HomeView: View {
     isRefreshingCounts = !modesToRefresh.isEmpty
     let reviewMemoryOption = reviewMemoryOption
     let reviewMemoryOptionRawValue = reviewMemoryOptionRawValue
+    // Access is available, so (re)try starting change observation — see the
+    // single-arg refresh(_:) above for why this lives here and not onAppear.
+    PhotoLibraryChangeBroadcaster.shared.startIfNeeded()
     countRefreshTask = Task.detached(priority: .userInitiated) {
       if !modesToRefresh.isEmpty {
         let refreshedCounts = Self.fetchCounts(for: modesToRefresh, reviewMemoryOption: reviewMemoryOption)
@@ -592,7 +642,9 @@ struct HomeView: View {
 
       guard !deferredModes.isEmpty, !Task.isCancelled else { return }
       try? await Task.sleep(for: .seconds(2))
+      guard !Task.isCancelled else { return }
       let deferredCounts = Self.fetchCounts(for: deferredModes, reviewMemoryOption: reviewMemoryOption)
+      guard !Task.isCancelled else { return }
       await MainActor.run {
         guard countRefreshID == refreshID else { return }
         HomeCountCache.store(deferredCounts, memoryOptionRawValue: reviewMemoryOptionRawValue)
@@ -656,6 +708,7 @@ private struct ActionCard: View {
   var usesWideGridCard = false
 
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+  @ScaledMetric(relativeTo: .caption) private var accessorySpace: CGFloat = 30
 
   var body: some View {
     ZStack {
@@ -692,14 +745,15 @@ private struct ActionCard: View {
           if let countSummary {
             Text(countSummary)
               .font(.caption.weight(.medium))
-              .foregroundStyle(.tertiary)
+              .foregroundStyle(.secondary)
               .monospacedDigit()
           }
         }
-        .padding(.bottom, reservesAccessorySpace ? 30 : 0)
+        .padding(.bottom, reservesAccessorySpace ? accessorySpace : 0)
         Spacer(minLength: 0)
       }
       .padding(.horizontal, 16)
+      .padding(.vertical, dynamicTypeSize.isAccessibilitySize ? 12 : 0)
     }
     .frame(minHeight: usesWideGridCard ? 112 : (reservesAccessorySpace ? 112 : 96))
     .opacity(isDisabled ? 0.5 : 1.0)

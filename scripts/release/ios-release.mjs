@@ -335,7 +335,7 @@ function status() {
 
 function nextBuild() {
   const xcode = readXcodeSettings();
-  const version = flagValue("--version", xcode.marketingVersion);
+  const version = xcode.marketingVersion;
   const app = resolveAppRef();
   const platforms = resolvePlatforms();
 
@@ -345,8 +345,6 @@ function nextBuild() {
       "next-build-number",
       "--app",
       app,
-      "--version",
-      version,
       "--platform",
       platform,
       "--output",
@@ -366,6 +364,8 @@ function nextBuild() {
     return Number(buildNumber);
   });
 
+  // Query all marketing versions: a new version's empty train starts at 1,
+  // which would reuse a previously shipped macOS build number.
   // The universal-purchase target has ONE CURRENT_PROJECT_VERSION, but ASC keeps
   // an independent build-number sequence per platform. Applying the max keeps a
   // single shared build number valid for every targeted platform (lockstep).
@@ -385,8 +385,17 @@ function applyNotes() {
   const confirmed = hasFlag("--confirm");
   const xcode = readXcodeSettings();
   const notes = notesFromFileOrChangesets();
-  const app = confirmed ? resolveAppRef() : config.bundleId;
   const platforms = resolvePlatforms();
+  const buildNumber = flagValue("--build-number", xcode.buildNumber);
+
+  if (hasFlag("--build-number")) {
+    if (!/^\d+$/.test(buildNumber || "") || Number(buildNumber) < 1) {
+      throw new Error("Use --build-number with a positive integer from App Store Connect.");
+    }
+    if (platforms.length !== 1) {
+      throw new Error("Use a single --platform with --build-number; Xcode Cloud numbers each platform's archive separately.");
+    }
+  }
 
   if (!notes) throw new Error("No notes were found to apply.");
 
@@ -398,7 +407,7 @@ function applyNotes() {
   if (!confirmed) {
     console.log("Dry run. Re-run with --confirm to update App Store Connect.");
     console.log(`Version: ${xcode.marketingVersion}`);
-    console.log(`Build: ${xcode.buildNumber}`);
+    console.log(`Build: ${buildNumber}`);
     console.log(`Platforms: ${platforms.join(", ")}`);
     console.log(`Targets: ${planned.join(", ")}`);
     console.log("");
@@ -406,6 +415,7 @@ function applyNotes() {
     return;
   }
 
+  const app = resolveAppRef();
   for (const platform of platforms) {
     if (planned.includes("appstore")) {
       const edit = run(ascBin, [
@@ -448,7 +458,7 @@ function applyNotes() {
         "--app",
         app,
         "--build-number",
-        xcode.buildNumber,
+        buildNumber,
         "--version",
         xcode.marketingVersion,
         "--platform",
@@ -467,10 +477,8 @@ function applyNotes() {
         if (create.status === 0) {
           console.log(`Updated TestFlight What to Test notes (${platformLabel(platform)}).`);
         } else {
-          // Non-fatal: the local build number can drift from ASC (Xcode Cloud
-          // auto-increments), so this build may not exist. Don't fail the run.
           const detail = (create.stderr || create.stdout || update.stderr || "").trim();
-          console.warn(`Skipped TestFlight What to Test for ${platformLabel(platform)} build ${xcode.buildNumber}: ${detail}`);
+          throw new Error(`Could not update TestFlight notes for ${platformLabel(platform)} build ${buildNumber}: ${detail}. For Xcode Cloud, pass --platform and --build-number for the processed archive.`);
         }
       }
     }
@@ -862,6 +870,8 @@ Commands:
   tag [--confirm]               Create a git release tag using ${config.gitTagPrefix}<version>+<build>.
 
 Options:
+  --build-number <number>      Select the processed archive for apply-notes instead of
+                                CURRENT_PROJECT_VERSION. Requires a single --platform.
   --platform IOS|MAC_OS|all     Which ASC platform to target on the universal-purchase
                                 record. Default: ${config.platform}. Applies to status, next-build,
                                 apply-notes, and backfill. "all" acts on every platform;

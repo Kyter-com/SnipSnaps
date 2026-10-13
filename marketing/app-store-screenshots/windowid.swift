@@ -3,10 +3,9 @@
 //
 //   windowid <owner-name> [pid]
 //
-// If a pid is given it matches on kCGWindowOwnerPID (the exact instance we just
-// launched) and falls back to the owner name only if the pid matches nothing —
-// so a stray or pre-existing SnipSnaps window can't be picked by the
-// largest-area heuristic.
+// If a pid is given it matches only kCGWindowOwnerPID (the exact instance we just
+// launched). It must never fall back to another instance with the same name:
+// that could capture a user's live window if the demo fails to open.
 //
 // Used by capture-mac.sh to feed `screencapture -l <id>`. Matches on the window
 // *owner* (process name / pid), which is available without Screen Recording
@@ -20,6 +19,9 @@ import Foundation
 
 let target = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "SnipSnaps"
 let wantPID: Int? = CommandLine.arguments.count > 2 ? Int(CommandLine.arguments[2]) : nil
+if CommandLine.arguments.count > 2, wantPID == nil || wantPID! <= 0 {
+  exit(2)
+}
 let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
 
 guard let list = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
@@ -42,8 +44,12 @@ func largestWindow(matching matches: ([String: Any]) -> Bool) -> Int? {
   return best?.id
 }
 
-// Prefer an exact pid match; fall back to the owner name.
-if let wantPID, let id = largestWindow(matching: { ($0[kCGWindowOwnerPID as String] as? Int) == wantPID }) {
+// A requested PID is mandatory, not a hint. Name lookup is only for calls that
+// explicitly omit the PID argument.
+if let wantPID {
+  guard let id = largestWindow(matching: { ($0[kCGWindowOwnerPID as String] as? Int) == wantPID }) else {
+    exit(1)
+  }
   print(id)
   exit(0)
 }
