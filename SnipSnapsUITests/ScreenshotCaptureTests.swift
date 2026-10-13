@@ -16,80 +16,16 @@ import UIKit
 ///
 /// Conventions:
 /// - Every step calls capture(name:) which attaches a PNG named like "01-home".
-/// - The test never fails mid-flow; it always continues so partial captures land.
+/// - Required waypoints are asserted so a failed navigation cannot produce a
+///   passing run with mislabeled screenshots.
 final class ScreenshotCaptureTests: XCTestCase {
   override func setUpWithError() throws {
-    continueAfterFailure = true
+    continueAfterFailure = false
   }
 
   @MainActor
   func testCaptureAllScreens() throws {
-    let app = XCUIApplication()
-    app.launch()
-
-    // Wait for home
-    let homeTitle = app.staticTexts["SnipSnaps"].firstMatch
-    _ = homeTitle.waitForExistence(timeout: 12)
-
-    grantPhotosAccessIfNeeded(in: app)
-    sleep(2)
-
-    sleep(1)
-    capture("01-home")
-
-    // ---- Similar (must run BEFORE the Today review) --------------------
-    // "Similar" is in the "Space Savers" section near the bottom of the home
-    // list, so scroll it into view first. The card is one button labelled
-    // "Similar" (older builds exposed it as a static text). This has to happen
-    // before any review below: once photos are reviewed, their near-duplicate
-    // groups are remembered and skipped, leaving "No Similar Photos Found".
-    let similarButton = app.buttons["Similar"].firstMatch
-    let similarText = app.staticTexts["Similar"].firstMatch
-    var scrollTries = 0
-    while !(similarButton.exists || similarText.exists) && scrollTries < 6 {
-      app.swipeUp()
-      scrollTries += 1
-      usleep(500_000)
-    }
-    let similarCard = similarButton.exists ? similarButton : similarText
-    if similarCard.exists {
-      var hitTries = 0
-      while !similarCard.isHittable && hitTries < 4 {
-        app.swipeUp()
-        hitTries += 1
-        usleep(400_000)
-      }
-      similarCard.tap()
-    }
-    let closeSimilar = app.buttons["Close similar review"].firstMatch
-    _ = closeSimilar.waitForExistence(timeout: 12)
-    sleep(4)  // give the hashing/grouping pass a moment to finish
-    capture("03-similar")
-    if closeSimilar.exists {
-      closeSimilar.tap()
-      sleep(1)
-    }
-
-    // Scroll the home list back to the top so "Today" is reachable again.
-    _ = homeTitle.waitForExistence(timeout: 6)
-    var topTries = 0
-    while !app.staticTexts["Today"].firstMatch.isHittable && topTries < 6 {
-      app.swipeDown()
-      topTries += 1
-      usleep(400_000)
-    }
-
-    // ---- Today → review ------------------------------------------------
-    let todayCard = app.staticTexts["Today"].firstMatch
-    if todayCard.waitForExistence(timeout: 5) {
-      todayCard.tap()
-    }
-    // Reliable waypoint: the toolbar "Close review" button is unique to the
-    // running review session.
-    let closeReview = app.buttons["Close review"].firstMatch
-    _ = closeReview.waitForExistence(timeout: 8)
-    sleep(2)  // let the photo render
-    capture("02-review")
+    let app = launchAndCaptureReviewScreens()
 
     // ---- Details (tap the date+size info pill) -------------------------
     // The whole pill is one Button whose label concatenates date + size + info icon.
@@ -110,9 +46,9 @@ final class ScreenshotCaptureTests: XCTestCase {
     let storageButton = app.buttons.matching(
       NSPredicate(format: "label CONTAINS[c] ' MB' OR label CONTAINS[c] ' KB' OR label CONTAINS[c] ' bytes'")
     ).firstMatch
-    if storageButton.waitForExistence(timeout: 3) {
-      storageButton.tap()
-    }
+    XCTAssertTrue(storageButton.waitForExistence(timeout: 3))
+    storageButton.tap()
+    XCTAssertTrue(app.navigationBars["Photo Details"].firstMatch.waitForExistence(timeout: 4))
 
     // Get the details sheet showing the full metadata list + the Location map.
     // On iPhone the sheet opens at .medium, so drag its nav-bar chrome up to the
@@ -161,7 +97,7 @@ final class ScreenshotCaptureTests: XCTestCase {
       button.tap()
       usleep(350_000)
     }
-    _ = summaryTitle.waitForExistence(timeout: 8)
+    XCTAssertTrue(summaryTitle.waitForExistence(timeout: 8))
     sleep(2)
     capture("05-summary")
 
@@ -180,6 +116,89 @@ final class ScreenshotCaptureTests: XCTestCase {
 
     // ---- Settings ------------------------------------------------------
     navigateToSettingsAndCapture(in: app)
+  }
+
+  /// Refresh only the Review, Similar, and Settings marketing slides.
+  /// Closing the review here avoids marking or deleting any seeded photos.
+  @MainActor
+  func testCaptureRefreshedScreens() throws {
+    let app = launchAndCaptureReviewScreens()
+    app.buttons["Close review"].firstMatch.tap()
+    navigateToSettingsAndCapture(in: app)
+  }
+
+  @MainActor
+  private func launchAndCaptureReviewScreens() -> XCUIApplication {
+    let app = XCUIApplication()
+    app.launch()
+
+    // Wait for home
+    let homeTitle = app.staticTexts["SnipSnaps"].firstMatch
+    _ = homeTitle.waitForExistence(timeout: 12)
+
+    grantPhotosAccessIfNeeded(in: app)
+    sleep(2)
+
+    sleep(1)
+    capture("01-home")
+
+    // ---- Similar (must run BEFORE the Today review) --------------------
+    // "Similar" is in the "Space Savers" section near the bottom of the home
+    // list, so scroll it into view first. The card is one button labelled
+    // "Similar" (older builds exposed it as a static text). This has to happen
+    // before any review below: once photos are reviewed, their near-duplicate
+    // groups are remembered and skipped, leaving "No Similar Photos Found".
+    let similarButton = app.buttons["Similar"].firstMatch
+    let similarText = app.staticTexts["Similar"].firstMatch
+    var scrollTries = 0
+    while !(similarButton.exists || similarText.exists) && scrollTries < 6 {
+      app.swipeUp()
+      scrollTries += 1
+      usleep(500_000)
+    }
+    let similarCard = similarButton.exists ? similarButton : similarText
+    if similarCard.exists {
+      var hitTries = 0
+      while !similarCard.isHittable && hitTries < 4 {
+        app.swipeUp()
+        hitTries += 1
+        usleep(400_000)
+      }
+      similarCard.tap()
+    }
+    let closeSimilar = app.buttons["Close similar review"].firstMatch
+    XCTAssertTrue(closeSimilar.waitForExistence(timeout: 12))
+    XCTAssertTrue(app.buttons["Keep photo"].firstMatch.waitForExistence(timeout: 30), "Seed photos must produce a Similar review")
+    sleep(2)  // let the first photo's metadata transition and glass layout settle
+    capture("03-similar")
+    if closeSimilar.exists {
+      closeSimilar.tap()
+      sleep(1)
+    }
+
+    // Scroll the home list back to the top so "Today" is reachable again.
+    _ = homeTitle.waitForExistence(timeout: 6)
+    var topTries = 0
+    let todayButton = app.buttons["Today"].firstMatch
+    while topTries < 6 && (!todayButton.exists || !todayButton.isHittable) {
+      app.swipeDown()
+      topTries += 1
+      usleep(400_000)
+    }
+
+    // ---- Today → review ------------------------------------------------
+    let todayCard = app.buttons["Today"].firstMatch
+    XCTAssertTrue(todayCard.waitForExistence(timeout: 5))
+    todayCard.tap()
+    // Reliable waypoint: the toolbar "Close review" button is unique to the
+    // running review session.
+    let closeReview = app.buttons["Close review"].firstMatch
+    XCTAssertTrue(closeReview.waitForExistence(timeout: 8))
+    XCTAssertTrue(app.buttons["Keep photo"].firstMatch.waitForExistence(timeout: 8))
+    sleep(2)  // let the photo render
+    capture("02-review")
+
+    return app
   }
 
   /// Focused path for refreshing the Settings marketing slide without driving
@@ -223,6 +242,8 @@ final class ScreenshotCaptureTests: XCTestCase {
     // loop only polls for the alert.
     var tappedEnable = false
     for _ in 0..<20 {
+      let today = app.buttons["Today"].firstMatch
+      if today.exists, today.isEnabled { return }
       if allowFullAccess().exists {
         if tapAllowWhenSettled(resolve: allowFullAccess) { break }
       } else if !tappedEnable {

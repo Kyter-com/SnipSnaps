@@ -30,12 +30,23 @@ enum SimilarThreshold {
   /// default can only shift strictness, never disable matching or match
   /// everything. In-range values pass through untouched.
   static func clamped(_ value: Double) -> Double {
-    min(max(value, range.lowerBound), range.upperBound)
+    guard value.isFinite else { return defaultValue }
+    return min(max(value, range.lowerBound), range.upperBound)
+  }
+
+  // Every slider step needs a distinct spoken value, including the several
+  // steps that share the same Strict/Balanced/Loose label.
+  static func accessibilityValue(for value: Double) -> String {
+    let value = clamped(value)
+    let position = Int(((value - range.lowerBound) / step).rounded()) + 1
+    let positions = Int(((range.upperBound - range.lowerBound) / step).rounded()) + 1
+    return "\(presetName(for: value)), \(position) of \(positions)"
   }
 
   /// Nearest-detent index (0/1/2). Used as the haptic trigger so the slider
   /// ticks only when settling onto a different stop.
   static func detentIndex(for value: Double) -> Int {
+    let value = clamped(value)
     let lowerMidpoint = (detents[0] + detents[1]) / 2
     let upperMidpoint = (detents[1] + detents[2]) / 2
     if value < lowerMidpoint {

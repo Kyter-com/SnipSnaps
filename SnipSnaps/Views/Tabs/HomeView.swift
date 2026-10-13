@@ -226,7 +226,7 @@ struct HomeView: View {
           } else {
             #if os(macOS)
             Button {
-              refreshForCurrentMemoryOption()
+              refresh(modes: allCountModes)
             } label: {
               Image(systemName: "arrow.clockwise")
             }
@@ -244,7 +244,7 @@ struct HomeView: View {
         PhotoLibraryChangeBroadcaster.shared.startIfNeeded()
       }
       .onDisappear {
-        countRefreshTask?.cancel()
+        cancelCountRefresh()
       }
       // Any change to the (possibly limited) library — including photos added from
       // Settings or the review empty state, which don't background the app or change
@@ -271,7 +271,7 @@ struct HomeView: View {
         guard latest != authStatus else { return }
         authStatus = latest
         loadCachedCounts()
-        refreshForCurrentMemoryOption()
+        refresh(modes: allCountModes)
       }
     }
   }
@@ -347,7 +347,7 @@ struct HomeView: View {
           .font(.caption2.weight(.bold))
       }
       .font(.caption.weight(.semibold))
-      .foregroundStyle(.secondary)
+      .foregroundStyle(Color.secondary)
       .padding(.horizontal, 10)
       .padding(.vertical, 6)
       .background(AppColor.chip, in: Capsule(style: .continuous))
@@ -378,7 +378,7 @@ struct HomeView: View {
           .font(.caption2.weight(.bold))
       }
       .font(.caption.weight(.semibold))
-      .foregroundStyle(.secondary)
+      .foregroundStyle(Color.secondary)
       .padding(.horizontal, 10)
       .padding(.vertical, 6)
       .background(AppColor.chip, in: Capsule(style: .continuous))
@@ -409,7 +409,7 @@ struct HomeView: View {
           .font(.caption2.weight(.bold))
       }
       .font(.caption.weight(.semibold))
-      .foregroundStyle(.secondary)
+      .foregroundStyle(Color.secondary)
       .padding(.horizontal, 10)
       .padding(.vertical, 6)
       .background(AppColor.chip, in: Capsule(style: .continuous))
@@ -538,6 +538,16 @@ struct HomeView: View {
     refreshForCurrentMemoryOption()
   }
 
+  private func cancelCountRefresh() {
+    countRefreshTask?.cancel()
+    countRefreshTask = nil
+    // Invalidate callbacks already queued on the main actor, and retry any
+    // interrupted fast or deferred counts when Home becomes visible again.
+    countRefreshID = UUID()
+    isRefreshingCounts = false
+    hasLoadedInitialCounts = false
+  }
+
   private func loadCachedCounts() {
     counts = HomeCountCache.load(memoryOptionRawValue: reviewMemoryOptionRawValue)
   }
@@ -554,14 +564,16 @@ struct HomeView: View {
   }
 
   #if os(iOS)
-  // Pull-to-refresh entry point: recount, holding the spinner while the fast
-  // recount runs so the gesture feels connected to the count updates. Bails
+  // Pull-to-refresh entry point: recount, holding the spinner while the
+  // recount runs so the gesture feels connected to the count updates. An
+  // explicit refresh bypasses the automatic Large Photos freshness cache. Bails
   // after ~10s so a slow library can't pin the spinner, and also if the
   // refreshable task itself is cancelled — Task.sleep then returns instantly,
   // so without this check the loop would spin hot until the deadline.
   @MainActor
   private func pullToRefreshCounts() async {
-    refreshForCurrentMemoryOption()
+    guard !Task.isCancelled else { return }
+    refresh(modes: allCountModes)
     let deadline = Date().addingTimeInterval(10)
     while isRefreshingCounts, Date() < deadline, !Task.isCancelled {
       try? await Task.sleep(for: .milliseconds(200))
@@ -630,7 +642,9 @@ struct HomeView: View {
 
       guard !deferredModes.isEmpty, !Task.isCancelled else { return }
       try? await Task.sleep(for: .seconds(2))
+      guard !Task.isCancelled else { return }
       let deferredCounts = Self.fetchCounts(for: deferredModes, reviewMemoryOption: reviewMemoryOption)
+      guard !Task.isCancelled else { return }
       await MainActor.run {
         guard countRefreshID == refreshID else { return }
         HomeCountCache.store(deferredCounts, memoryOptionRawValue: reviewMemoryOptionRawValue)
@@ -694,6 +708,7 @@ private struct ActionCard: View {
   var usesWideGridCard = false
 
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+  @ScaledMetric(relativeTo: .caption) private var accessorySpace: CGFloat = 30
 
   var body: some View {
     ZStack {
@@ -730,14 +745,15 @@ private struct ActionCard: View {
           if let countSummary {
             Text(countSummary)
               .font(.caption.weight(.medium))
-              .foregroundStyle(.tertiary)
+              .foregroundStyle(.secondary)
               .monospacedDigit()
           }
         }
-        .padding(.bottom, reservesAccessorySpace ? 30 : 0)
+        .padding(.bottom, reservesAccessorySpace ? accessorySpace : 0)
         Spacer(minLength: 0)
       }
       .padding(.horizontal, 16)
+      .padding(.vertical, dynamicTypeSize.isAccessibilitySize ? 12 : 0)
     }
     .frame(minHeight: usesWideGridCard ? 112 : (reservesAccessorySpace ? 112 : 96))
     .opacity(isDisabled ? 0.5 : 1.0)

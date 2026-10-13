@@ -449,21 +449,7 @@ struct ReviewSessionView: View {
         Button {
           showMetadataSheet = true
         } label: {
-          HStack(spacing: 12) {
-            Label(currentPhotoDetails.captureDateSummaryText, systemImage: "calendar")
-              .lineLimit(1)
-            Spacer(minLength: 0)
-            Label(currentPhotoDetails.fileSizeText, systemImage: "internaldrive")
-              .lineLimit(1)
-            Image(systemName: "info.circle")
-              .foregroundStyle(AppColor.primary)
-          }
-          .font(.footnote.weight(.medium))
-          .foregroundStyle(.secondary)
-          .padding(.horizontal, 14)
-          .padding(.vertical, 12)
-          .frame(maxWidth: .infinity)
-          .infoChipBackground()
+          ReviewDetailsLabel(details: currentPhotoDetails)
         }
         .id(currentAsset?.localIdentifier)
         .transition(.opacity.combined(with: .scale(scale: 0.985)))
@@ -1333,21 +1319,7 @@ struct SimilarReviewSessionView: View {
         Button {
           metadataTarget = MetadataTarget(asset: asset, details: detail)
         } label: {
-          HStack(spacing: 12) {
-            Label(detail.captureDateSummaryText, systemImage: "calendar")
-              .lineLimit(1)
-            Spacer(minLength: 0)
-            Label(detail.fileSizeText, systemImage: "internaldrive")
-              .lineLimit(1)
-            Image(systemName: "info.circle")
-              .foregroundStyle(AppColor.primary)
-          }
-          .font(.footnote.weight(.medium))
-          .foregroundStyle(.secondary)
-          .padding(.horizontal, 14)
-          .padding(.vertical, 12)
-          .frame(maxWidth: .infinity)
-          .infoChipBackground()
+          ReviewDetailsLabel(details: detail)
         }
         .id(asset.localIdentifier)
         .transition(.opacity.combined(with: .scale(scale: 0.985)))
@@ -2236,6 +2208,47 @@ struct SimilarReviewSessionView: View {
     generator.prepare()
     generator.impactOccurred()
     #endif
+  }
+}
+
+private struct ReviewDetailsLabel: View {
+  let details: ReviewPhotoDetails
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+  var body: some View {
+    Group {
+      if dynamicTypeSize.isAccessibilitySize {
+        VStack(alignment: .leading, spacing: 8) {
+          Label(details.captureDateSummaryText, systemImage: "calendar")
+            .fixedSize(horizontal: false, vertical: true)
+          HStack(spacing: 12) {
+            Label(details.fileSizeText, systemImage: "internaldrive")
+            Spacer(minLength: 0)
+            infoIcon
+          }
+        }
+      } else {
+        HStack(spacing: 12) {
+          Label(details.captureDateSummaryText, systemImage: "calendar")
+            .lineLimit(1)
+          Spacer(minLength: 0)
+          Label(details.fileSizeText, systemImage: "internaldrive")
+            .lineLimit(1)
+          infoIcon
+        }
+      }
+    }
+    .font(.footnote.weight(.medium))
+    .foregroundStyle(Color.secondary)
+    .padding(.horizontal, 14)
+    .padding(.vertical, 12)
+    .frame(maxWidth: .infinity)
+    .infoChipBackground()
+  }
+
+  private var infoIcon: some View {
+    Image(systemName: "info.circle")
+      .foregroundStyle(AppColor.primary)
   }
 }
 

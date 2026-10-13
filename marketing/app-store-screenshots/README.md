@@ -16,6 +16,53 @@ If `raw/` already has captures (e.g. you only touched the marketing layout), jus
 python3 marketing/app-store-screenshots/generate.py
 ```
 
+## Refresh selected slides
+
+Keep the existing marketing design and numbering while replacing only selected
+captures. For Review, Similar, and Settings, run the focused UI test against a
+**dedicated, seeded iOS 27 simulator** (iPhone 17 Pro Max or iPad Pro 13-inch):
+
+```bash
+xcodebuild -project SnipSnaps.xcodeproj -scheme SnipSnaps \
+  -destination 'id=<dedicated-simulator-id>' -parallel-testing-enabled NO \
+  -only-testing:SnipSnapsUITests/ScreenshotCaptureTests/testCaptureRefreshedScreens \
+  -resultBundlePath /tmp/SnipSnapsSelectedShots.xcresult test
+python3 marketing/app-store-screenshots/extract-shots.py \
+  /tmp/SnipSnapsSelectedShots.xcresult /tmp/SnipSnapsSelectedShots
+```
+
+The focused test closes reviews without making keep/delete decisions. Set the
+native 9:41 status-bar override before running it, as in `capture.sh`. Copy the
+seed images into a temporary directory before refreshing their EXIF dates, then
+import those copies with `simctl addmedia`; the source images remain unchanged.
+Use fresh dedicated simulators instead of resetting an existing photo library.
+
+The test also attaches Home as a diagnostic waypoint; leave that raw and output
+asset unchanged for this refresh. Inspect the three selected PNGs before copying `02-review.png`, `03-similar.png`,
+and `06-settings.png` into the matching `raw/<device>/` folder, then compose only
+those slides:
+
+```bash
+python3 marketing/app-store-screenshots/generate.py \
+  --device iphone-6.9 --device ipad-13 \
+  --screen review --screen similar --screen settings
+```
+
+For the corresponding Mac updates, from a session permitted to capture the app:
+
+```bash
+marketing/app-store-screenshots/capture-mac.sh review similar files
+python3 marketing/app-store-screenshots/generate.py \
+  --device mac --screen review --screen similar --screen files
+```
+
+The Mac script matches windows by the launched process ID, leaves existing app
+instances running, and validates all staged captures before replacing any raw
+assets. A failed capture preserves the previous images and exits with an error.
+The generator's filters leave all unselected output files unchanged and fail
+before writing if any selected raw capture is missing. Neither command uploads
+to App Store Connect.
+
 ## Full reproduce (real captures end-to-end)
 
 Captures the actual production `HomeView` / `ReviewSessionView` / `SettingsView` from a clean simulator state.
@@ -170,7 +217,7 @@ If captures look wrong after a re-run, the cause is almost always one of these:
 
 - **Today / On This Day show 0** — the EXIF dates on `seed-photos/*.jpg` weren't refreshed before `simctl addmedia`. Run `refresh-seed-dates.py` again or just rerun `capture.sh`, which does it for you.
 - **"Photo access denied" on every screen — and shots that bounce into iOS Settings** — on iOS 26.4 the TCC pre-grant is dead. `simctl privacy grant photos` does NOT stick (verified: the app still shows the system prompt even on a freshly-`erase`d device), and a direct `auth_value = 4` write to `TCC.db` is ignored because `tccd` serves its cached value. So `capture.sh` resets Photos to *not-determined* (`simctl privacy reset all`) and the UI test grants access by walking the system dialog. **The walker taps enable exactly once, then polls for the alert:** the app no longer auto-requests on launch (registering the change observer while undetermined would both prompt out of context and race the enable tap — the superseded request can resolve as denied with no prompt shown). The test polls ~20s for `springboard.buttons["Allow Full Access"]` and taps it only once its frame settles (iOS 27's alert card lays out asynchronously). If the grant still fails, the app lands denied → the test taps "Open Settings" → you capture the Settings app.
-- **`No Similar Photos Found` in the simulator — capture Similar on a real device.** The similar scan fingerprints each photo (18×16 *synchronous* PhotoKit thumbnail → dHash, plus a Vision feature print) and clusters near-duplicates. In the iOS 26.4 *simulator* it returns zero groups near-instantly (no scanning spinner) — verified with 4 byte-identical copies of one photo, which still didn't group. The fingerprinting path just doesn't work for `simctl addmedia`'d assets in the sim; the same build detects similars fine on a physical phone. So for a populated `03-similar` slide, run `capture.sh <connected-device-udid> …` against a real device, or fall back to the DEBUG `ScreenshotDemoView` Similar state. (Historical note: the scan once used `.fastFormat` thumbnails, which returned inconsistent placeholders at 18×16 and broke hash equality; it's `.highQualityFormat` now, but that doesn't rescue the simulator.) The UI test runs Similar *before* the Today review so real-device runs don't skip already-reviewed groups.
+- **`No Similar Photos Found` in the simulator** — the current real-app capture flow works on iOS 27 with the bundled near-duplicate seeds. Import all 42 seeds with fresh EXIF dates, capture Similar before reviewing anything, and use a fresh app installation so remembered groups don't hide the fixture. The test waits for a populated review and lets the metadata animation settle before taking the shot. Historical simulator failures involved placeholder thumbnails and a NULL-sensitive PhotoKit media-subtype predicate; they are not a reason to replace a populated real capture with mocked UI.
 - **`04-details` shows no map, or a blank beige grid where the map should be** — two separate causes. (1) *No Location section at all*: the seed photo carries no GPS, so `PHAsset.location` is nil and `PhotoMetadataSheet` omits the whole Location section. `seed-locations.py` (run by `capture.sh`) stamps EXIF GPS on `alley`/`beach`/`boat`; `boat.jpg` is the one the details step lands on (3rd photo, newest-first, after two `Keep photo` taps). `refresh-seed-dates.py` preserves that GPS on every run. (2) *Blank grid*: MapKit tiles fetch over the network and paint an empty grid until they arrive, so the capture must wait several seconds after the sheet opens — `ScreenshotCaptureTests` sleeps 8s before `capture("04-details")`. The test also positions the sheet so the map is in frame, and this is idiom-specific: on **iPhone** the sheet opens at `.medium`, so the test drags its nav-bar chrome up to the `.large` detent (press-drag the chrome, not `swipeUp()` which just scrolls the Form) — this also fully covers the photo and avoids the Liquid Glass refraction smear; on **iPad** the sheet would otherwise be a small fixed-size form-sheet card that clips its content (the map falls below the fold), so `PhotoMetadataSheet` gives it `.presentationSizing(.page)` — a page-size sheet tall enough to show the whole list with no scroll (a no-op on iPhone's compact width, which uses the detents). That one line is the only app-source change for the screenshots; `.presentationSizing(.fitted)` was tried first and rejected (it collapses a scrollable `Form` to a stub), and a `.large` detent selection is simply ignored on regular-width iPad.
 - **Status bar rides above the Dynamic Island / tab bar clipped** — the iPhone 16 SVG's screen glass (~0.477 aspect) is wider than a real 6.9" capture (~0.460). The old *centered cover* shaved ~52px off the top and bottom to fill it, which pushed the status bar above the Dynamic Island and trimmed the tab bar. `iphone_frame()` now stretches the *frame* vertically (~3.7%, to `SCREEN_ASPECT`) so the capture maps 1:1 — no crop, status bar centered on the Island, tab bar intact. Stretching the frame is imperceptible on the rounded corners; squishing the app content would be visible, so we stretch the frame, not the shot.
 - **Status-bar time / weak signal** — baked in natively by `capture.sh`'s `simctl status_bar override` (9:41, full battery, Wi-Fi, 4 signal bars), which works on iOS 26.4. There is no compositing-time retiming any more. (The captures once *predated* the override being added to `capture.sh` and showed the sim's live clock + placeholder cellular dots; re-capturing fixed it. If you see a live clock or gray dots, the override didn't apply — usually a stale/reused sim; `erase` and re-run.)

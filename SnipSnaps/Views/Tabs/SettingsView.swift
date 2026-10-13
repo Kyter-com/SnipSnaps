@@ -96,7 +96,10 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
             }
             Slider(
-              value: $similarThreshold,
+              value: Binding(
+                get: { SimilarThreshold.clamped(similarThreshold) },
+                set: { similarThreshold = SimilarThreshold.clamped($0) }
+              ),
               in: SimilarThreshold.range,
               step: SimilarThreshold.step
             ) {
@@ -110,7 +113,8 @@ struct SettingsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
-            .accessibilityValue(SimilarThreshold.presetName(for: similarThreshold))
+            .accessibilityValue(SimilarThreshold.accessibilityValue(for: similarThreshold))
+            .accessibilityHint("Increase for looser matches. Applies to your next Similar scan.")
             .sensoryFeedback(
               .selection,
               trigger: SimilarThreshold.detentIndex(for: similarThreshold)
@@ -364,6 +368,7 @@ struct SettingsView: View {
       || videoSortOptionRawValue != VideoSortOption.largest.rawValue
       || similarSortOptionRawValue != SimilarSortOption.recent.rawValue
       // Epsilon: the stepped slider can store 0.35000000000000003 for Balanced.
+      || !similarThreshold.isFinite
       || abs(similarThreshold - SimilarThreshold.defaultValue) > 0.000_1
       || hasFileSettingsToReset
       || reviewMemoryOptionRawValue != ReviewMemoryOption.thirtyDays.rawValue

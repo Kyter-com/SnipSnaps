@@ -54,4 +54,22 @@ final class SimilarThresholdTests: XCTestCase {
     XCTAssertEqual(SimilarThreshold.detentIndex(for: 0.325), 1)
     XCTAssertEqual(SimilarThreshold.detentIndex(for: 0.375), 1)
   }
+
+  func testInvalidStoredValuesFallBackToBalanced() {
+    for value in [Double.nan, .infinity, -.infinity] {
+      XCTAssertEqual(SimilarThreshold.clamped(value), SimilarThreshold.defaultValue)
+      XCTAssertEqual(SimilarThreshold.presetName(for: value), "Balanced")
+      XCTAssertEqual(SimilarThreshold.accessibilityValue(for: value), "Balanced, 8 of 15")
+    }
+  }
+
+  func testEverySliderStepHasDistinctAccessibleFeedback() {
+    let values = (0...14).map {
+      SimilarThreshold.accessibilityValue(for: 0.28 + Double($0) * 0.01)
+    }
+    XCTAssertEqual(Set(values).count, 15)
+    XCTAssertEqual(values.first, "Strict, 1 of 15")
+    XCTAssertEqual(values[7], "Balanced, 8 of 15")
+    XCTAssertEqual(values.last, "Loose, 15 of 15")
+  }
 }

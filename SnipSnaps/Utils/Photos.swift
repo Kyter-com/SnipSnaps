@@ -600,7 +600,7 @@ final class PhotoLibraryChangeBroadcaster: NSObject, PHPhotoLibraryChangeObserve
     // denied with no prompt ever shown. Callers retry this once access is
     // available (see HomeView's refresh paths), so observation still starts
     // for every granted session.
-    guard PhotoLibrary.authorizationStatus() != .notDetermined else { return }
+    guard PhotoLibrary.canAccessPhotos(PhotoLibrary.authorizationStatus()) else { return }
     isRegistered = true
     PHPhotoLibrary.shared().register(self)
   }

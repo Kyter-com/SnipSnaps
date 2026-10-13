@@ -167,32 +167,25 @@ private struct DemoReviewScreen: View {
       .padding(.horizontal, 32)
       .padding(.top, 22)
 
+      DemoReviewDetailsChip()
+        .padding(.horizontal, 32)
+
       Spacer(minLength: 0)
 
-      ZStack(alignment: .topTrailing) {
-        Image("DemoReview")
-          .resizable()
-          .aspectRatio(contentMode: .fill)
-          .frame(width: 448, height: 560)
-          .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-
-        Label("May 8, 2025 · 4.8 MB", systemImage: "info.circle")
-          .font(.callout.weight(.medium))
-          .foregroundStyle(.white)
-          .padding(.horizontal, 14)
-          .padding(.vertical, 9)
-          .background(.ultraThinMaterial, in: Capsule(style: .continuous))
-          .environment(\.colorScheme, .dark)
-          .padding(14)
-      }
+      Image("DemoReview")
+        .resizable()
+        .aspectRatio(contentMode: .fit)
+        .frame(maxWidth: 448, maxHeight: .infinity)
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
 
       Spacer(minLength: 0)
 
       HStack(spacing: 26) {
         DemoDecisionButton(systemName: "xmark", tint: AppColor.delete, background: AppColor.deleteBackground)
         Button("Undo") {}
-          .buttonStyle(.bordered)
-          .controlSize(.large)
+          .font(.footnote.weight(.semibold))
+          .secondaryActionButton()
+          .controlSize(.small)
         DemoDecisionButton(systemName: "checkmark", tint: AppColor.success, background: AppColor.keepBackground)
       }
       .padding(.bottom, 28)
@@ -203,20 +196,43 @@ private struct DemoReviewScreen: View {
   }
 }
 
+private struct DemoReviewDetailsChip: View {
+  var body: some View {
+    Button {} label: {
+      HStack(spacing: 12) {
+        Label("May 8, 2025", systemImage: "calendar")
+        Spacer(minLength: 0)
+        Label("4.8 MB", systemImage: "internaldrive")
+        Image(systemName: "info.circle")
+          .foregroundStyle(AppColor.primary)
+      }
+      .font(.footnote.weight(.medium))
+      .foregroundStyle(Color.secondary)
+      .padding(.horizontal, 14)
+      .padding(.vertical, 12)
+      .frame(maxWidth: .infinity)
+      .infoChipBackground()
+    }
+    .buttonStyle(.plain)
+  }
+}
+
 private struct DemoDecisionButton: View {
   let systemName: String
   let tint: Color
   let background: Color
 
   var body: some View {
-    Circle()
-      .fill(background)
-      .frame(width: 76, height: 76)
-      .overlay(
-        Image(systemName: systemName)
-          .font(.title.weight(.bold))
-          .foregroundStyle(tint)
-      )
+    Button {} label: {
+      Image(systemName: systemName)
+        .font(.title3.weight(.bold))
+        .symbolRenderingMode(.hierarchical)
+        .foregroundStyle(tint)
+        .frame(width: 56, height: 56)
+        .reviewActionCircleBackground(tint: tint, backgroundTint: background)
+    }
+    .buttonStyle(.plain)
+    .shadow(color: AppColor.shadow.opacity(1.1), radius: 10, x: 0, y: 6)
   }
 }
 
@@ -253,6 +269,8 @@ private struct DemoSimilarScreen: View {
             .tint(AppColor.primary)
         }
 
+        DemoReviewDetailsChip()
+
         HStack(spacing: 12) {
           ForEach(group) { thumb in
             DemoSimilarThumbnail(imageName: thumb.image, state: thumb.state)
@@ -267,20 +285,22 @@ private struct DemoSimilarScreen: View {
 
       Image("DemoSimilarA")
         .resizable()
-        .aspectRatio(contentMode: .fill)
-        .frame(width: 468, height: 452)
+        .aspectRatio(contentMode: .fit)
+        .frame(maxWidth: 468, maxHeight: .infinity)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
 
       Spacer(minLength: 0)
 
       HStack(spacing: 22) {
         DemoDecisionButton(systemName: "xmark", tint: AppColor.delete, background: AppColor.deleteBackground)
-        Button("Skip Group") {}
-          .buttonStyle(.bordered)
-          .controlSize(.large)
+        Button("Skip group") {}
+          .font(.footnote.weight(.semibold))
+          .secondaryActionButton()
+          .controlSize(.small)
         Button("Undo") {}
-          .buttonStyle(.bordered)
-          .controlSize(.large)
+          .font(.footnote.weight(.semibold))
+          .secondaryActionButton()
+          .controlSize(.small)
         DemoDecisionButton(systemName: "checkmark", tint: AppColor.success, background: AppColor.keepBackground)
       }
       .padding(.bottom, 28)
@@ -369,6 +389,30 @@ private struct DemoFilesScreen: View {
     ScrollView {
       VStack(alignment: .leading, spacing: 20) {
         VStack(alignment: .leading, spacing: 10) {
+          Text("REVIEW")
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(.secondary)
+          LazyVGrid(
+            columns: [
+              GridItem(.flexible(minimum: 0), spacing: 12, alignment: .top),
+              GridItem(.flexible(minimum: 0), spacing: 12, alignment: .top),
+            ],
+            alignment: .leading,
+            spacing: 12
+          ) {
+            ForEach(categories) { item in
+              DemoCard(
+                systemImage: item.category.systemImage,
+                title: item.category.title,
+                subtitle: item.category.subtitle,
+                trailing: item.count,
+                summary: item.summary
+              )
+            }
+          }
+        }
+
+        VStack(alignment: .leading, spacing: 10) {
           Text("REVIEWED FOLDERS")
             .font(.footnote.weight(.semibold))
             .foregroundStyle(.secondary)
@@ -438,30 +482,6 @@ private struct DemoFilesScreen: View {
           Text("Excluded folders stay on your Mac and are skipped by every Files count, review, and duplicate scan.")
             .font(.footnote)
             .foregroundStyle(.tertiary)
-        }
-
-        VStack(alignment: .leading, spacing: 10) {
-          Text("REVIEW")
-            .font(.footnote.weight(.semibold))
-            .foregroundStyle(.secondary)
-          LazyVGrid(
-            columns: [
-              GridItem(.flexible(minimum: 0), spacing: 12, alignment: .top),
-              GridItem(.flexible(minimum: 0), spacing: 12, alignment: .top),
-            ],
-            alignment: .leading,
-            spacing: 12
-          ) {
-            ForEach(categories) { item in
-              DemoCard(
-                systemImage: item.category.systemImage,
-                title: item.category.title,
-                subtitle: item.category.subtitle,
-                trailing: item.count,
-                summary: item.summary
-              )
-            }
-          }
         }
       }
       .padding(20)
