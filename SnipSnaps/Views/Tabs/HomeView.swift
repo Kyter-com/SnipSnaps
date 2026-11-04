@@ -329,16 +329,15 @@ struct HomeView: View {
 
   private var screenshotSortMenu: some View {
     Menu {
-      ForEach(ScreenshotSortOption.allCases) { option in
-        Button {
-          screenshotSortOption = option
-        } label: {
-          Label(
-            option.title,
-            systemImage: option == screenshotSortOption ? "checkmark" : option.systemImage
-          )
+      Picker("Sort By", selection: Binding(
+        get: { screenshotSortOption },
+        set: { screenshotSortOption = $0 }
+      )) {
+        ForEach(ScreenshotSortOption.allCases) { option in
+          Label(option.title, systemImage: option.systemImage).tag(option)
         }
       }
+      .pickerStyle(.inline)
     } label: {
       HStack(spacing: 6) {
         Image(systemName: screenshotSortOption.systemImage)
@@ -352,24 +351,21 @@ struct HomeView: View {
       .padding(.vertical, 6)
       .background(AppColor.chip, in: Capsule(style: .continuous))
     }
-    // The label draws its own chevron; macOS 27 also appends a system menu
-    // indicator, which would double it. No visible effect on iOS.
-    .menuIndicator(.hidden)
+    .sortChipMenuStyle()
     .accessibilityLabel("Sort screenshots by \(screenshotSortOption.title)")
   }
 
   private var videoSortMenu: some View {
     Menu {
-      ForEach(VideoSortOption.allCases) { option in
-        Button {
-          videoSortOption = option
-        } label: {
-          Label(
-            option.subtitle,
-            systemImage: option == videoSortOption ? "checkmark" : option.systemImage
-          )
+      Picker("Sort By", selection: Binding(
+        get: { videoSortOption },
+        set: { videoSortOption = $0 }
+      )) {
+        ForEach(VideoSortOption.allCases) { option in
+          Label(option.subtitle, systemImage: option.systemImage).tag(option)
         }
       }
+      .pickerStyle(.inline)
     } label: {
       HStack(spacing: 6) {
         Image(systemName: videoSortOption.systemImage)
@@ -383,24 +379,21 @@ struct HomeView: View {
       .padding(.vertical, 6)
       .background(AppColor.chip, in: Capsule(style: .continuous))
     }
-    // The label draws its own chevron; macOS 27 also appends a system menu
-    // indicator, which would double it. No visible effect on iOS.
-    .menuIndicator(.hidden)
+    .sortChipMenuStyle()
     .accessibilityLabel("Sort videos by \(videoSortOption.subtitle)")
   }
 
   private var similarSortMenu: some View {
     Menu {
-      ForEach(SimilarSortOption.allCases) { option in
-        Button {
-          similarSortOption = option
-        } label: {
-          Label(
-            option.subtitle,
-            systemImage: option == similarSortOption ? "checkmark" : option.systemImage
-          )
+      Picker("Sort By", selection: Binding(
+        get: { similarSortOption },
+        set: { similarSortOption = $0 }
+      )) {
+        ForEach(SimilarSortOption.allCases) { option in
+          Label(option.subtitle, systemImage: option.systemImage).tag(option)
         }
       }
+      .pickerStyle(.inline)
     } label: {
       HStack(spacing: 6) {
         Image(systemName: similarSortOption.systemImage)
@@ -414,9 +407,7 @@ struct HomeView: View {
       .padding(.vertical, 6)
       .background(AppColor.chip, in: Capsule(style: .continuous))
     }
-    // The label draws its own chevron; macOS 27 also appends a system menu
-    // indicator, which would double it. No visible effect on iOS.
-    .menuIndicator(.hidden)
+    .sortChipMenuStyle()
     .accessibilityLabel("Sort similar groups by \(similarSortOption.subtitle)")
   }
 
@@ -791,5 +782,19 @@ private struct ActionCard: View {
       return "\(counts.notReviewed) not reviewed · \(counts.total) total"
     }
     return "\(counts.total) total"
+  }
+}
+
+private extension View {
+  // The sort chips draw their own capsule and chevron. With the default menu
+  // style, macOS wraps that label in its bordered button chrome (a larger rounded
+  // rect around the capsule, which crowds the card text) and appends a system
+  // menu arrow. The button menu style with .plain draws only our label, at its
+  // own size. No visible change on iOS, where menus don't add chrome.
+  func sortChipMenuStyle() -> some View {
+    menuStyle(.button)
+      .buttonStyle(.plain)
+      .menuIndicator(.hidden)
+      .fixedSize()
   }
 }
