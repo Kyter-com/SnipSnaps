@@ -1,5 +1,51 @@
 import XCTest
+import SwiftUI
 @testable import SnipSnaps
+
+@MainActor
+final class AdaptiveReviewLayoutTests: XCTestCase {
+  private typealias Layout = AdaptiveReviewLayout<EmptyView, EmptyView, EmptyView>
+
+  func testLayoutTracksSizeClassesAcrossRepeatedFolds() {
+    for _ in 0..<3 {
+      XCTAssertFalse(Layout.usesExpandedLayout(horizontalSizeClass: .compact, verticalSizeClass: .regular, dynamicTypeSize: .large))
+      XCTAssertTrue(Layout.usesExpandedLayout(horizontalSizeClass: .regular, verticalSizeClass: .regular, dynamicTypeSize: .large))
+    }
+  }
+
+  func testCompactOrUnspecifiedSizeClassesStayCompact() {
+    for horizontal in [UserInterfaceSizeClass?.none, .compact, .regular] {
+      for vertical in [UserInterfaceSizeClass?.none, .compact, .regular] {
+        XCTAssertEqual(
+          Layout.usesExpandedLayout(horizontalSizeClass: horizontal, verticalSizeClass: vertical, dynamicTypeSize: .large),
+          horizontal == .regular && vertical == .regular
+        )
+      }
+    }
+  }
+
+  func testAccessibilityTextUsesCompactLayoutEvenInRegularSizeClasses() {
+    for textSize in [DynamicTypeSize.accessibility1, .accessibility2, .accessibility3, .accessibility4, .accessibility5] {
+      XCTAssertFalse(Layout.usesExpandedLayout(horizontalSizeClass: .regular, verticalSizeClass: .regular, dynamicTypeSize: textSize))
+    }
+    XCTAssertTrue(Layout.usesExpandedLayout(horizontalSizeClass: .regular, verticalSizeClass: .regular, dynamicTypeSize: .xxxLarge))
+  }
+
+  // Compact height is a phone in landscape, including iPhone Duo's outer
+  // display (compact in both directions) and Max phones (regular width).
+  func testCompactHeightPutsControlsInAColumn() {
+    XCTAssertTrue(Layout.usesColumnLayout(verticalSizeClass: .compact, dynamicTypeSize: .large))
+    XCTAssertFalse(Layout.usesColumnLayout(verticalSizeClass: .regular, dynamicTypeSize: .large))
+    XCTAssertFalse(Layout.usesColumnLayout(verticalSizeClass: nil, dynamicTypeSize: .large))
+    for horizontal in [UserInterfaceSizeClass.compact, .regular] {
+      XCTAssertFalse(Layout.usesExpandedLayout(horizontalSizeClass: horizontal, verticalSizeClass: .compact, dynamicTypeSize: .large))
+    }
+  }
+
+  func testAccessibilityTextKeepsThePhoneLayoutInLandscape() {
+    XCTAssertFalse(Layout.usesColumnLayout(verticalSizeClass: .compact, dynamicTypeSize: .accessibility1))
+  }
+}
 
 final class SimilarThresholdTests: XCTestCase {
   func testDefaultIsTheBalancedDetent() {

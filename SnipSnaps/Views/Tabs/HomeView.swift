@@ -97,6 +97,7 @@ struct HomeView: View {
   @State private var countRefreshTask: Task<Void, Never>?
   @State private var hasLoadedInitialCounts = false
   @State private var reviewedIdentifierCountsAtReviewStart: [ReviewMode: Int] = [:]
+  @State private var foldGapWidth: CGFloat = 0
   @AppStorage("reviewLimit") private var reviewLimit: Int = 20
   @AppStorage("screenshotSortOption") private var screenshotSortOptionRawValue: String = ScreenshotSortOption.recent.rawValue
   @AppStorage("videoSortOption") private var videoSortOptionRawValue: String = VideoSortOption.largest.rawValue
@@ -165,8 +166,11 @@ struct HomeView: View {
       ]
     }
     #endif
+    // Two columns put the gap between them where iPhone Duo folds; while it's
+    // partly folded the gap widens to the fold's reserved width so no card
+    // runs into the crease.
     return Array(
-      repeating: GridItem(.flexible(minimum: 0), spacing: 12, alignment: .top),
+      repeating: GridItem(.flexible(minimum: 0), spacing: max(12, foldGapWidth), alignment: .top),
       count: usesTwoColumnLayout ? 2 : 1
     )
   }
@@ -196,6 +200,13 @@ struct HomeView: View {
                     reviewModeCard(for: mode)
                   }
                 }
+                #if os(iOS)
+                .onGeometryChange(for: CGFloat.self) { proxy in
+                  FoldGeometry.verticalFoldWidth(in: proxy)
+                } action: { width in
+                  foldGapWidth = width
+                }
+                #endif
               }
             }
           }
@@ -700,6 +711,7 @@ private struct ActionCard: View {
 
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   @ScaledMetric(relativeTo: .caption) private var accessorySpace: CGFloat = 30
+  @State private var cardWidth: CGFloat = 0
 
   var body: some View {
     ZStack {
@@ -708,7 +720,7 @@ private struct ActionCard: View {
 
       // Decorative oversized count; drop it at accessibility text sizes so the
       // title/subtitle have room and don't collide with it.
-      if dynamicTypeSize < .accessibility1 {
+      if showsDecorativeCount {
         Text(displayCount)
           .font(.system(size: usesWideGridCard ? 72 : 96, weight: .heavy, design: .rounded))
           #if os(macOS)
@@ -747,11 +759,23 @@ private struct ActionCard: View {
       .padding(.vertical, dynamicTypeSize.isAccessibilitySize ? 12 : 0)
     }
     .frame(minHeight: usesWideGridCard ? 112 : (reservesAccessorySpace ? 112 : 96))
+    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { cardWidth = $0 }
     .opacity(isDisabled ? 0.5 : 1.0)
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(mode.title)
     .accessibilityValue(accessibilityValueText)
     .accessibilityHint(mode == .similar ? "Scans for similar photos" : "Opens \(mode.title) review")
+  }
+
+  private var showsDecorativeCount: Bool {
+    guard !dynamicTypeSize.isAccessibilitySize else { return false }
+    #if os(macOS)
+    return true
+    #else
+    // A two-column card only fits the big count beside its subtitle when it's
+    // wide, as on iPhone Duo's inner display in landscape or a large iPad.
+    return !usesWideGridCard || cardWidth >= 400
+    #endif
   }
 
   private var accessibilityValueText: String {

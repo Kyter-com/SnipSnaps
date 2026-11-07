@@ -219,6 +219,109 @@ final class ScreenshotCaptureTests: XCTestCase {
     navigateToSettingsAndCapture(in: app)
   }
 
+  /// Exercises production review state across window-size changes without
+  /// confirming any library deletions. Run it on an iPad or an unfolded iPhone
+  /// Duo: it expects landscape to show the side-by-side Similar comparison.
+  @MainActor
+  func testAdaptiveReviewPreservesDecisions() throws {
+    let app = XCUIApplication()
+    XCUIDevice.shared.orientation = .landscapeLeft
+    defer { XCUIDevice.shared.orientation = .portrait }
+    app.launchArguments += ["-reviewMemoryOption", "never"]
+    app.launch()
+    grantPhotosAccessIfNeeded(in: app)
+
+    let similar = app.buttons["Similar"].firstMatch
+    for _ in 0..<6 {
+      if similar.exists && similar.isHittable { break }
+      app.swipeUp()
+    }
+    XCTAssertTrue(similar.waitForExistence(timeout: 5))
+    similar.tap()
+    let keep = app.buttons["Keep photo"].firstMatch
+    XCTAssertTrue(keep.waitForExistence(timeout: 45), "Seed photos must produce a Similar group")
+    XCTAssertTrue(app.staticTexts["Reference photo"].firstMatch.waitForExistence(timeout: 5))
+    capture("adaptive-similar-wide")
+    let reference = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Reference: '")).firstMatch
+    XCTAssertTrue(reference.isHittable)
+    reference.tap()
+    let zoomClose = app.buttons["Close"].firstMatch
+    XCTAssertTrue(zoomClose.waitForExistence(timeout: 5))
+    XCTAssertTrue(zoomClose.isHittable)
+    capture("adaptive-full-screen")
+    zoomClose.tap()
+    keep.tap()
+    let undo = app.buttons["Undo"].firstMatch
+    XCTAssertTrue(undo.waitForExistence(timeout: 5))
+    XCUIDevice.shared.orientation = .portrait
+    XCTAssertTrue(undo.waitForExistence(timeout: 5))
+    undo.tap()
+    XCTAssertTrue(keep.waitForExistence(timeout: 5))
+    XCTAssertFalse(undo.exists)
+    let delete = app.buttons["Delete photo"].firstMatch
+    delete.tap()
+    XCTAssertTrue(undo.waitForExistence(timeout: 5))
+    undo.tap()
+    app.buttons["Skip group"].firstMatch.tap()
+    XCTAssertTrue(undo.waitForExistence(timeout: 5))
+    undo.tap()
+    app.buttons["Close similar review"].firstMatch.tap()
+
+    XCUIDevice.shared.orientation = .landscapeLeft
+    let random = app.buttons["Random"].firstMatch
+    for _ in 0..<6 {
+      if random.exists && random.isHittable { break }
+      app.swipeDown()
+    }
+    XCTAssertTrue(random.waitForExistence(timeout: 5))
+    random.tap()
+    XCTAssertTrue(keep.waitForExistence(timeout: 15))
+    capture("adaptive-photo-wide")
+    keep.tap()
+    let second = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH '2 of '")).firstMatch
+    XCTAssertTrue(second.waitForExistence(timeout: 5))
+    XCUIDevice.shared.orientation = .portrait
+    XCTAssertTrue(second.waitForExistence(timeout: 5))
+    XCTAssertTrue(undo.exists)
+    undo.tap()
+    let first = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH '1 of '")).firstMatch
+    XCTAssertTrue(first.waitForExistence(timeout: 5))
+    XCTAssertFalse(undo.exists)
+    app.buttons["Close review"].firstMatch.tap()
+  }
+
+  @MainActor
+  func testCompactAccessibleReviewControls() throws {
+    let app = XCUIApplication()
+    app.launchArguments += [
+      "-reviewMemoryOption", "never",
+      "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityM"
+    ]
+    app.launch()
+    grantPhotosAccessIfNeeded(in: app)
+    let random = app.buttons["Random"].firstMatch
+    for _ in 0..<6 {
+      if random.exists && random.isHittable { break }
+      app.swipeUp()
+    }
+    XCTAssertTrue(random.waitForExistence(timeout: 5))
+    random.tap()
+    let keep = app.buttons["Keep photo"].firstMatch
+    let delete = app.buttons["Delete photo"].firstMatch
+    XCTAssertTrue(keep.waitForExistence(timeout: 15))
+    XCTAssertTrue(app.descendants(matching: .any)["compactReviewLayout"].firstMatch.exists)
+    XCTAssertTrue(keep.isHittable)
+    XCTAssertTrue(delete.isHittable)
+    capture("adaptive-photo-compact-accessibility")
+    delete.tap()
+    let undo = app.buttons["Undo"].firstMatch
+    XCTAssertTrue(undo.waitForExistence(timeout: 5))
+    XCTAssertTrue(undo.isHittable)
+    undo.tap()
+    XCTAssertFalse(undo.exists)
+    app.buttons["Close review"].firstMatch.tap()
+  }
+
   // MARK: - Helpers
 
   /// Grant Photos access through the system dialog. `simctl privacy grant

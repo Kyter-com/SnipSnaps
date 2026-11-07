@@ -69,6 +69,7 @@ private struct ReviewPhotoDetails {
   let captureAgeText: String
   let captureDateSummaryText: String
   let captureTimestampText: String
+  let captureTimeText: String
   let fileSizeText: String
   let resolutionText: String
   let aspectRatioText: String
@@ -83,6 +84,7 @@ private struct ReviewPhotoDetails {
     captureAgeText = creationDate.map(Self.relativeAgeText(for:)) ?? "Unknown age"
     captureDateSummaryText = "\(captureDateText) · \(captureAgeText)"
     captureTimestampText = creationDate.map(Self.timestampFormatter.string(from:)) ?? "Unknown"
+    captureTimeText = creationDate.map { $0.formatted(date: .omitted, time: .shortened) } ?? "Unknown time"
 
     estimatedBytes = PhotoLibrary.estimatedBytes(for: asset)
     if estimatedBytes > 0 {
@@ -183,6 +185,7 @@ struct ReviewSessionView: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var authStatus = PhotoLibrary.authorizationStatus()
   @State private var isLoading = true
+  @State private var hasLoadedSession = false
   @State private var loadTask: Task<Void, Never>?
   @State private var assets: [PHAsset] = []
   @State private var currentIndex = 0
@@ -357,7 +360,9 @@ struct ReviewSessionView: View {
     }
     .toolbar(.hidden, for: .tabBar)
     #endif
-    .onAppear { loadAssets() }
+    .onAppear {
+      if !hasLoadedSession { loadAssets() }
+    }
     .onDisappear { loadTask?.cancel() }
     .onChange(of: currentIndex) { _, _ in
       updateCaching()
@@ -412,6 +417,50 @@ struct ReviewSessionView: View {
   #endif
 
   private var reviewView: some View {
+    #if os(iOS)
+    AdaptiveReviewLayout(panelWidth: 300...380, columnWidth: 320) { placement in
+      cardStack
+        .padding(placement == .column ? 12 : 20)
+    } panel: { placement in
+      reviewPanel(placement: placement)
+    } compact: {
+      compactReviewView
+    }
+    #else
+    compactReviewView
+    #endif
+  }
+
+  // The review panel beside the photo (or below it, when stacked) on wide
+  // displays. Side by side, the photo's details get a card of their own. The
+  // Keep/Delete buttons stay at the panel's bottom edge, as in the phone layout,
+  // which in tabletop pose is the half resting on the table.
+  private func reviewPanel(placement: ReviewPanelPlacement) -> some View {
+    VStack(alignment: .leading, spacing: 16) {
+      reviewProgress
+      if placement == .beside {
+        if let currentPhotoDetails {
+          ReviewDetailsCard(details: currentPhotoDetails) {
+            showMetadataSheet = true
+          }
+          .id(currentAsset?.localIdentifier)
+          .transition(.opacity.combined(with: .scale(scale: 0.985)))
+        }
+      } else {
+        reviewDetailsChip
+      }
+      Spacer(minLength: 0)
+      decisionBar
+    }
+    .padding(20)
+    .frame(maxHeight: .infinity, alignment: .top)
+    // Below a photo on a wide display, keep the controls together rather than
+    // spread to the far edges.
+    .readableColumn(maxWidth: placement == .below ? 560 : .infinity)
+    .animation(.interactiveSpring(response: 0.28, dampingFraction: 0.86), value: currentAsset?.localIdentifier)
+  }
+
+  private var compactReviewView: some View {
     VStack(spacing: 18) {
       reviewHeader
         .padding(.horizontal, 20)
@@ -434,29 +483,37 @@ struct ReviewSessionView: View {
 
   private var reviewHeader: some View {
     VStack(alignment: .leading, spacing: 10) {
-      HStack(spacing: 12) {
-        Text("\(currentIndex + 1) of \(assets.count)")
-          .font(.footnote.weight(.medium))
-          .foregroundStyle(.secondary)
-          .monospacedDigit()
-          .contentTransition(.numericText())
-        ProgressView(value: progressValue)
-          .tint(AppColor.primary)
-          .animation(.snappy(duration: 0.28, extraBounce: 0.02), value: progressValue)
-      }
-
-      if let currentPhotoDetails {
-        Button {
-          showMetadataSheet = true
-        } label: {
-          ReviewDetailsLabel(details: currentPhotoDetails)
-        }
-        .id(currentAsset?.localIdentifier)
-        .transition(.opacity.combined(with: .scale(scale: 0.985)))
-        .buttonStyle(.plain)
-      }
+      reviewProgress
+      reviewDetailsChip
     }
     .animation(.interactiveSpring(response: 0.28, dampingFraction: 0.86), value: currentAsset?.localIdentifier)
+  }
+
+  private var reviewProgress: some View {
+    HStack(spacing: 12) {
+      Text("\(currentIndex + 1) of \(assets.count)")
+        .font(.footnote.weight(.medium))
+        .foregroundStyle(.secondary)
+        .monospacedDigit()
+        .contentTransition(.numericText())
+      ProgressView(value: progressValue)
+        .tint(AppColor.primary)
+        .animation(.snappy(duration: 0.28, extraBounce: 0.02), value: progressValue)
+    }
+  }
+
+  @ViewBuilder
+  private var reviewDetailsChip: some View {
+    if let currentPhotoDetails {
+      Button {
+        showMetadataSheet = true
+      } label: {
+        ReviewDetailsLabel(details: currentPhotoDetails)
+      }
+      .id(currentAsset?.localIdentifier)
+      .transition(.opacity.combined(with: .scale(scale: 0.985)))
+      .buttonStyle(.plain)
+    }
   }
 
   private var cardStack: some View {
@@ -669,6 +726,7 @@ struct ReviewSessionView: View {
       }
       .padding(.horizontal, 20)
       .padding(.bottom, 32)
+      .readableColumn()
     }
     .safeAreaInset(edge: .bottom, spacing: 0) {
       summaryActionBar
@@ -717,6 +775,7 @@ struct ReviewSessionView: View {
         #endif
       }
     }
+    .readableColumn()
     .padding(.horizontal, 20)
     .padding(.top, 12)
     .padding(.bottom, 8)
@@ -830,6 +889,7 @@ struct ReviewSessionView: View {
       })
       guard !Task.isCancelled else { return }
       await MainActor.run {
+        hasLoadedSession = true
         assets = fetched
         currentIndex = 0
         keptAssets = []
@@ -1298,8 +1358,92 @@ struct SimilarReviewSessionView: View {
     swipeReviewView
       .background(similarKeyboardShortcuts)
     #else
-    swipeReviewView
+    // Wide displays compare the photo being decided with another from its
+    // group. Side by side (a book-style split on iPhone Duo) the photo has one
+    // page and the reference, filmstrip, and buttons share the other. Stacked
+    // (taller than wide, or iPhone Duo in tabletop pose), both photos sit side
+    // by side above the controls. Either way nothing spans the fold.
+    AdaptiveReviewLayout(columnWidth: 360) { placement in
+      switch placement {
+      case .beside:
+        cardStack
+          .padding(20)
+      case .below:
+        HStack(spacing: 16) {
+          cardStack
+          if let asset = referencePhoto { referenceCard(asset) }
+        }
+        .padding(20)
+      case .column:
+        cardStack
+          .padding(12)
+      }
+    } panel: { placement in
+      VStack(alignment: .leading, spacing: 14) {
+        groupHeader
+        if placement == .beside, let asset = referencePhoto {
+          referenceCard(asset)
+        } else {
+          Spacer(minLength: 0)
+        }
+        withinGroupStrip
+        swipeDecisionBar
+      }
+      .padding(20)
+      .frame(maxHeight: .infinity, alignment: .top)
+      .readableColumn(maxWidth: placement == .below ? 560 : .infinity)
+    } compact: {
+      swipeReviewView
+    }
     #endif
+  }
+
+  // Prefer a kept sibling; otherwise compare against the first other photo.
+  // Never display the active photo twice or change any decisions for comparison.
+  private var referencePhoto: PHAsset? {
+    groupAssets.first {
+      $0.localIdentifier != currentPhoto?.localIdentifier && decision(for: $0) == .keep
+    } ?? groupAssets.first { $0.localIdentifier != currentPhoto?.localIdentifier }
+  }
+
+  // The photo to compare against, fitted and rounded like the review card,
+  // with its role as a badge on the corner so the label stays on the photo.
+  private func referenceCard(_ asset: PHAsset) -> some View {
+    let isKept = decision(for: asset) == .keep
+    return GeometryReader { proxy in
+      let fitted = PhotoLibrary.fittedSize(for: asset, in: proxy.size)
+      ZStack(alignment: .topLeading) {
+        Button {
+          zoomTarget = ZoomTarget(asset: asset)
+        } label: {
+          PhotoAssetImageView(asset: asset, targetSize: fitted, contentMode: .fit)
+            .frame(width: fitted.width, height: fitted.height)
+            .background(AppColor.elevatedCard)
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay {
+              RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(AppColor.cardEdge, lineWidth: 0.5)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Reference: \(asset.reviewAccessibilityLabel)")
+        .accessibilityHint("Opens full-screen comparison")
+
+        Label(isKept ? "Kept reference" : "Reference photo", systemImage: isKept ? "checkmark.circle.fill" : "square.on.square")
+          .font(.footnote.weight(.semibold))
+          .foregroundStyle(.white)
+          .padding(.horizontal, 10)
+          .padding(.vertical, 6)
+          // Fixed dark scrim, like the review card's Live badge, so the label
+          // reads over bright photos in Light and Dark.
+          .background(.black.opacity(0.55), in: Capsule(style: .continuous))
+          .padding(10)
+          .allowsHitTesting(false)
+      }
+      .frame(width: fitted.width, height: fitted.height)
+      .frame(width: proxy.size.width, height: proxy.size.height)
+    }
+    .accessibilityIdentifier("reviewReferencePhoto")
   }
 
   private var groupHeader: some View {
@@ -1728,6 +1872,7 @@ struct SimilarReviewSessionView: View {
       }
       .padding(.horizontal, 20)
       .padding(.bottom, 32)
+      .readableColumn()
     }
     .safeAreaInset(edge: .bottom, spacing: 0) {
       summaryActionBar
@@ -1773,6 +1918,7 @@ struct SimilarReviewSessionView: View {
         #endif
       }
     }
+    .readableColumn()
     .padding(.horizontal, 20)
     .padding(.top, 12)
     .padding(.bottom, 8)
@@ -2218,23 +2364,20 @@ private struct ReviewDetailsLabel: View {
   var body: some View {
     Group {
       if dynamicTypeSize.isAccessibilitySize {
-        VStack(alignment: .leading, spacing: 8) {
-          Label(details.captureDateSummaryText, systemImage: "calendar")
-            .fixedSize(horizontal: false, vertical: true)
+        stacked
+      } else {
+        // One line when it fits; a narrow column (a phone in landscape) gets
+        // two lines instead of a truncated date.
+        ViewThatFits(in: .horizontal) {
           HStack(spacing: 12) {
-            Label(details.fileSizeText, systemImage: "internaldrive")
+            Label(details.captureDateSummaryText, systemImage: "calendar")
+              .lineLimit(1)
             Spacer(minLength: 0)
+            Label(details.fileSizeText, systemImage: "internaldrive")
+              .lineLimit(1)
             infoIcon
           }
-        }
-      } else {
-        HStack(spacing: 12) {
-          Label(details.captureDateSummaryText, systemImage: "calendar")
-            .lineLimit(1)
-          Spacer(minLength: 0)
-          Label(details.fileSizeText, systemImage: "internaldrive")
-            .lineLimit(1)
-          infoIcon
+          stacked
         }
       }
     }
@@ -2246,9 +2389,74 @@ private struct ReviewDetailsLabel: View {
     .infoChipBackground()
   }
 
+  private var stacked: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Label(details.captureDateSummaryText, systemImage: "calendar")
+        .fixedSize(horizontal: false, vertical: true)
+      HStack(spacing: 12) {
+        Label(details.fileSizeText, systemImage: "internaldrive")
+        Spacer(minLength: 0)
+        infoIcon
+      }
+    }
+  }
+
   private var infoIcon: some View {
     Image(systemName: "info.circle")
       .foregroundStyle(AppColor.primary)
+  }
+}
+
+// The photo's details as a card in the review panel on wide displays, in place
+// of the one-line chip. Tapping it opens the full details sheet, like the chip.
+private struct ReviewDetailsCard: View {
+  let details: ReviewPhotoDetails
+  let showDetails: () -> Void
+
+  var body: some View {
+    Button(action: showDetails) {
+      VStack(alignment: .leading, spacing: 12) {
+        HStack {
+          Text(details.typeText)
+            .font(.headline)
+            .foregroundStyle(AppColor.text)
+          Spacer(minLength: 8)
+          Image(systemName: "info.circle")
+            .font(.body)
+            .foregroundStyle(AppColor.primary)
+        }
+        VStack(alignment: .leading, spacing: 8) {
+          detailRow(details.captureDateText, systemImage: "calendar")
+          detailRow("\(details.captureTimeText) · \(details.captureAgeText)", systemImage: "clock")
+          if let durationText = details.durationText {
+            detailRow(durationText, systemImage: "play.circle")
+          }
+          detailRow(details.resolutionText, systemImage: "aspectratio")
+          detailRow(details.fileSizeText, systemImage: "internaldrive")
+        }
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
+      }
+      .padding(16)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .infoChipBackground(cornerRadius: 20)
+    }
+    .buttonStyle(.plain)
+    .accessibilityElement(children: .combine)
+    .accessibilityHint("Shows all details")
+  }
+
+  @ScaledMetric(relativeTo: .subheadline) private var iconWidth: CGFloat = 20
+
+  private func detailRow(_ text: String, systemImage: String) -> some View {
+    HStack(alignment: .firstTextBaseline, spacing: 10) {
+      Image(systemName: systemImage)
+        .foregroundStyle(.tertiary)
+        .frame(width: iconWidth)
+        .accessibilityHidden(true)
+      Text(text)
+        .fixedSize(horizontal: false, vertical: true)
+    }
   }
 }
 
@@ -2277,7 +2485,6 @@ private struct FullScreenPhotoView: View {
       }
       .contentShape(Rectangle())
     }
-    .ignoresSafeArea()
     .overlay(alignment: .topTrailing) {
       Button {
         dismiss()
