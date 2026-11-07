@@ -2291,6 +2291,9 @@ private struct FullScreenPhotoView: View {
           .padding(12)
           .floatingCloseButtonBackground()
       }
+      // The glass circle is the whole control (as in ReviewActionButton); without
+      // .plain, macOS draws its bordered button chrome around the circle.
+      .buttonStyle(.plain)
       .padding(.top, 12)
       .padding(.trailing, 16)
       .accessibilityLabel("Close")

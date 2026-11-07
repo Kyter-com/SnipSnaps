@@ -418,6 +418,9 @@ struct FileReviewSessionView: View {
         undo()
       } label: {
         Image(systemName: "arrow.uturn.backward")
+          // An icon-only label sits 2pt shorter than the Trash/Keep text labels;
+          // fill the row height (set by fixedSize below) so all three match.
+          .frame(maxHeight: .infinity)
       }
       // Keep Undo visually secondary (the HStack makes Keep/Trash prominent); this
       // override mirrors the Photos review, where Undo is a secondary action.
@@ -434,6 +437,9 @@ struct FileReviewSessionView: View {
       .tint(AppColor.success)
       .keyboardShortcut(.rightArrow, modifiers: [])
     }
+    // Size the row to its tallest button; also keeps Undo's flexible height from
+    // stretching the bar to fill the safe-area inset.
+    .fixedSize(horizontal: false, vertical: true)
     .controlSize(.large)
     .prominentActionButton()
   }
