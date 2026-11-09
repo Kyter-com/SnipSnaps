@@ -1,7 +1,4 @@
-• Enjoy a refreshed Liquid Glass interface on iPhone, iPad, and Mac, with clearer review controls, a floating tab bar on iPhone, and livelier tap feedback.
-• Tune Similar matching with a new slider in Settings. Choose Strict for near-identical shots, Balanced for the familiar matching behavior, or Loose to find more lookalikes.
-• Pull to refresh photo counts on iPhone and iPad. Photos access is now requested only when you choose Enable.
-• On Mac, file review categories sit above your folders so they stay easy to reach.
-• Review large Mac file collections faster with much lower memory use.
-• Improve contrast, spacing, larger-text layouts, and VoiceOver descriptions across Home, review controls, and Settings.
-• Make photo counts refresh more reliably, including Large Photos, and cancel file previews when they are no longer needed.
+• Support iPhone Duo. Unfolded, a review shows the photo beside its details and the Keep and Delete buttons, and Similar review compares each photo with another from its group. When iPhone Duo is partly folded, the layout splits at the fold, and Home keeps its cards clear of the crease. Folding, unfolding, or rotating keeps your place and your undo history.
+• iPad gets the same wide review layouts.
+• In landscape on iPhone, the review controls move beside the photo so it keeps the full height.
+• Fix button sizing on Mac. The sort buttons on Home and the close button in the full-screen photo viewer no longer show an extra border, and Undo in Files review now matches the height of Trash and Keep.

@@ -28,7 +28,7 @@ def main() -> int:
         print(__doc__)
         return 2
     seed_dir = sys.argv[1]
-    now = datetime.datetime.now()
+    now = datetime.datetime.now().astimezone()
     files = sorted(glob.glob(f"{seed_dir}/*.jpg"))
     if not files:
         print(f"no jpgs in {seed_dir}", file=sys.stderr)
@@ -38,12 +38,20 @@ def main() -> int:
         # Stagger by 1 minute so each photo has a distinct timestamp.
         ts = now - datetime.timedelta(minutes=i)
         date_str = ts.strftime("%Y:%m:%d %H:%M:%S")
+        # The UTC offset ("-07:00") pins the date to this Mac's time zone. The
+        # simulator's Photos import reads a date without one as Pacific time,
+        # so elsewhere photos can land hours away from now, even in the future.
+        offset = ts.strftime("%z")
+        offset_str = f"{offset[:3]}:{offset[3:]}"
         try:
             exif = piexif.load(path)
         except Exception:
             exif = {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}, "thumbnail": None}
         exif["Exif"][piexif.ExifIFD.DateTimeOriginal] = date_str.encode()
         exif["Exif"][piexif.ExifIFD.DateTimeDigitized] = date_str.encode()
+        exif["Exif"][piexif.ExifIFD.OffsetTime] = offset_str.encode()
+        exif["Exif"][piexif.ExifIFD.OffsetTimeOriginal] = offset_str.encode()
+        exif["Exif"][piexif.ExifIFD.OffsetTimeDigitized] = offset_str.encode()
         exif["0th"][piexif.ImageIFD.DateTime] = date_str.encode()
         piexif.insert(piexif.dump(exif), path)
         os.utime(path, (ts.timestamp(), ts.timestamp()))

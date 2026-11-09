@@ -1,12 +1,17 @@
 # SnipSnaps App Store Screenshots
 
-Lightweight generator + automation for App Store-ready iPhone and iPad marketing screenshots, built on real captures from the iOS 26 simulator driven by an XCUITest.
+Lightweight generator + automation for App Store-ready iPhone, iPhone Duo, and iPad marketing screenshots, built on real captures from the iOS simulator driven by an XCUITest.
 
 ## Outputs
 
 - `output/iphone-6.9/*.png` — 1290 × 2796 (App Store iPhone 6.9")
 - `output/ipad-13/*.png` — 2064 × 2752 (App Store iPad 13")
+- `output/iphone-duo-outer/*.png` — 1398 × 2034 (App Store iPhone Duo, outer display)
+- `output/iphone-duo-inner/*.png` — 2853 × 2007 (App Store iPhone Duo, inner display in landscape)
 - `output/mac/*.png` — 2880 × 1800 (Mac App Store, 16:10 retina)
+
+App Store Connect has separate iPhone Duo sizes for the outer and inner
+displays and doesn't scale other screenshots to fit them.
 
 ## One-shot regenerate
 
@@ -73,22 +78,41 @@ marketing/app-store-screenshots/capture.sh \
   3102152A-571A-49D2-B7A4-5F7C05CFB7BF \
   marketing/app-store-screenshots/raw/iphone-6.9
 
-# iPad Pro 13" (M5) @ iOS 26.4
+# iPad Pro 13" (M5) @ iOS 27.2
 marketing/app-store-screenshots/capture.sh \
-  3C4DDFAD-C938-472A-AAF8-8133E2C1823A \
+  BF2DB8F7-57DE-4A38-BA28-EF6FD9A7EC05 \
   marketing/app-store-screenshots/raw/ipad-13
+
+# iPhone Duo @ iOS 27.2, one run per display
+marketing/app-store-screenshots/capture.sh \
+  557CA46E-56BB-4B36-86B9-1FF0DDFCA89C \
+  marketing/app-store-screenshots/raw/iphone-duo-outer outer
+marketing/app-store-screenshots/capture.sh \
+  557CA46E-56BB-4B36-86B9-1FF0DDFCA89C \
+  marketing/app-store-screenshots/raw/iphone-duo-inner inner
 
 # Composite the marketing layouts
 python3 marketing/app-store-screenshots/generate.py
 ```
 
+**iPhone Duo** needs its own runtime, iOS 27.2 build 24B91016s
+(`xcodebuild -downloadPlatform iOS -buildVersion 24B91016s`): the general iOS
+27.2 runtime can't create the device. Folding is a control in Device Hub (Xcode
+27's simulator app) with no command-line equivalent, so `capture.sh` takes the
+display to shoot as a third argument and, after booting, waits until that
+display is active. Fold or unfold the Duo with the posture buttons under the
+device in Device Hub: the phone for the outer display, the flat one for the
+inner display. A reboot folds the Duo, but Device Hub can keep showing flat as
+selected; select folded, then flat, to unfold it again. Run the inner display
+with the Duo in landscape, the way it opens.
+
 `capture.sh` for each device:
 
-1. Refreshes EXIF timestamps on seed photos so they import as "today" (otherwise `Today` / `On This Day` modes show 0), and stamps EXIF GPS on a few seeds (`seed-locations.py`) so the photo-details **Location** map renders.
+1. Copies the seed photos to a temporary folder, refreshes their EXIF timestamps (with this Mac's UTC offset) so they import as "today" (otherwise `Today` / `On This Day` modes show 0), and stamps EXIF GPS on a few (`seed-locations.py`) so the photo-details **Location** map renders. The tracked seed photos stay unchanged.
 2. Shuts the sim down, wipes `Media/DCIM` + `Media/PhotoData` for a clean slate.
 3. Sets `simctl status_bar override` (9:41, full battery/Wi-Fi/signal) so the captures carry a clean marketing status bar natively, then resets Photos to *not-determined* (`simctl privacy reset all`). The pre-grant is dead on iOS 26.4, so the app is left to prompt and the UI test grants access by walking the system dialog.
 4. Re-adds the 42 seed photos via `simctl addmedia`.
-5. Runs `SnipSnapsUITests/ScreenshotCaptureTests/testCaptureAllScreens` against the device — which launches the real app, grants Photos access via the system dialog, taps through every marketing screen, and attaches a named PNG of each one via `XCUIScreen.main.screenshot()`.
+5. Runs `SnipSnapsUITests/ScreenshotCaptureTests/testCaptureAllScreens` on the device itself (parallel testing off) — which launches the real app, grants Photos access via the system dialog, taps through every marketing screen, and attaches a named PNG of each one, taken from the screen the app fills.
 6. Extracts the named attachments from the `.xcresult` bundle into `raw/<device>/01-home.png` … `06-settings.png`.
 
 Granting Photos access by walking the system dialog (`Allow Full Access`) is the primary path on iOS 26.4, not a fallback — see the gotchas below.
@@ -148,7 +172,7 @@ marketing/app-store-screenshots/
 ├── backgrounds/            # aurora-teal.jpg — the composite backdrop
 ├── frames/                 # <device>.svg sources + pre-rasterized <device>.png (iphone-16, ipad-13)
 ├── seed-photos/            # 42 jpgs (Picsum/Unsplash + JPEG-quality variants)
-├── raw/<device>/           # per-device captures (iphone/ipad: 01-home..06-settings; mac: 01-home..04-files)
+├── raw/<device>/           # per-device captures (iphone/iphone-duo/ipad: 01-home..06-settings; mac: 01-home..04-files)
 ├── output/<device>/        # composited App Store PNGs
 └── .capture-runs/          # xcresult bundles + mac build/helper (gitignored)
 ```
@@ -177,6 +201,18 @@ marketing/app-store-screenshots/
   the capture into the glass (rounded to the screen's corner radius) and grounds
   it with the same device-shaped drop shadow. Geometry lives in the `IPAD_*`
   constants near the top of `generate.py`.
+- **iPhone Duo frame** — drawn by `duo_frame()`, since there's no mockup to
+  trace, in the style of the other two: a graphite rim and a black bezel around
+  the screen's real shape, with the buttons. Each screen's continuous corners
+  come from the simulator's framebuffer masks (`iPhone Duo.simdevicetype`); the
+  outer display's corners are tight along the hinge, which shows as a spine down
+  its left edge, and unfolded the hinge shows as a seam across the rim. The
+  outer display's camera is part of the capture. The outer slides follow the
+  iPad layout; the inner display is landscape, so its slides follow the Mac
+  layout with a centered headline. `TITLES_DUO` changes two headlines: the
+  inner display compares similar shots side by side, and neither display is
+  tall enough to show the details sheet down to its location map. Geometry
+  lives in the `DUO_*` constants.
 - **Mac window** — no device mockup. `compose_mac()` (in `generate.py`) takes the
   raw `screencapture` window grab, keeps its own rounded-corner alpha (or rounds
   a square capture itself), adds a bright hairline rim and the same device-shaped
@@ -222,5 +258,7 @@ If captures look wrong after a re-run, the cause is almost always one of these:
 - **Status bar rides above the Dynamic Island / tab bar clipped** — the iPhone 16 SVG's screen glass (~0.477 aspect) is wider than a real 6.9" capture (~0.460). The old *centered cover* shaved ~52px off the top and bottom to fill it, which pushed the status bar above the Dynamic Island and trimmed the tab bar. `iphone_frame()` now stretches the *frame* vertically (~3.7%, to `SCREEN_ASPECT`) so the capture maps 1:1 — no crop, status bar centered on the Island, tab bar intact. Stretching the frame is imperceptible on the rounded corners; squishing the app content would be visible, so we stretch the frame, not the shot.
 - **Status-bar time / weak signal** — baked in natively by `capture.sh`'s `simctl status_bar override` (9:41, full battery, Wi-Fi, 4 signal bars), which works on iOS 26.4. There is no compositing-time retiming any more. (The captures once *predated* the override being added to `capture.sh` and showed the sim's live clock + placeholder cellular dots; re-capturing fixed it. If you see a live clock or gray dots, the override didn't apply — usually a stale/reused sim; `erase` and re-run.)
 - **Diagonal smear / refraction across the details sheet** — iOS 26 Liquid Glass is refracting the photo behind. Either advance past high-contrast photos before opening details (the test does this with two `Keep photo` taps) or expand the sheet to `.large` so the photo is fully covered.
-- **`capture.sh` prints `** TEST FAILED **` but exits 0 with no new raws** — `xcodebuild` runs the UI test on simulator *clones* and retries a transient `Busy` / `Application failed preflight checks` launch on a fresh clone. It can print `** TEST FAILED **` for the dead clone yet pass on the retry (`Test Case … passed on 'Clone 1 …'`) and still exit non-zero. Under `set -euo pipefail` that non-zero aborted the script *before* the extract step, so `raw/` never updated. `capture.sh` now wraps the `xcodebuild` line in `set +o pipefail … set -o pipefail` so `extract-shots.py` always runs — the extract count is the real success check. If a clone keeps failing, `xcrun simctl erase <device>` clears it.
+- **`capture.sh` prints `** TEST FAILED **` but exits 0 with no new raws** — `xcodebuild` runs the UI test on simulator *clones* and retries a transient `Busy` / `Application failed preflight checks` launch on a fresh clone. It can print `** TEST FAILED **` for the dead clone yet pass on the retry (`Test Case … passed on 'Clone 1 …'`) and still exit non-zero. Under `set -euo pipefail` that non-zero aborted the script *before* the extract step, so `raw/` never updated. `capture.sh` now wraps the `xcodebuild` line in `set +o pipefail … set -o pipefail` so `extract-shots.py` always runs — the extract count is the real success check. If a clone keeps failing, `xcrun simctl erase <device>` clears it. `capture.sh` now also turns parallel testing off so the test runs on the device itself, since a clone has its own iPhone Duo fold state.
 - **Navigation labels drift with the app UI — re-verify after UI changes.** Two that bit us: the review **summary** is dismissed by the top-left X labelled `Close without deleting` (the bottom `Done` button only appears when *nothing* is marked; with photos marked it's `Delete N`). And **"Similar"** moved into the "Space Savers" section near the *bottom* of the home list, so the test scrolls (`swipeUp`) to reach its button before tapping, then scrolls back to the top for the "Today" review. And the **Settings** tab isn't reachable the same way on both idioms: iPhone has a bottom tab bar (`app.tabBars.buttons["Settings"]`), but on iPad the same SwiftUI `TabView` renders as a floating tab bar at the *top* that XCUITest does **not** expose under `tabBars`, so the test falls back to `app.buttons["Settings"]` and waits for the Settings nav bar before capturing (otherwise it silently captures the Home list — which is exactly the bug that shipped the wrong `06-settings` iPad shot).
+- **Photos dated in the future ("10:34 AM · in 58 minutes")** — the simulator's Photos import reads an EXIF date without a UTC offset as Pacific time, so on a Mac in another time zone the seeds land hours away from now. From Phoenix in winter, that's an hour in the future (found 2026-11-08; in summer the offsets match, so it hid). `refresh-seed-dates.py` writes the `OffsetTime*` tags alongside the dates.
+- **iPhone Duo inner-display raws are black, 1398 × 2034** — `XCUIScreen.main` is the outer display, which stays dark while the Duo is unfolded. The test takes its shot from the screen the app's window fills. In landscape, XCTest returns the inner display as an image oriented `.right` whose PNG keeps the panel's portrait pixels, so the test redraws it upright. The inner raws are 2852 × 2006, a pixel short of the display in each direction, and the generator scales them into the frame.

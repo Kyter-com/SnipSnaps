@@ -426,11 +426,40 @@ final class ScreenshotCaptureTests: XCTestCase {
   /// host extraction script can find it inside the xcresult bundle.
   @MainActor
   private func capture(_ name: String) {
-    let screenshot = XCUIScreen.main.screenshot()
-    let attachment = XCTAttachment(screenshot: screenshot)
+    let attachment = appScreenAttachment()
     attachment.name = name
     attachment.lifetime = .keepAlways
     add(attachment)
+  }
+
+  /// A screenshot of the screen showing the app. iPhone Duo has two screens,
+  /// and `XCUIScreen.main` is its outer display, which stays dark while the
+  /// device is unfolded, so pick the screen the app's window fills. In
+  /// landscape, a shot of the inner display is saved upright.
+  @MainActor
+  private func appScreenAttachment() -> XCTAttachment {
+    guard XCUIScreen.screens.count > 1 else {
+      return XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+    }
+    let window = XCUIApplication().windows.firstMatch.frame.size
+    func fills(_ size: CGSize) -> Bool {
+      abs(size.width - window.width) < 1 && abs(size.height - window.height) < 1
+    }
+    let shot = XCUIScreen.screens.lazy.map { $0.screenshot() }.first { shot in
+      let size = shot.image.size
+      return fills(size) || fills(CGSize(width: size.height, height: size.width))
+    } ?? XCUIScreen.main.screenshot()
+
+    // The image is oriented, but its PNG keeps the panel's pixels; drawing it
+    // applies the orientation.
+    let image = shot.image
+    guard image.imageOrientation != .up else { return XCTAttachment(screenshot: shot) }
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = image.scale
+    let upright = UIGraphicsImageRenderer(size: image.size, format: format).image { _ in
+      image.draw(at: .zero)
+    }
+    return XCTAttachment(image: upright, quality: .original)
   }
 }
 #endif

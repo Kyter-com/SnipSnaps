@@ -45,6 +45,7 @@ Default Apple portrait exports:
 
 - iPhone 6.9": `1290 x 2796`
 - iPad 13": `2064 x 2752`
+- iPhone Duo: outer display `1398 x 2034`, inner display in landscape `2853 x 2007`. Both go in one `APP_IPHONE_DUO` set, and App Store Connect doesn't scale them from other sizes.
 
 Recommended repo layout:
 
