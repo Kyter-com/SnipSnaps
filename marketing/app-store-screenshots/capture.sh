@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 # Orchestrates a full screenshot capture run for one simulator.
 #
-#   capture.sh <device-id> <raw-output-dir>
+#   capture.sh <device-id> <raw-output-dir> [inner|outer]
+#
+# For iPhone Duo, the third argument picks the display to shoot. Folding and
+# unfolding is a Device Hub control with no command-line equivalent, so before
+# running the UI test the script waits until that display is the active one.
 #
 # Steps:
 #   1. Boot the sim and wait for it.
-#   2. Wipe the photo library and reseed from seed-photos/ (fresh EXIF dates).
+#   2. Wipe the photo library and reseed from copies of seed-photos/ (fresh
+#      EXIF dates); the tracked seed photos stay unchanged.
 #   3. Pre-grant Photos full access via TCC.db so the test starts logged-in.
 #      The UI test also has a fallback that walks the permission dialog if
 #      the TCC hack ever stops working.
@@ -17,18 +22,45 @@
 set -euo pipefail
 
 if [[ $# -lt 2 ]]; then
-  echo "usage: capture.sh <device-id> <raw-output-dir>" >&2
+  echo "usage: capture.sh <device-id> <raw-output-dir> [inner|outer]" >&2
   exit 2
 fi
 
 DEVICE="$1"
 RAW_DIR="$2"
+DUO_DISPLAY="${3:-}"
+
+case "$DUO_DISPLAY" in
+  "") ;;
+  inner) WANT_DISPLAY="LCD-1"; POSTURE="unfold it flat" ;;
+  outer) WANT_DISPLAY="LCD"; POSTURE="fold it closed" ;;
+  *) echo "error: the display must be inner or outer" >&2; exit 2 ;;
+esac
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-SEED_DIR="$ROOT/seed-photos"
 BUNDLE="com.kyter.SnipSnaps"
 SIM_DATA="$HOME/Library/Developer/CoreSimulator/Devices/$DEVICE/data"
 PYTHON_BIN="${SNIPSNAPS_SCREENSHOT_PYTHON:-python3}"
+
+# The name of the device's active display ("LCD" or "LCD-1" on iPhone Duo).
+active_display() {
+  local json
+  json="$(mktemp)"
+  xcrun devicectl device info displays --device "$DEVICE" --json-output "$json" >/dev/null 2>&1 || true
+  "$PYTHON_BIN" -c '
+import json, sys
+try:
+    displays = json.load(open(sys.argv[1]))["result"]["displays"]
+except Exception:
+    displays = []
+print(next((d["name"] for d in displays if d.get("active")), ""))' "$json"
+  rm -f "$json"
+}
+
+# Refresh dates on copies so the tracked seed photos never change.
+SEED_DIR="$(mktemp -d)"
+trap 'rm -rf "$SEED_DIR"' EXIT
+cp "$ROOT"/seed-photos/*.jpg "$SEED_DIR"/
 
 echo "==> Refreshing EXIF dates so seed photos count as Today/On This Day"
 "$PYTHON_BIN" "$ROOT/refresh-seed-dates.py" "$SEED_DIR"
@@ -77,15 +109,37 @@ XCRESULT="$ROOT/.capture-runs/$DEVICE.xcresult"
 mkdir -p "$ROOT/.capture-runs"
 rm -rf "$XCRESULT"
 
+if [[ -n "$DUO_DISPLAY" ]]; then
+  # After booting, iPhone Duo can report either display for a while before it
+  # settles, so wait until the right one is active for three checks in a row.
+  steady=0
+  wrong=0
+  while (( steady < 3 )); do
+    if [[ "$(active_display)" == "$WANT_DISPLAY" ]]; then
+      steady=$((steady + 1))
+    else
+      steady=0
+      wrong=$((wrong + 1))
+      if (( wrong == 3 )); then
+        echo "==> Waiting for the $DUO_DISPLAY display: in Device Hub, $POSTURE with the buttons under the device"
+      fi
+    fi
+    sleep 2
+  done
+fi
+
 echo "==> Running UI test"
 cd "$ROOT/../.."
-# xcodebuild spins up simulator clones and retries on transient "Busy" launch
-# failures, so it can print "** TEST FAILED **" for a dead clone yet still pass
-# on a retry — and exit non-zero regardless. Don't let that abort the script
-# before we extract; `extract-shots.py` below is the real success check.
+# With parallel testing, xcodebuild ran the test on simulator clones and
+# retried transient "Busy" launch failures, so it could print "** TEST FAILED **"
+# for a dead clone yet still pass on a retry — and exit non-zero regardless.
+# Don't let a non-zero exit abort the script before we extract;
+# `extract-shots.py` below is the real success check. Parallel testing is now
+# off so the test runs on the device itself, since a clone has its own iPhone
+# Duo fold state.
 set +o pipefail
 xcodebuild -project SnipSnaps.xcodeproj -scheme SnipSnaps \
-  -destination "id=$DEVICE" \
+  -destination "id=$DEVICE" -parallel-testing-enabled NO \
   -only-testing:SnipSnapsUITests/ScreenshotCaptureTests/testCaptureAllScreens \
   -resultBundlePath "$XCRESULT" \
   test 2>&1 | grep -E "(Test Case .* (passed|failed)|TEST (SUCCEEDED|FAILED)|error:)" | tail -8 || true
